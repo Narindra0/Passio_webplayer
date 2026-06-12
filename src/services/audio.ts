@@ -234,7 +234,7 @@ export async function playRemoteTrack(
     
     // Wait for canplay or error with timeout
     await new Promise<void>((resolve, reject) => {
-      let timeoutId: NodeJS.Timeout | null = null;
+      let timeoutId: number | null = null;
       
       const onCanPlay = () => {
         if (timeoutId) clearTimeout(timeoutId);
@@ -348,7 +348,7 @@ export async function playStream(
     
     // Wait for canplay or error with timeout
     await new Promise<void>((resolve, reject) => {
-      let timeoutId: NodeJS.Timeout | null = null;
+      let timeoutId: number | null = null;
       
       const onCanPlay = () => {
         if (timeoutId) clearTimeout(timeoutId);
