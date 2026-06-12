@@ -19,6 +19,7 @@ import {
     seekTo as audioSeekTo,
     playDeviceFile,
     playRemoteTrack,
+    playWebOptimizedTrack,
     playStream,
     setTrackEndHandler,
     stopCurrentTrack,
@@ -323,7 +324,8 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     isDevicePlaybackRef.current = false;
 
     try {
-      await stopCurrentTrack();
+      // Résoudre la clé et le mode AVANT d'arrêter la piste en cours
+      // → si resolvePlayMode échoue (aucun mode disponible), on ne perd pas la piste actuelle
       const effectiveKey = await resolveLocalKey(albumData.id, key);
       if (effectiveKey && !decryptionKeyRef.current) {
         decryptionKeyRef.current = effectiveKey;
@@ -331,6 +333,9 @@ export function AudioProvider({ children }: { children: ReactNode }) {
       }
 
       const mode = await resolvePlayMode(track, albumData, effectiveKey);
+
+      // Maintenant qu'on sait qu'on peut lire, on arrête la piste précédente
+      await stopCurrentTrack();
       console.log('[AudioContext] Resolved playback mode:', mode);
       setPlayMode(mode);
 
@@ -341,9 +346,9 @@ export function AudioProvider({ children }: { children: ReactNode }) {
         const currentTime: number = status.currentTime ?? 0;
         const dur: number = status.duration ?? 0;
         if (dur > 0) updateProgressThrottled(currentTime, dur);
-        if (dur > 0 && currentTime >= dur - 0.35 && !status.playing) {
-          void advanceToNextTrack();
-        }
+        // L'avancement automatique est déclenché uniquement par l'événement 'ended' du HTMLAudioElement
+        // (via currentTrackEndHandler → advanceToNextTrack). Cela évite les doubles appels
+        // et le bug où une pause près de la fin avançait la piste.
         if (status.playing !== undefined) {
           setIsPlaying(Boolean(status.playing));
           isPlayingRef.current = Boolean(status.playing);
@@ -383,55 +388,26 @@ export function AudioProvider({ children }: { children: ReactNode }) {
       });
 
       if (mode === 'remote') {
-        // Try proxy URL first (more reliable for CORS)
         const proxyUrl = `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(track.id)}/audio`;
-        console.log('[AudioContext] [1/3] Trying proxy URL:', proxyUrl);
-        const fallbackUrls = [track.preview_url, track.stream_url, track.encrypted_audio_url].filter(Boolean) as string[];
+        const isPremium = !albumData.is_free;
+        
         try {
-          const player = await playRemoteTrack(proxyUrl, track.id, effectiveKey ?? '', true, handleStatus, fallbackUrls);
+          const player = await playWebOptimizedTrack(
+            track.id,
+            track.preview_url,
+            proxyUrl,
+            isPremium,
+            handleStatus
+          );
           if (player) {
-            console.log('[AudioContext] ✅ Playback started with proxy URL');
             currentIndexRef.current = index;
             setCurrentIndex(index);
             return;
           }
         } catch (err) {
-          console.warn('[AudioContext] ❌ Proxy URL failed:', err);
+          console.warn('[AudioContext] ❌ playWebOptimizedTrack failed:', err);
+          throw new Error('Impossible de lire ce titre.');
         }
-        
-        // Fallback to direct preview URL
-        if (track.preview_url) {
-          console.log('[AudioContext] [2/3] Trying direct preview URL:', track.preview_url);
-          try {
-            const streamPlayer = await playStream(track.preview_url, handleStatus);
-            if (streamPlayer) {
-              console.log('[AudioContext] ✅ Playback started with direct preview URL');
-              currentIndexRef.current = index;
-              setCurrentIndex(index);
-              return;
-            }
-          } catch (err) {
-            console.warn('[AudioContext] ❌ Direct preview URL failed:', err);
-          }
-        }
-
-        // Fallback to direct stream URL
-        if (track.stream_url) {
-          console.log('[AudioContext] [3/3] Trying direct stream URL:', track.stream_url);
-          try {
-            const streamPlayer = await playStream(track.stream_url, handleStatus);
-            if (streamPlayer) {
-              console.log('[AudioContext] ✅ Playback started with direct stream URL');
-              currentIndexRef.current = index;
-              setCurrentIndex(index);
-              return;
-            }
-          } catch (err) {
-            console.warn('[AudioContext] ❌ Direct stream URL failed:', err);
-          }
-        }
-        
-        throw new Error('Impossible de lire ce titre.');
       } else {
         // For non-remote modes, try direct URLs first
         const url = track.preview_url ?? track.stream_url ?? track.encrypted_audio_url;

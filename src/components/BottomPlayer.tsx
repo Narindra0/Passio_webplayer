@@ -110,8 +110,9 @@ export function BottomPlayer() {
         padding: '0 16px',
         flexShrink: 0,
       }}>
-        {/* Top Progress Bar — dynamic color from album art */}
+        {/* Top Progress Bar — modern thin interactive bar */}
         <div
+          className="bottom-player-progress"
           style={{
             position: 'absolute',
             top: 0,
@@ -120,7 +121,10 @@ export function BottomPlayer() {
             height: 3,
             cursor: 'pointer',
             zIndex: 2,
+            transition: 'height 0.15s ease',
           }}
+          onMouseEnter={(e) => { e.currentTarget.style.height = '5px'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.height = '3px'; }}
           onClick={(e) => {
             const rect = e.currentTarget.getBoundingClientRect();
             const x = e.clientX - rect.left;
@@ -128,6 +132,7 @@ export function BottomPlayer() {
           }}
         >
           <div
+            className="bottom-player-progress-track"
             style={{
               position: 'absolute',
               top: 0,
@@ -135,17 +140,22 @@ export function BottomPlayer() {
               right: 0,
               height: '100%',
               background: 'var(--color-border-subtle)',
+              borderRadius: 2,
+              overflow: 'hidden',
             }}
           />
           <div
+            className="bottom-player-progress-fill"
             style={{
               position: 'absolute',
               top: 0,
               left: 0,
               height: '100%',
-              background: coverColors.colors?.vibrant || 'var(--color-accent)',
+              background: `linear-gradient(90deg, ${coverColors.colors?.vibrant || 'var(--color-accent)'}, ${coverColors.colors?.muted || 'var(--color-accent-light)'})`,
               width: `${Math.round(progress * 100)}%`,
+              borderRadius: 2,
               transition: 'width 0.1s linear, background 0.6s ease',
+              boxShadow: `0 0 6px ${coverColors.colors?.vibrant || 'var(--color-accent-glow)'}`,
             }}
           />
         </div>
@@ -185,34 +195,74 @@ export function BottomPlayer() {
           </div>
 
           {/* Title & Artist */}
-          <div style={{ minWidth: 0, flex: 1 }}>
-            <div
-              style={{
-                color: 'var(--color-text-primary)',
-                fontSize: 14,
-                fontWeight: 600,
-                lineHeight: '18px',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {trackTitle}
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div
+                style={{
+                  color: 'var(--color-text-primary)',
+                  fontSize: 14,
+                  fontWeight: 600,
+                  lineHeight: '18px',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {trackTitle}
+              </div>
+              <div
+                style={{
+                  color: 'var(--color-text-secondary)',
+                  fontSize: 12,
+                  lineHeight: '16px',
+                  marginTop: 1,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {artistName}
+              </div>
+              {/* Timer — visible uniquement sur mobile */}
+              <div
+                className="bottom-player-timer-mobile"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 3,
+                  marginTop: 2,
+                }}
+              >
+                <span
+                  style={{
+                    color: 'var(--color-text-muted)',
+                    fontSize: 10,
+                    fontWeight: 500,
+                    fontVariantNumeric: 'tabular-nums',
+                  }}
+                >
+                  {currentTimeLabel}
+                </span>
+                <span
+                  style={{
+                    color: 'var(--color-text-muted)',
+                    fontSize: 9,
+                    opacity: 0.4,
+                  }}
+                >
+                  /
+                </span>
+                <span
+                  style={{
+                    color: 'var(--color-text-muted)',
+                    fontSize: 10,
+                    fontWeight: 500,
+                    fontVariantNumeric: 'tabular-nums',
+                  }}
+                >
+                  {totalTimeLabel}
+                </span>
+              </div>
             </div>
-            <div
-              style={{
-                color: 'var(--color-text-secondary)',
-                fontSize: 12,
-                lineHeight: '16px',
-                marginTop: 1,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {artistName}
-            </div>
-          </div>
         </div>
 
         {/* Center: Controls */}
@@ -320,71 +370,10 @@ export function BottomPlayer() {
             </button>
           </div>
 
-          {/* Time labels & progress */}
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 8,
-              width: '100%',
-              maxWidth: 400,
-            }}
-          >
-            <span style={{ color: 'var(--color-text-muted)', fontSize: 11, fontWeight: 500, minWidth: 28, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-              {currentTimeLabel}
-            </span>
-            <div
-              style={{
-                flex: 1,
-                height: 4,
-                backgroundColor: 'var(--color-border-subtle)',
-                borderRadius: 2,
-                cursor: 'pointer',
-                position: 'relative',
-                overflow: 'visible',
-                transition: 'height 0.15s ease',
-              }}
-              onClick={(e) => {
-                e.stopPropagation();
-                const rect = e.currentTarget.getBoundingClientRect();
-                const x = e.clientX - rect.left;
-                seekTo(Math.max(0, Math.min(1, x / rect.width)));
-              }}
-            >
-              <div
-                style={{
-                  height: '100%',
-                  background: 'var(--color-accent)',
-                  width: `${Math.round(progress * 100)}%`,
-                  borderRadius: 2,
-                  transition: 'width 0.1s linear',
-                }}
-              />
-              <div
-                style={{
-                  position: 'absolute',
-                  top: '50%',
-                  left: `${Math.round(progress * 100)}%`,
-                  transform: 'translate(-50%, -50%)',
-                  width: 12,
-                  height: 12,
-                  borderRadius: '50%',
-                  background: 'var(--color-text-primary)',
-                  opacity: 0,
-                  transition: 'opacity 0.15s ease',
-                  pointerEvents: 'none',
-                }}
-                className="progress-handle"
-              />
-            </div>
-            <span style={{ color: 'var(--color-text-muted)', fontSize: 11, fontWeight: 500, minWidth: 28, textAlign: 'left', fontVariantNumeric: 'tabular-nums' }}>
-              {totalTimeLabel}
-            </span>
-          </div>
+          {/* Espace libre — les contrôles uniquement, plus de barre ni timer ici */}
         </div>
 
-        {/* Right: Volume & Extras */}
+        {/* Right: Timer & Extras */}
         <div
           className="bottom-player-right"
           style={{
@@ -392,41 +381,108 @@ export function BottomPlayer() {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'flex-end',
-            gap: 8,
+            gap: 12,
             paddingRight: 4,
           }}
         >
+          {/* Timer — style moderne sur la droite */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '4px 10px',
+              borderRadius: 'var(--radius-full)',
+              background: 'var(--color-surface-elevated)',
+              border: '1px solid var(--color-border-subtle)',
+            }}
+          >
+            {/* Barre de progression miniature */}
+            <div
+              style={{
+                width: 40,
+                height: 3,
+                borderRadius: 2,
+                background: 'var(--color-border-subtle)',
+                overflow: 'hidden',
+              }}
+            >
+              <div
+                style={{
+                  height: '100%',
+                  width: `${Math.round(progress * 100)}%`,
+                  background: 'var(--color-accent)',
+                  borderRadius: 2,
+                  transition: 'width 0.1s linear',
+                }}
+              />
+            </div>
+            <span
+              style={{
+                color: 'var(--color-text-muted)',
+                fontSize: 12,
+                fontWeight: 600,
+                fontVariantNumeric: 'tabular-nums',
+                letterSpacing: '0.02em',
+                lineHeight: 1,
+              }}
+            >
+              {currentTimeLabel}
+            </span>
+            <span
+              style={{
+                color: 'var(--color-text-muted)',
+                fontSize: 10,
+                fontWeight: 400,
+                opacity: 0.35,
+                lineHeight: 1,
+              }}
+            >
+              /
+            </span>
+            <span
+              style={{
+                color: 'var(--color-text-muted)',
+                fontSize: 12,
+                fontWeight: 500,
+                fontVariantNumeric: 'tabular-nums',
+                letterSpacing: '0.02em',
+                lineHeight: 1,
+              }}
+            >
+              {totalTimeLabel}
+            </span>
+          </div>
+
           <button
             onClick={handleCoverClick}
             style={{
               display: 'flex',
               alignItems: 'center',
+              justifyContent: 'center',
               gap: 6,
-              padding: '6px 12px',
-              borderRadius: 'var(--radius-sm)',
+              width: 36,
+              height: 36,
+              borderRadius: 'var(--radius-full)',
               border: 'none',
-              background: isFullPlayerVisible ? 'var(--color-surface-elevated)' : 'transparent',
+              background: isFullPlayerVisible ? 'var(--color-accent-soft)' : 'transparent',
               cursor: 'pointer',
-              color: isFullPlayerVisible ? 'var(--color-text-primary)' : 'var(--color-text-muted)',
+              color: isFullPlayerVisible ? 'var(--color-accent)' : 'var(--color-text-muted)',
               fontSize: 12,
               fontWeight: 600,
               transition: 'all var(--transition-fast) ease',
             }}
             onMouseEnter={(e) => {
-              if (!isFullPlayerVisible) {
-                e.currentTarget.style.background = 'var(--color-surface-hover)';
-                e.currentTarget.style.color = 'var(--color-text-secondary)';
-              }
+              e.currentTarget.style.background = 'var(--color-accent-soft)';
+              e.currentTarget.style.color = 'var(--color-accent)';
             }}
             onMouseLeave={(e) => {
-              if (!isFullPlayerVisible) {
-                e.currentTarget.style.background = 'transparent';
-                e.currentTarget.style.color = 'var(--color-text-muted)';
-              }
+              e.currentTarget.style.background = isFullPlayerVisible ? 'var(--color-accent-soft)' : 'transparent';
+              e.currentTarget.style.color = isFullPlayerVisible ? 'var(--color-accent)' : 'var(--color-text-muted)';
             }}
+            title="Ouvrir le lecteur"
           >
             <Volume2 size={16} />
-            <span>En cours</span>
           </button>
         </div>
       </div>

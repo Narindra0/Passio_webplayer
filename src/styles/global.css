@@ -628,6 +628,7 @@ img { max-width: 100%; height: auto; }
   .bottom-player-center button:last-child { display: none !important; }
   .bottom-player-playbtn { width: 36px !important; height: 36px !important; }
   .bottom-player-right { display: none !important; }
+  .bottom-player-timer-mobile { display: flex !important; }
 
   .fullplayer {
     position: fixed !important;
@@ -663,6 +664,9 @@ img { max-width: 100%; height: auto; }
 /* Safe area */
 .safe-top { padding-top: env(safe-area-inset-top, 0px); }
 .safe-bottom { padding-bottom: env(safe-area-inset-bottom, 0px); }
+
+/* Mobile-only timer — hidden on desktop */
+.bottom-player-timer-mobile { display: none !important; }
 
 /* Desktop-only */
 @media (max-width: 768px) {

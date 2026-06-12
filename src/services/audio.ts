@@ -21,6 +21,7 @@ let currentTrackEndHandler: (() => void) | null = null;
 let animationFrameId: number | null = null;
 let prefetchAbortController: AbortController | null = null;
 let isSecureAudio: boolean = false;
+let currentBlobUrl: string | null = null;
 
 export function cancelCurrentPrefetch() {
   if (prefetchAbortController) {
@@ -59,7 +60,16 @@ function stopProgressInterval() {
   }
 }
 
+function cleanupCurrentBlobUrl() {
+  if (currentBlobUrl) {
+    URL.revokeObjectURL(currentBlobUrl);
+    currentBlobUrl = null;
+  }
+}
+
 export async function stopCurrentTrack(): Promise<void> {
+  cleanupCurrentBlobUrl();
+
   if (isSecureAudio) {
     secureAudioPlayer.stop();
     isSecureAudio = false;
@@ -331,6 +341,105 @@ export async function playRemoteTrack(
   } catch (err) {
     console.error('[Audio] Failed to play remote track:', err);
     throw err; // Re-throw so caller can handle it
+  }
+}
+
+/**
+ * Nouvelle fonction optimisée pour le Web Player.
+ * - Ne nécessite aucune modification du backend.
+ * - Titres gratuits : lecture directe depuis B2 (HTTP 206 natif, pas de proxy).
+ * - Titres premium : téléchargement complet via le proxy, puis création d'un Blob URL pour permettre au lecteur web de faire des "Range Requests" locaux et éviter l'erreur de format.
+ */
+export async function playWebOptimizedTrack(
+  trackId: string,
+  previewUrl: string | null | undefined,
+  proxyUrl: string,
+  isPremium: boolean,
+  onStatusUpdate?: StatusCallback
+): Promise<HTMLAudioElement | any> {
+  cancelCurrentPrefetch();
+  await stopCurrentTrack();
+
+  const playWithHtmlAudio = async (audioUrl: string) => {
+    const audio = new Audio();
+    currentAudio = audio;
+    isSecureAudio = false;
+    currentStatusCallback = onStatusUpdate || null;
+    if (onStatusUpdate) setupAudioEvents(audio, onStatusUpdate);
+    audio.crossOrigin = 'anonymous';
+    audio.preload = 'auto';
+    
+    return new Promise<HTMLAudioElement>((resolve, reject) => {
+      let timeoutId: number | null = null;
+      
+      const onCanPlay = () => {
+        if (timeoutId) clearTimeout(timeoutId);
+        resolve(audio);
+      };
+      
+      const onError = (e: Event) => {
+        if (timeoutId) clearTimeout(timeoutId);
+        reject(new Error(audio.error?.message || 'Erreur lors du chargement du fichier audio.'));
+      };
+      
+      timeoutId = setTimeout(() => {
+        audio.removeEventListener('canplay', onCanPlay);
+        audio.removeEventListener('error', onError);
+        reject(new Error('Audio load timeout'));
+      }, 30000);
+      
+      audio.addEventListener('canplay', onCanPlay, { once: true });
+      audio.addEventListener('error', onError, { once: true });
+      audio.src = audioUrl;
+    }).then(async (audio) => {
+      await audio.play();
+      return audio;
+    });
+  };
+
+  try {
+    // Lecture via le proxy backend uniquement.
+    // Note: la lecture directe depuis B2 est désactivée car Backblaze B2
+    // n'autorise pas les requêtes CORS depuis le navigateur.
+    // Le proxy télécharge le fichier et le convertit en Blob URL,
+    // ce qui permet au navigateur de faire des Range Requests locaux.
+    console.log('[WebAudio] Utilisation du proxy backend :', proxyUrl);
+    
+    const response = await fetch(proxyUrl);
+    if (!response.ok) {
+      if (response.status === 404 || response.status === 500) {
+        throw new Error('Fichier audio introuvable sur le serveur (Erreur 404/500).');
+      }
+      throw new Error(`Erreur proxy: HTTP ${response.status}`);
+    }
+
+    // Vérifier que le Content-Type est bien un type audio
+    const contentType = response.headers.get('content-type') || '';
+    if (contentType && !contentType.startsWith('audio/') && !contentType.startsWith('application/octet-stream') && !contentType.includes('binary') && !contentType.includes('mp3')) {
+      console.warn('[WebAudio] Content-Type inattendu du proxy:', contentType);
+    }
+
+    const blob = await response.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    currentBlobUrl = objectUrl;
+    console.log('[WebAudio] Blob URL créé avec succès, lancement de la lecture.');
+
+    const audio = await playWithHtmlAudio(objectUrl);
+
+    // On libère la mémoire quand la piste se termine naturellement
+    const cleanup = () => {
+      URL.revokeObjectURL(objectUrl);
+      if (currentBlobUrl === objectUrl) currentBlobUrl = null;
+    };
+    audio.addEventListener('ended', cleanup, { once: true });
+
+    return audio;
+
+  } catch (err) {
+    // Nettoyer le Blob URL en cas d'erreur (play échoué, fetch échoué, etc.)
+    cleanupCurrentBlobUrl();
+    console.error('[WebAudio] Echec total de lecture optimisée:', err);
+    throw err;
   }
 }
 

@@ -92,7 +92,8 @@ export function FullPlayer() {
 
   const fullQueue = isDeviceMode ? deviceQueue : queue;
   const currentIdx = isDeviceMode ? deviceCurrentIndex : currentIndex;
-  const upcomingTracks = fullQueue.slice(Math.max(0, currentIdx + 1));
+  // Éviter d'afficher toutes les pistes comme "À suivre" quand rien n'est joué (currentIdx === -1)
+  const upcomingTracks = currentIdx >= 0 ? fullQueue.slice(currentIdx + 1) : [];
 
   return (
     <aside
