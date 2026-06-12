@@ -8,40 +8,42 @@ import { App } from './App';
 import './styles/global.css';
 
 // Protection anti-inspection (barrière psychologique)
-(function preventInspection() {
-  // Bloque le clic droit
-  document.addEventListener('contextmenu', (e) => e.preventDefault());
+if (import.meta.env.VITE_LOCAL !== 'active' && !import.meta.env.DEV) {
+  (function preventInspection() {
+    // Bloque le clic droit
+    document.addEventListener('contextmenu', (e) => e.preventDefault());
 
-  // Bloque les raccourcis clavier d'inspection
-  document.addEventListener('keydown', (e) => {
-    // F12
-    if (e.key === 'F12') {
-      e.preventDefault();
-      return;
-    }
-    // Ctrl+Shift+I / J / C  (DevTools, Console, Inspect)
-    if (e.ctrlKey && e.shiftKey && ['I', 'J', 'C'].includes(e.key.toUpperCase())) {
-      e.preventDefault();
-      return;
-    }
-    // Ctrl+U (View Source)
-    if (e.ctrlKey && e.key.toUpperCase() === 'U') {
-      e.preventDefault();
-      return;
-    }
-  });
+    // Bloque les raccourcis clavier d'inspection
+    document.addEventListener('keydown', (e) => {
+      // F12
+      if (e.key === 'F12') {
+        e.preventDefault();
+        return;
+      }
+      // Ctrl+Shift+I / J / C  (DevTools, Console, Inspect)
+      if (e.ctrlKey && e.shiftKey && ['I', 'J', 'C'].includes(e.key.toUpperCase())) {
+        e.preventDefault();
+        return;
+      }
+      // Ctrl+U (View Source)
+      if (e.ctrlKey && e.key.toUpperCase() === 'U') {
+        e.preventDefault();
+        return;
+      }
+    });
 
-  // Détection furtive DevTools via la différence de taille d'écran
-  const devtoolsDetect = () => {
-    const threshold = 160;
-    const widthDiff = window.outerWidth - window.innerWidth;
-    const heightDiff = window.outerHeight - window.innerHeight;
-    if (widthDiff > threshold || heightDiff > threshold) {
-      document.title = '🚫 Pass\'io — Inspection détectée';
-    }
-  };
-  setInterval(devtoolsDetect, 2000);
-})();
+    // Détection furtive DevTools via la différence de taille d'écran
+    const devtoolsDetect = () => {
+      const threshold = 160;
+      const widthDiff = window.outerWidth - window.innerWidth;
+      const heightDiff = window.outerHeight - window.innerHeight;
+      if (widthDiff > threshold || heightDiff > threshold) {
+        document.title = '🚫 Pass\'io — Inspection détectée';
+      }
+    };
+    setInterval(devtoolsDetect, 2000);
+  })();
+}
 
 // Registre le Service Worker généré par vite-plugin-pwa
 if ('serviceWorker' in navigator) {
