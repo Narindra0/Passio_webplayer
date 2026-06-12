@@ -3,33 +3,32 @@
  */
 
 import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
+    createContext,
+    useCallback,
+    useContext,
+    useEffect,
+    useMemo,
+    useRef,
+    useState,
+    type ReactNode,
 } from 'react';
 
-import {
-  playDeviceFile,
-  playRemoteTrack,
-  playStream,
-  stopCurrentTrack,
-  togglePlayPause as toggleAudioPlayPause,
-  seekTo as audioSeekTo,
-  seekToSeconds,
-  setTrackEndHandler,
-} from '@/services/audio';
-import { getAlbum, listOwnedAlbums, getApiBaseUrl, unwrapAlbumDetails } from '@/services/api';
 import { isAlbumOwnedByDevice, resolveAlbumDecryptionKey } from '@/services/albumOwnership';
+import { getAlbum, getApiBaseUrl, listOwnedAlbums, unwrapAlbumDetails } from '@/services/api';
+import {
+    seekTo as audioSeekTo,
+    playDeviceFile,
+    playRemoteTrack,
+    playStream,
+    setTrackEndHandler,
+    stopCurrentTrack,
+    togglePlayPause as toggleAudioPlayPause
+} from '@/services/audio';
 import { readLocalDecryptionKey, resolveOfflinePlayback } from '@/services/offlineAccess';
-import { getTrackIndexInQueue, getTrackStartOffsetSeconds, sortTracksByPosition } from '@/utils/tracks';
 import type { PublicAlbumDetails, PublicAlbumSummary, PublicTrack } from '@/types/backend';
 import type { DeviceTrack } from '@/types/localLibrary';
 import { logger } from '@/utils/logger';
+import { getTrackIndexInQueue, sortTracksByPosition } from '@/utils/tracks';
 
 export type PlayMode = 'hls' | 'stream' | 'local' | 'remote' | 'device';
 export type QueueMode = 'sequential' | 'shuffle';
@@ -351,36 +350,111 @@ export function AudioProvider({ children }: { children: ReactNode }) {
         }
       };
 
+      // Album-level HLS stream temporarily disabled - causing issues
+      // if (
+      //   albumData.stream_url && 
+      //   albumData.stream_status === 'ready' && 
+      //   (albumData.stream_url.includes('.m3u8') || albumData.stream_url.includes('hls'))
+      // ) {
+      //   console.log('[AudioContext] Trying album HLS stream:', albumData.stream_url);
+      //   try {
+      //     const streamPlayer = await playStream(albumData.stream_url, handleStatus);
+      //     if (streamPlayer) {
+      //       console.log('[AudioContext] Playback started with album HLS stream');
+      //       currentIndexRef.current = index;
+      //       setCurrentIndex(index);
+      //       // TODO: Seek to the correct track position in the album stream
+      //       return;
+      //     }
+      //   } catch (err) {
+      //     console.warn('[AudioContext] Album HLS stream failed:', err);
+      //   }
+      // }
+
+      console.log('[AudioContext] Track playback details:', {
+        trackId: track.id,
+        trackTitle: track.title,
+        mode,
+        albumStreamUrl: albumData.stream_url,
+        albumStreamStatus: albumData.stream_status,
+        previewUrl: track.preview_url,
+        streamUrl: track.stream_url,
+        encryptedAudioUrl: track.encrypted_audio_url
+      });
+
       if (mode === 'remote') {
-        // First try the track's own preview/stream URL if available, before proxy
-        const directUrl = track.preview_url ?? track.stream_url;
-        console.log('[AudioContext] Trying direct URL:', directUrl);
-        if (directUrl) {
+        // Try proxy URL first (more reliable for CORS)
+        const proxyUrl = `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(track.id)}/audio`;
+        console.log('[AudioContext] [1/3] Trying proxy URL:', proxyUrl);
+        const fallbackUrls = [track.preview_url, track.stream_url, track.encrypted_audio_url].filter(Boolean) as string[];
+        try {
+          const player = await playRemoteTrack(proxyUrl, track.id, effectiveKey ?? '', true, handleStatus, fallbackUrls);
+          if (player) {
+            console.log('[AudioContext] ✅ Playback started with proxy URL');
+            currentIndexRef.current = index;
+            setCurrentIndex(index);
+            return;
+          }
+        } catch (err) {
+          console.warn('[AudioContext] ❌ Proxy URL failed:', err);
+        }
+        
+        // Fallback to direct preview URL
+        if (track.preview_url) {
+          console.log('[AudioContext] [2/3] Trying direct preview URL:', track.preview_url);
           try {
-            const streamPlayer = await playStream(directUrl, handleStatus);
+            const streamPlayer = await playStream(track.preview_url, handleStatus);
             if (streamPlayer) {
-              console.log('[AudioContext] Playback started with direct URL');
+              console.log('[AudioContext] ✅ Playback started with direct preview URL');
               currentIndexRef.current = index;
               setCurrentIndex(index);
               return;
             }
           } catch (err) {
-            console.warn('[AudioContext] Direct URL failed:', err);
+            console.warn('[AudioContext] ❌ Direct preview URL failed:', err);
+          }
+        }
+
+        // Fallback to direct stream URL
+        if (track.stream_url) {
+          console.log('[AudioContext] [3/3] Trying direct stream URL:', track.stream_url);
+          try {
+            const streamPlayer = await playStream(track.stream_url, handleStatus);
+            if (streamPlayer) {
+              console.log('[AudioContext] ✅ Playback started with direct stream URL');
+              currentIndexRef.current = index;
+              setCurrentIndex(index);
+              return;
+            }
+          } catch (err) {
+            console.warn('[AudioContext] ❌ Direct stream URL failed:', err);
           }
         }
         
-        const proxyUrl = `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(track.id)}/audio`;
-        console.log('[AudioContext] Trying proxy URL:', proxyUrl);
-        const fallbackUrls = [track.preview_url, track.encrypted_audio_url].filter(Boolean) as string[];
-        const player = await playRemoteTrack(proxyUrl, track.id, effectiveKey ?? '', true, handleStatus, fallbackUrls);
-        if (!player) throw new Error('Impossible de lire ce titre.');
-        console.log('[AudioContext] Playback started with proxy URL');
+        throw new Error('Impossible de lire ce titre.');
       } else {
-        const url = track.preview_url ?? track.encrypted_audio_url ?? track.stream_url;
-        console.log('[AudioContext] Trying local mode URL:', url);
+        // For non-remote modes, try direct URLs first
+        const url = track.preview_url ?? track.stream_url ?? track.encrypted_audio_url;
+        console.log('[AudioContext] [1/2] Trying local mode URL:', url);
         if (!url) throw new Error("L'aperçu de cette piste n'est pas disponible.");
-        const streamPlayer = await playStream(url, handleStatus);
+        try {
+          const streamPlayer = await playStream(url, handleStatus);
+          if (streamPlayer) {
+            console.log('[AudioContext] ✅ Playback started with direct URL');
+            currentIndexRef.current = index;
+            setCurrentIndex(index);
+            return;
+          }
+        } catch (err) {
+          console.warn('[AudioContext] ❌ Direct URL failed for non-remote mode:', err);
+        }
+        
+        // Fallback to proxy if direct fails
+        const proxyUrl = `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(track.id)}/audio`;
+        console.log('[AudioContext] [2/2] Trying proxy URL for non-remote mode:', proxyUrl);
+        const streamPlayer = await playStream(proxyUrl, handleStatus);
         if (!streamPlayer) throw new Error('Impossible de lire ce titre.');
+        console.log('[AudioContext] ✅ Playback started with proxy URL');
       }
 
       currentIndexRef.current = index;

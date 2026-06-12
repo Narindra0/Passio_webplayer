@@ -226,11 +226,31 @@ export async function playRemoteTrack(
     isSecureAudio = false;
     currentStatusCallback = onStatusUpdate || null;
     if (onStatusUpdate) setupAudioEvents(audio, onStatusUpdate);
-    audio.src = audioUrl;
     audio.crossOrigin = 'anonymous';
     audio.preload = 'auto';
     
     console.log('[Audio] Loading audio from:', audioUrl);
+    
+    // First, let's try to fetch the URL to check what we're getting
+    try {
+      console.log('[Audio] Testing URL with fetch:', audioUrl);
+      const testResponse = await fetch(audioUrl, { 
+        method: 'GET',
+        headers: {
+          'Range': 'bytes=0-100' // Just fetch the first 100 bytes to test
+        }
+      });
+      console.log('[Audio] Test response:', {
+        ok: testResponse.ok,
+        status: testResponse.status,
+        statusText: testResponse.statusText,
+        contentType: testResponse.headers.get('content-type'),
+        contentLength: testResponse.headers.get('content-length'),
+        acceptRanges: testResponse.headers.get('accept-ranges')
+      });
+    } catch (fetchErr) {
+      console.warn('[Audio] Test fetch failed:', fetchErr);
+    }
     
     // Wait for canplay or error with timeout
     await new Promise<void>((resolve, reject) => {
@@ -243,8 +263,26 @@ export async function playRemoteTrack(
       
       const onError = (e: Event) => {
         if (timeoutId) clearTimeout(timeoutId);
-        console.error('[Audio] Audio error event:', e);
-        reject(new Error('Failed to load audio'));
+        const error = audio.error;
+        let errorMessage = 'Failed to load audio';
+        if (error) {
+          switch (error.code) {
+            case error.MEDIA_ERR_ABORTED:
+              errorMessage = 'Audio loading aborted';
+              break;
+            case error.MEDIA_ERR_NETWORK:
+              errorMessage = 'Network error while loading audio';
+              break;
+            case error.MEDIA_ERR_DECODE:
+              errorMessage = 'Audio decoding failed';
+              break;
+            case error.MEDIA_ERR_SRC_NOT_SUPPORTED:
+              errorMessage = 'Audio format not supported';
+              break;
+          }
+          console.error('[Audio] Audio error details:', { code: error.code, message: error.message, event: e });
+        }
+        reject(new Error(errorMessage));
       };
       
       timeoutId = setTimeout(() => {
@@ -255,6 +293,9 @@ export async function playRemoteTrack(
       
       audio.addEventListener('canplay', onCanPlay, { once: true });
       audio.addEventListener('error', onError, { once: true });
+      
+      // Set src after adding event listeners
+      audio.src = audioUrl;
     });
     
     await audio.play();
@@ -340,7 +381,6 @@ export async function playStream(
     currentAudio = audio;
     isSecureAudio = false;
     if (onStatusUpdate) setupAudioEvents(audio, onStatusUpdate);
-    audio.src = audioUrl;
     audio.crossOrigin = 'anonymous';
     audio.preload = 'auto';
     
@@ -357,8 +397,26 @@ export async function playStream(
       
       const onError = (e: Event) => {
         if (timeoutId) clearTimeout(timeoutId);
-        console.error('[Audio] Stream error event:', e);
-        reject(new Error('Failed to load stream'));
+        const error = audio.error;
+        let errorMessage = 'Failed to load stream';
+        if (error) {
+          switch (error.code) {
+            case error.MEDIA_ERR_ABORTED:
+              errorMessage = 'Stream loading aborted';
+              break;
+            case error.MEDIA_ERR_NETWORK:
+              errorMessage = 'Network error while loading stream';
+              break;
+            case error.MEDIA_ERR_DECODE:
+              errorMessage = 'Stream decoding failed';
+              break;
+            case error.MEDIA_ERR_SRC_NOT_SUPPORTED:
+              errorMessage = 'Stream format not supported';
+              break;
+          }
+          console.error('[Audio] Stream error details:', { code: error.code, message: error.message, event: e });
+        }
+        reject(new Error(errorMessage));
       };
       
       timeoutId = setTimeout(() => {
@@ -369,6 +427,9 @@ export async function playStream(
       
       audio.addEventListener('canplay', onCanPlay, { once: true });
       audio.addEventListener('error', onError, { once: true });
+      
+      // Set src after adding event listeners
+      audio.src = audioUrl;
     });
     
     await audio.play();
@@ -376,7 +437,79 @@ export async function playStream(
     return audio;
   };
 
-  // Use HTML5 audio directly for all streams
+  // Try HLS.js first if the URL is an HLS stream
+  if (Hls.isSupported() && (resolvedUrl.includes('.m3u8') || resolvedUrl.includes('hls'))) {
+    try {
+      console.log('[Audio] Trying HLS.js for stream:', resolvedUrl);
+      const audio = new Audio();
+      currentAudio = audio;
+      isSecureAudio = false;
+      if (onStatusUpdate) setupAudioEvents(audio, onStatusUpdate);
+      
+      const hls = new Hls({
+        enableWorker: true,
+        lowLatencyMode: true
+      });
+      currentHls = hls;
+      
+      // Wait for HLS to load or error with timeout
+      await new Promise<void>((resolve, reject) => {
+        let timeoutId: number | null = null;
+        let manifestParsed = false;
+        
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          manifestParsed = true;
+          if (timeoutId) clearTimeout(timeoutId);
+          console.log('[Audio] HLS manifest parsed');
+          resolve();
+        });
+        
+        hls.on(Hls.Events.ERROR, (event, data) => {
+          if (data.fatal) {
+            console.error('[Audio] HLS fatal error:', data);
+            if (timeoutId) clearTimeout(timeoutId);
+            switch (data.type) {
+              case Hls.ErrorTypes.NETWORK_ERROR:
+                console.warn('[Audio] HLS network error, trying to recover...');
+                hls.startLoad();
+                break;
+              case Hls.ErrorTypes.MEDIA_ERROR:
+                console.warn('[Audio] HLS media error, trying to recover...');
+                hls.recoverMediaError();
+                break;
+              default:
+                reject(new Error(`HLS fatal error: ${data.details}`));
+                break;
+            }
+          } else {
+            console.warn('[Audio] HLS non-fatal error (will try to recover):', data.details);
+          }
+        });
+        
+        timeoutId = setTimeout(() => {
+          if (!manifestParsed) {
+            reject(new Error('HLS load timeout'));
+          }
+        }, 30000); // 30 second timeout
+        
+        hls.loadSource(resolvedUrl);
+        hls.attachMedia(audio);
+      });
+      
+      await audio.play();
+      console.log('[Audio] Started playing HLS stream');
+      return audio;
+    } catch (hlsErr) {
+      console.warn('[Audio] HLS failed, falling back to HTML5 audio:', hlsErr);
+      // Clean up HLS
+      if (currentHls) {
+        currentHls.destroy();
+        currentHls = null;
+      }
+    }
+  }
+
+  // Fallback to HTML5 audio
   return await playWithHtmlAudio(resolvedUrl);
 }
 
