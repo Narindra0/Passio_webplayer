@@ -3,21 +3,19 @@ import React from 'react';
 interface ScreenProps {
   children: React.ReactNode;
   gradient?: boolean;
-  /** If true, adds standard page padding (default: true) */
   padded?: boolean;
-  /** Maximum content width (default: 1440px) */
   maxWidth?: string;
   style?: React.CSSProperties;
   className?: string;
 }
 
-export function Screen({ 
-  children, 
-  gradient = false, 
+export function Screen({
+  children,
+  gradient = false,
   padded = true,
   maxWidth = '1440px',
-  style, 
-  className 
+  style,
+  className
 }: ScreenProps) {
   return (
     <div
@@ -32,22 +30,22 @@ export function Screen({
         ...style,
       }}
     >
-      {/* Gradient Background */}
+      {/* Gradient Background — vibrant red accent */}
       {gradient && (
-        <div 
+        <div
           style={{
             position: 'absolute',
             top: 0,
             left: 0,
             right: 0,
-            height: '60vh',
-            background: 'radial-gradient(ellipse at 50% 0%, rgba(120, 0, 0, 0.06) 0%, rgba(198, 40, 40, 0.02) 40%, transparent 70%)',
+            height: '420px',
+            background: 'linear-gradient(180deg, rgba(139,0,0,0.15) 0%, rgba(220,20,60,0.05) 40%, transparent 100%)',
             pointerEvents: 'none',
             zIndex: 0,
-          }} 
+          }}
         />
       )}
-      
+
       <div
         className="screen-inner"
         style={{
@@ -68,21 +66,16 @@ export function Screen({
   );
 }
 
-/**
- * PageHeader — composant standard pour l'en-tête des pages
- */
 interface PageHeaderProps {
   title: string;
   subtitle?: string;
-  accent?: boolean;
   children?: React.ReactNode;
   style?: React.CSSProperties;
 }
 
-export function PageHeader({ title, subtitle, accent = false, children, style }: PageHeaderProps) {
+export function PageHeader({ title, subtitle, children, style }: PageHeaderProps) {
   return (
-    <div 
-      className="page-header"
+    <div
       style={{
         display: 'flex',
         flexDirection: 'column',
@@ -92,45 +85,29 @@ export function PageHeader({ title, subtitle, accent = false, children, style }:
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          {accent && (
-            <div 
-              style={{
-                width: 4,
-                height: 28,
-                borderRadius: 2,
-                backgroundColor: 'var(--color-accent)',
-                flexShrink: 0,
-              }} 
-            />
-          )}
-          <h1 
-            className="page-title"
-            style={{
-              color: accent ? 'var(--color-accent)' : '#fff',
-              fontSize: 'clamp(24px, 4vw, 36px)',
-              fontFamily: 'var(--font-hanken)',
-              fontWeight: 700,
-              letterSpacing: '-0.5px',
-              margin: 0,
-              lineHeight: 1.15,
-            }}
-          >
-            {title}
-          </h1>
-        </div>
+        <h1
+          style={{
+            color: 'var(--color-text-primary)',
+            fontSize: 'clamp(28px, 3.5vw, 32px)',
+            fontWeight: 700,
+            letterSpacing: '-0.5px',
+            margin: 0,
+            lineHeight: 1.15,
+          }}
+        >
+          {title}
+        </h1>
         {children && (
-          <div className="page-header-actions" style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
             {children}
           </div>
         )}
       </div>
       {subtitle && (
-        <p 
-          className="page-subtitle"
+        <p
           style={{
-            color: 'var(--color-text-muted)',
-            fontSize: 'clamp(13px, 1.5vw, 15px)',
+            color: 'var(--color-text-secondary)',
+            fontSize: 15,
             lineHeight: '20px',
             margin: 0,
             maxWidth: 600,

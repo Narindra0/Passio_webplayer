@@ -1,6 +1,6 @@
-import { useLocation, useNavigate } from 'react-router-dom';
-import { Compass, Search, Library, KeyRound, FolderOpen, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Compass, FolderOpen, KeyRound, Library, Search, Sparkles } from 'lucide-react';
 import { useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useLibraryMode } from '../contexts/LibraryModeContext';
 
 interface NavItem {
@@ -22,7 +22,7 @@ export function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
 
   const mainNav: NavItem[] = effectiveMode === 'online' ? [
-    { path: '/tabs', label: 'Accueil', icon: Compass },
+    { path: '/discover', label: 'Découvertes', icon: Sparkles },
     { path: '/search', label: 'Rechercher', icon: Search },
     { path: '/catalog', label: 'Bibliothèque', icon: Library },
   ] : [
@@ -41,58 +41,52 @@ export function Sidebar() {
       style={{
         width: sidebarWidth,
         height: '100%',
-        backgroundColor: '#000',
+        backgroundColor: 'var(--color-bg-dark)',
         display: 'flex',
         flexDirection: 'column',
         flexShrink: 0,
-        transition: 'width 0.2s ease',
-        borderRight: '1px solid rgba(255,255,255,0.06)',
+        transition: 'width var(--transition-normal) ease',
         position: 'relative',
         overflow: 'hidden',
+        zIndex: 10,
       }}
     >
       {/* Logo / Brand */}
       <div
+        onClick={() => navigate('/discover')}
         style={{
-          padding: collapsed ? '20px 0' : '24px 20px 20px',
+          padding: collapsed ? '24px 0 16px' : '24px 24px 16px',
           display: 'flex',
           alignItems: 'center',
           justifyContent: collapsed ? 'center' : 'flex-start',
-          gap: 10,
+          gap: 12,
           cursor: 'pointer',
           flexShrink: 0,
         }}
-        onClick={() => navigate('/tabs')}
       >
         <div
           style={{
             width: 32,
             height: 32,
-            borderRadius: 8,
-            background: 'linear-gradient(135deg, #780000, #520000)',
+            borderRadius: 'var(--radius-sm)',
+            background: 'var(--color-accent-gradient)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             flexShrink: 0,
-            transition: 'transform 0.3s ease, box-shadow 0.3s ease',
+            boxShadow: '0 0 12px rgba(220,20,60,0.3)',
           }}
-          onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.05)'; e.currentTarget.style.boxShadow = '0 0 16px rgba(120,0,0,0.4)'; }}
-          onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.boxShadow = 'none'; }}
         >
-          <span style={{ color: '#000', fontSize: 16, fontWeight: 800 }}>P</span>
+          <span style={{ color: '#fff', fontSize: 16, fontWeight: 900 }}>P</span>
         </div>
         {!collapsed && (
           <span
             style={{
-              color: '#fff',
-              fontSize: 18,
-              fontWeight: 800,
-              letterSpacing: '-0.5px',
-              fontFamily: 'var(--font-hanken)',
+              color: 'var(--color-text-primary)',
+              fontSize: 16,
+              fontWeight: 700,
+              letterSpacing: '-0.3px',
               whiteSpace: 'nowrap',
-              background: 'linear-gradient(90deg, #fff 60%, rgba(255,255,255,0.7))',
-              WebkitBackgroundClip: 'text',
-              WebkitTextFillColor: 'transparent',
             }}
           >
             Pass'io
@@ -100,38 +94,13 @@ export function Sidebar() {
         )}
       </div>
 
-      {/* Collapse button */}
-      <button
-        onClick={() => setCollapsed(!collapsed)}          style={{
-            position: 'absolute',
-            top: 24,
-            right: collapsed ? '50%' : 8,
-            transform: collapsed ? 'translateX(50%)' : 'none',
-            width: 24,
-            height: 24,
-            borderRadius: 12,
-            backgroundColor: 'var(--color-surface-elevated)',
-            border: '1px solid rgba(255,255,255,0.08)',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: 'rgba(255,255,255,0.5)',
-            zIndex: 2,
-            transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-            opacity: 0.7,
-          }}
-          onMouseEnter={(e) => { e.currentTarget.style.color = '#fff'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.2)'; e.currentTarget.style.opacity = '1'; e.currentTarget.style.transform = collapsed ? 'translateX(50%) scale(1.1)' : 'scale(1.1)'; }}
-          onMouseLeave={(e) => { e.currentTarget.style.color = 'rgba(255,255,255,0.5)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)'; e.currentTarget.style.opacity = '0.7'; e.currentTarget.style.transform = collapsed ? 'translateX(50%) scale(1)' : 'scale(1)'; }}
-      >
-        {collapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
-      </button>
-
-      {/* Divider */}
-      <div style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.06)', margin: collapsed ? '0 16px' : '0 20px', flexShrink: 0 }} />
-
       {/* Main Navigation */}
-      <nav style={{ padding: collapsed ? '12px 0' : '12px 12px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+      <nav style={{
+        padding: collapsed ? '8px 0' : '8px 8px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 2,
+      }}>
         {mainNav.map((item) => {
           const active = isActive(item.path);
           const Icon = item.icon;
@@ -144,61 +113,54 @@ export function Sidebar() {
                 alignItems: 'center',
                 justifyContent: collapsed ? 'center' : 'flex-start',
                 gap: 14,
-                padding: collapsed ? '14px 0' : '10px 14px',
-                borderRadius: 8,
-                border: 'none',
-                background: active 
-                  ? 'linear-gradient(90deg, rgba(120, 0, 0, 0.15) 0%, rgba(120, 0, 0, 0.05) 100%)' 
-                  : 'transparent',
+                padding: collapsed ? '12px 0' : '10px 16px',
+                borderRadius: 'var(--radius-sm)',
+                background: active ? 'var(--color-surface-elevated)' : 'transparent',
                 cursor: 'pointer',
-                color: active ? 'var(--color-accent)' : 'rgba(255,255,255,0.65)',
-                transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
-                position: 'relative',
+                color: active ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
+                transition: 'all var(--transition-fast) ease',
                 width: '100%',
                 textAlign: 'left',
-                fontFamily: 'var(--font-inter)',
                 fontSize: 14,
                 fontWeight: active ? 700 : 500,
+                border: 'none',
+                position: 'relative',
               }}
               onMouseEnter={(e) => {
                 if (!active) {
-                  e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
-                  e.currentTarget.style.color = '#fff';
+                  e.currentTarget.style.color = 'var(--color-text-primary)';
                 }
               }}
               onMouseLeave={(e) => {
                 if (!active) {
-                  e.currentTarget.style.background = 'transparent';
-                  e.currentTarget.style.color = 'rgba(255,255,255,0.65)';
+                  e.currentTarget.style.color = 'var(--color-text-secondary)';
                 }
               }}
             >
-              <Icon size={22} />
-              {!collapsed && <span>{item.label}</span>}
-              {active && !collapsed && (
-                <div
-                  style={{
-                    position: 'absolute',
-                    left: 0,
-                    top: '50%',
-                    transform: 'translateY(-50%)',
-                    width: 3,
-                    height: 20,
-                    borderRadius: 2,
-                    backgroundColor: 'var(--color-accent)',
-                  }}
-                />
-              )}
+              <Icon size={22} style={{ flexShrink: 0 }} />
+              {!collapsed && item.label}
             </button>
           );
         })}
       </nav>
 
       {/* Divider */}
-      <div style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.06)', margin: collapsed ? '4px 16px' : '4px 20px', flexShrink: 0 }} />
+      {!collapsed && (
+        <div style={{
+          height: 1,
+          backgroundColor: 'var(--color-border-subtle)',
+          margin: '8px 24px',
+          flexShrink: 0,
+        }} />
+      )}
 
       {/* Secondary Navigation */}
-      <nav style={{ padding: collapsed ? '4px 0' : '4px 12px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+      <nav style={{
+        padding: collapsed ? '4px 0' : '4px 8px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 2,
+      }}>
         {secondaryNav.map((item) => {
           const active = isActive(item.path);
           const Icon = item.icon;
@@ -211,58 +173,71 @@ export function Sidebar() {
                 alignItems: 'center',
                 justifyContent: collapsed ? 'center' : 'flex-start',
                 gap: 14,
-                padding: collapsed ? '14px 0' : '10px 14px',
-                borderRadius: 8,
-                border: 'none',
-                background: active 
-                  ? 'linear-gradient(90deg, rgba(120, 0, 0, 0.15) 0%, rgba(120, 0, 0, 0.05) 100%)' 
-                  : 'transparent',
+                padding: collapsed ? '12px 0' : '10px 16px',
+                borderRadius: 'var(--radius-sm)',
+                background: active ? 'var(--color-surface-elevated)' : 'transparent',
                 cursor: 'pointer',
-                color: active ? 'var(--color-accent)' : 'rgba(255,255,255,0.55)',
-                transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                color: active ? 'var(--color-text-primary)' : 'var(--color-text-muted)',
+                transition: 'all var(--transition-fast) ease',
                 width: '100%',
                 textAlign: 'left',
-                fontFamily: 'var(--font-inter)',
                 fontSize: 13,
-                fontWeight: active ? 700 : 500,
+                fontWeight: active ? 600 : 500,
+                border: 'none',
               }}
               onMouseEnter={(e) => {
                 if (!active) {
-                  e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
-                  e.currentTarget.style.color = '#fff';
+                  e.currentTarget.style.color = 'var(--color-text-secondary)';
                 }
               }}
               onMouseLeave={(e) => {
                 if (!active) {
-                  e.currentTarget.style.background = 'transparent';
-                  e.currentTarget.style.color = 'rgba(255,255,255,0.55)';
+                  e.currentTarget.style.color = 'var(--color-text-muted)';
                 }
               }}
             >
-              <Icon size={20} />
-              {!collapsed && <span>{item.label}</span>}
+              <Icon size={20} style={{ flexShrink: 0 }} />
+              {!collapsed && item.label}
             </button>
           );
         })}
       </nav>
 
-      {/* Spacer */}
+      {/* Collapse button */}
       <div style={{ flex: 1 }} />
-
-      {/* Bottom section - version info */}
-      {!collapsed && (
-        <div
+      <div style={{
+        padding: collapsed ? '12px 0' : '8px 8px',
+        flexShrink: 0,
+        display: 'flex',
+        justifyContent: collapsed ? 'center' : 'flex-start',
+      }}>
+        <button
+          onClick={() => setCollapsed(!collapsed)}
           style={{
-            padding: '12px 20px',
-            borderTop: '1px solid rgba(255,255,255,0.06)',
-            flexShrink: 0,
+            width: 32,
+            height: 32,
+            borderRadius: 'var(--radius-full)',
+            background: 'transparent',
+            border: 'none',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: 'var(--color-text-muted)',
+            transition: 'all var(--transition-fast) ease',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.color = 'var(--color-text-primary)';
+            e.currentTarget.style.background = 'var(--color-surface-hover)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.color = 'var(--color-text-muted)';
+            e.currentTarget.style.background = 'transparent';
           }}
         >
-          <span style={{ color: 'rgba(255,255,255,0.2)', fontSize: 10, fontWeight: 600, letterSpacing: '0.5px', textTransform: 'uppercase' }}>
-            Pass'io v1.0
-          </span>
-        </div>
-      )}
+          {collapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+        </button>
+      </div>
     </aside>
   );
 }

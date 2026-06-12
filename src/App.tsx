@@ -16,6 +16,8 @@ const Local = React.lazy(() => import('./pages/Local').then(m => ({ default: m.L
 const AlbumDetail = React.lazy(() => import('./pages/AlbumDetail').then(m => ({ default: m.AlbumDetailScreen })));
 const ArtistDetail = React.lazy(() => import('./pages/ArtistDetail').then(m => ({ default: m.ArtistDetailScreen })));
 const Search = React.lazy(() => import('./pages/Search').then(m => ({ default: m.SearchScreen })));
+const Artists = React.lazy(() => import('./pages/Artists').then(m => ({ default: m.ArtistsScreen })));
+const Discover = React.lazy(() => import('./pages/Discover').then(m => ({ default: m.DiscoverScreen })));
 
 function PageLoader() {
   return (
@@ -66,14 +68,15 @@ export function App() {
               <Suspense fallback={<PageLoader />}>
                 <Routes>
                   <Route path="/" element={<LoadingScreen />} />
-                  <Route path="/tabs" element={<Explorer />} />
+                  <Route path="/discover" element={<Discover />} />
                   <Route path="/catalog" element={<Catalog />} />
                   <Route path="/activate" element={<Activate />} />
                   <Route path="/local" element={<Local />} />
                   <Route path="/album/:id" element={<AlbumDetail />} />
                   <Route path="/artist/:id" element={<ArtistDetail />} />
+                  <Route path="/artists" element={<Artists />} />
                   <Route path="/search" element={<Search />} />
-                  <Route path="*" element={<Navigate to="/tabs" replace />} />
+                  <Route path="*" element={<Navigate to="/discover" replace />} />
                 </Routes>
               </Suspense>
             </div>

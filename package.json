@@ -13,6 +13,7 @@
   "dependencies": {
     "@tanstack/react-query": "^5.51.23",
     "aes-js": "^3.1.2",
+    "colorthief": "^3.3.1",
     "hls.js": "^1.5.8",
     "idb-keyval": "^6.2.5",
     "lucide-react": "^1.17.0",

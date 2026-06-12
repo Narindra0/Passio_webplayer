@@ -67,7 +67,7 @@ export function SearchScreen() {
 
   return (
     <Screen gradient padded maxWidth="800px">
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, paddingTop: 'var(--header-padding)', paddingBottom: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, paddingBottom: 16 }}>
         <button onClick={() => navigate(-1)} className="btn btn-ghost" style={{ padding: 8 }}>
           <ArrowLeft size={24} />
         </button>

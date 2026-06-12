@@ -1,14 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, CloudOff, Cloud, Compass, ArrowUpDown, Clock } from 'lucide-react';
+import { Search, CloudOff, Cloud, ArrowUpDown, Clock, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useAudioPlayback } from '@/contexts/AudioContext';
 import { useLibraryMode } from '@/contexts/LibraryModeContext';
 import { AlbumCard } from '@/components/AlbumCard';
 import { ArtistCard } from '@/components/ArtistCard';
 import { TrackListItem } from '@/components/TrackListItem';
 import type { TrackWithAlbum } from '@/components/TrackListItem';
-import { Screen, PageHeader } from '@/components/Screen';
-import { SectionTitle } from '@/components/SectionTitle';
+import { Screen } from '@/components/Screen';
 import { getAlbum, listAlbums, unwrapAlbumDetails } from '@/services/api';
 import { listVaultAlbums, isAlbumReadyOffline } from '@/services/downloadManager';
 import { freeCatalogDetailsMap, readFreeCatalogCache, writeFreeCatalogCache } from '@/services/freeCatalogCache';
@@ -30,6 +29,8 @@ export function ExplorerScreen() {
   const [freeTracks, setFreeTracks] = useState<TrackWithAlbum[]>([]);
   const [displayedTracks, setDisplayedTracks] = useState<TrackWithAlbum[]>([]);
   const [artists, setArtists] = useState<{ id: string; name: string; profile_picture_url?: string | null; fallback_image_url?: string | null }[]>([]);
+  const artistScrollRef = useRef<HTMLDivElement>(null);
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [dataNotice, setDataNotice] = useState<string | null>(null);
@@ -149,6 +150,15 @@ export function ExplorerScreen() {
     return filtered;
   }, [displayedAlbums, albumSortOption, albumTypeFilter]);
 
+  const scrollArtists = (direction: 'left' | 'right') => {
+    if (!artistScrollRef.current) return;
+    const scrollAmount = 720;
+    artistScrollRef.current.scrollBy({
+      left: direction === 'left' ? -scrollAmount : scrollAmount,
+      behavior: 'smooth',
+    });
+  };
+
   const loadMoreTracks = () => {
     const nextCount = displayedTracks.length + ITEMS_PER_PAGE;
     setDisplayedTracks(freeTracks.slice(0, nextCount));
@@ -156,25 +166,45 @@ export function ExplorerScreen() {
 
   return (
     <Screen gradient padded>
-      <PageHeader 
-        title={isOfflineMode ? 'Bibliothèque locale' : 'Découvrir'}
-        accent={!isOfflineMode}
-        style={{ paddingTop: 'var(--header-padding)' }}
-      >
-        <button onClick={() => void toggleMode()} className="btn btn-ghost" style={{ padding: 8 }}>
-          {isOfflineMode ? <CloudOff size={22} color="var(--color-accent)" /> : <Cloud size={22} />}
-        </button>
-        {!isOfflineMode && (
-          <button onClick={() => navigate('/search')} className="btn btn-ghost" style={{ padding: 8 }}>
-            <Search size={22} />
+      {/* Red accent dot */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, paddingBottom: 8 }}>
+        <div style={{ width: 4, height: 28, borderRadius: 2, background: 'var(--color-accent-gradient)', flexShrink: 0 }} />
+        <h1 style={{ color: 'var(--color-text-primary)', fontSize: 'clamp(28px, 3.5vw, 32px)', fontWeight: 700, letterSpacing: '-0.5px', margin: 0, lineHeight: 1.15 }}>
+          {isOfflineMode ? 'Bibliothèque locale' : 'Découvrir'}
+        </h1>
+        <div style={{ flex: 1 }} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <button
+            onClick={() => navigate('/search')}
+            className="btn-ghost"
+            style={{ padding: 8 }}
+          >
+            <Search size={20} />
           </button>
-        )}
-      </PageHeader>
+          <button
+            onClick={() => void toggleMode()}
+            className="btn-ghost"
+            style={{ padding: 8 }}
+          >
+            {isOfflineMode ? <CloudOff size={20} color="var(--color-accent)" /> : <Cloud size={20} />}
+          </button>
+        </div>
+      </div>
 
       {dataNotice && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', marginBottom: 16, borderRadius: 14, backgroundColor: 'rgba(120,0,0,0.08)', border: '1px solid rgba(120,0,0,0.2)' }}>
-          <CloudOff size={18} color="var(--color-accent)" />
-          <p style={{ flex: 1, color: 'rgba(255,255,255,0.75)', fontSize: 13, lineHeight: '18px', margin: 0 }}>{dataNotice}</p>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            padding: '10px 14px',
+            marginBottom: 20,
+            borderRadius: 'var(--radius-sm)',
+            background: 'var(--color-surface-elevated)',
+          }}
+        >
+          <CloudOff size={16} color="var(--color-text-muted)" />
+          <p style={{ flex: 1, color: 'var(--color-text-secondary)', fontSize: 13, margin: 0 }}>{dataNotice}</p>
         </div>
       )}
 
@@ -182,26 +212,36 @@ export function ExplorerScreen() {
         loading ? (
           <div className="flex justify-center p-10"><div className="loader-spinner" /></div>
         ) : error ? (
-          <div className="flex justify-center p-6 text-error">{error}</div>
+          <div className="flex justify-center p-6" style={{ color: 'var(--color-error)' }}>{error}</div>
         ) : (
           <>
-            <SectionTitle>Téléchargés Pass'io</SectionTitle>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 16 }}>
+            <div className="section-header">
+              <h2 className="section-title">Téléchargés Pass'io</h2>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {vaultAlbums.map((album) => (
                 <AlbumCard key={album.id} album={album} onPress={() => navigate(`/album/${album.id}`)} />
               ))}
-              {vaultAlbums.length === 0 && <p className="text-muted text-center" style={{ marginTop: 8 }}>Aucun album Pass'io téléchargé.</p>}
+              {vaultAlbums.length === 0 && (
+                <p style={{ color: 'var(--color-text-muted)', textAlign: 'center', marginTop: 20 }}>
+                  Aucun album Pass'io téléchargé.
+                </p>
+              )}
             </div>
             {freeTracks.length > 0 && (
-              <div style={{ marginTop: 28 }}>
-                <SectionTitle>Titres gratuits (cache)</SectionTitle>
-                <div style={{ marginTop: 16 }}>
+              <div style={{ marginTop: 32 }}>
+                <div className="section-header">
+                  <h2 className="section-title">Titres gratuits</h2>
+                </div>
+                <div>
                   {displayedTracks.map((track) => (
                     <TrackListItem key={track.id} track={track} isPlaying={currentTrack?.id === track.id && isPlaying} onPress={() => void handleTrackPress(track)} />
                   ))}
                 </div>
                 {displayedTracks.length < freeTracks.length && (
-                  <button onClick={loadMoreTracks} className="btn btn-secondary" style={{ margin: '12px auto', display: 'flex' }}>Charger plus</button>
+                  <button onClick={loadMoreTracks} className="btn-secondary" style={{ margin: '12px auto', display: 'flex' }}>
+                    Afficher plus
+                  </button>
                 )}
               </div>
             )}
@@ -209,64 +249,192 @@ export function ExplorerScreen() {
         )
       ) : (
         <>
-          <div style={{ display: 'flex', gap: 8, marginBottom: 24 }}>
-            <button onClick={() => setActiveFilter('titres')} className={`chip ${activeFilter === 'titres' ? 'chip-active' : ''}`}>Titres</button>
-            <button onClick={() => { setSelectedArtistId(null); setActiveFilter('albums'); }} className={`chip ${activeFilter === 'albums' ? 'chip-active' : ''}`}>Albums</button>
+          {/* Filter chips */}
+          <div style={{ display: 'flex', gap: 6, marginBottom: 24 }}>
+            <button onClick={() => setActiveFilter('titres')} className={`chip ${activeFilter === 'titres' ? 'chip-active' : ''}`}>
+              Titres
+            </button>
+            <button onClick={() => { setSelectedArtistId(null); setActiveFilter('albums'); }} className={`chip ${activeFilter === 'albums' ? 'chip-active' : ''}`}>
+              Albums
+            </button>
           </div>
 
           {loading ? (
             <div className="flex justify-center p-10"><div className="loader-spinner" /></div>
           ) : error ? (
-            <div className="flex justify-center p-6 text-error">{error}</div>
+            <div className="flex justify-center p-6" style={{ color: 'var(--color-error)' }}>{error}</div>
           ) : (
             <>
-              {artists.length > 0 && activeFilter !== 'albums' && (
-                <div style={{ marginBottom: 24 }}>
-                  <SectionTitle>Artistes</SectionTitle>
-                  <div style={{ display: 'flex', gap: 12, overflowX: 'auto', padding: '12px 0', scrollbarWidth: 'none' }}>
-                    {artists.map((artist) => (
-                      <ArtistCard key={artist.id} artist={artist} onPress={() => navigate(`/artist/${artist.id}`)} />
-                    ))}
+              {/* Artists Section — Spotify-style horizontal scroll */}
+              {artists.length > 0 && (
+                <div style={{ marginBottom: 32 }}>
+                  <div className="section-header">
+                    <h2 className="section-title">Artistes populaires</h2>
+                    <span
+                      className="section-link"
+                      onClick={() => navigate('/artists')}
+                      style={{ cursor: 'pointer' }}
+                    >
+                      Voir tout
+                    </span>
+                  </div>
+                  <div style={{ position: 'relative' }}>
+                    {/* Left scroll button */}
+                    {artists.length > 3 && (
+                      <button
+                        onClick={() => scrollArtists('left')}
+                        style={{
+                          position: 'absolute',
+                          left: -8,
+                          top: '50%',
+                          transform: 'translateY(-50%)',
+                          zIndex: 10,
+                          width: 40,
+                          height: 40,
+                          borderRadius: 'var(--radius-full)',
+                          background: 'var(--color-surface-glass)',
+                          backdropFilter: 'blur(12px)',
+                          border: '1px solid var(--color-border-subtle)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          cursor: 'pointer',
+                          color: 'var(--color-text-primary)',
+                          boxShadow: 'var(--shadow-md)',
+                          transition: 'all var(--transition-fast) ease',
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.background = 'var(--color-surface-hover)';
+                          e.currentTarget.style.transform = 'translateY(-50%) scale(1.05)';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.background = 'var(--color-surface-glass)';
+                          e.currentTarget.style.transform = 'translateY(-50%) scale(1)';
+                        }}
+                      >
+                        <ChevronLeft size={20} />
+                      </button>
+                    )}
+
+                    <div
+                      ref={artistScrollRef}
+                      style={{
+                        display: 'flex',
+                        gap: 0,
+                        overflowX: 'auto',
+                        padding: '4px 0',
+                        scrollbarWidth: 'none',
+                        marginLeft: -4,
+                        marginRight: -4,
+                        scrollBehavior: 'smooth',
+                      }}
+                    >
+                      {artists.map((artist) => (
+                        <ArtistCard key={artist.id} artist={artist} onPress={() => navigate(`/artist/${artist.id}`)} />
+                      ))}
+                    </div>
+
+                    {/* Right scroll button */}
+                    {artists.length > 3 && (
+                      <button
+                        onClick={() => scrollArtists('right')}
+                        style={{
+                          position: 'absolute',
+                          right: -8,
+                          top: '50%',
+                          transform: 'translateY(-50%)',
+                          zIndex: 10,
+                          width: 40,
+                          height: 40,
+                          borderRadius: 'var(--radius-full)',
+                          background: 'var(--color-surface-glass)',
+                          backdropFilter: 'blur(12px)',
+                          border: '1px solid var(--color-border-subtle)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          cursor: 'pointer',
+                          color: 'var(--color-text-primary)',
+                          boxShadow: 'var(--shadow-md)',
+                          transition: 'all var(--transition-fast) ease',
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.background = 'var(--color-surface-hover)';
+                          e.currentTarget.style.transform = 'translateY(-50%) scale(1.05)';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.background = 'var(--color-surface-glass)';
+                          e.currentTarget.style.transform = 'translateY(-50%) scale(1)';
+                        }}
+                      >
+                        <ChevronRight size={20} />
+                      </button>
+                    )}
                   </div>
                 </div>
               )}
 
+              {/* Tracks Section */}
               {activeFilter === 'titres' && (
-                <div style={{ marginBottom: 24 }}>
-                  <SectionTitle>Titres gratuits</SectionTitle>
-                  <div style={{ marginTop: 16 }}>
+                <div>
+                  <div className="section-header">
+                    <h2 className="section-title">Titres gratuits</h2>
+                  </div>
+                  <div>
                     {displayedTracks.map((track) => (
                       <TrackListItem key={track.id} track={track} isPlaying={currentTrack?.id === track.id && isPlaying} onPress={() => void handleTrackPress(track)} />
                     ))}
                   </div>
                   {displayedTracks.length < freeTracks.length && (
-                    <button onClick={loadMoreTracks} className="btn btn-secondary" style={{ margin: '12px auto', display: 'flex' }}>Charger plus</button>
+                    <button onClick={loadMoreTracks} className="btn-secondary" style={{ margin: '12px auto', display: 'flex' }}>
+                      Afficher plus
+                    </button>
                   )}
-                  {freeTracks.length === 0 && <p className="text-muted text-center" style={{ marginTop: 20 }}>Aucun titre gratuit disponible</p>}
+                  {freeTracks.length === 0 && (
+                    <p style={{ color: 'var(--color-text-muted)', textAlign: 'center', marginTop: 20 }}>
+                      Aucun titre gratuit disponible
+                    </p>
+                  )}
                 </div>
               )}
 
+              {/* Albums Section — grid layout */}
               {activeFilter === 'albums' && (
-                <div style={{ marginBottom: 24 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <SectionTitle>{selectedArtistId ? `Albums — ${artists.find((a) => a.id === selectedArtistId)?.name ?? ''}` : 'Tous les albums'}</SectionTitle>
-                    <button onClick={() => setAlbumSortOption(prev => prev === 'az' ? 'recent' : 'az')} className="btn btn-ghost" style={{ padding: 8 }}>
-                      {albumSortOption === 'az' ? <ArrowUpDown size={20} /> : <Clock size={20} />}
-                    </button>
+                <div>
+                  <div className="section-header">
+                    <h2 className="section-title">
+                      {selectedArtistId
+                        ? `Albums — ${artists.find((a) => a.id === selectedArtistId)?.name ?? ''}`
+                        : 'Tous les albums'}
+                    </h2>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <button onClick={() => setAlbumSortOption(prev => prev === 'az' ? 'recent' : 'az')} className="btn-ghost" style={{ padding: 6 }}>
+                        {albumSortOption === 'az' ? <ArrowUpDown size={18} /> : <Clock size={18} />}
+                      </button>
+                    </div>
                   </div>
-                  <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+                  <div style={{ display: 'flex', gap: 6, marginBottom: 20 }}>
                     {(['all', 'album', 'single'] as const).map((type) => (
                       <button key={type} onClick={() => setAlbumTypeFilter(type)} className={`chip ${albumTypeFilter === type ? 'chip-active' : ''}`}>
                         {type === 'all' ? 'Tous' : type === 'album' ? 'Albums' : 'Singles'}
                       </button>
                     ))}
                   </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                  {/* Grid layout for albums */}
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fill, minmax(175px, 1fr))',
+                    gap: 16,
+                  }}>
                     {sortedAlbums.map((album) => (
-                      <AlbumCard key={album.id} album={album} onPress={() => navigate(`/album/${album.id}`)} />
+                      <AlbumCard key={album.id} album={album} variant="tile" onPress={() => navigate(`/album/${album.id}`)} />
                     ))}
                   </div>
-                  {sortedAlbums.length === 0 && <p className="text-muted text-center" style={{ marginTop: 20 }}>Aucun album disponible</p>}
+                  {sortedAlbums.length === 0 && (
+                    <p style={{ color: 'var(--color-text-muted)', textAlign: 'center', marginTop: 20 }}>
+                      Aucun album disponible
+                    </p>
+                  )}
                 </div>
               )}
             </>

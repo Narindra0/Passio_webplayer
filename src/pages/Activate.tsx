@@ -80,7 +80,7 @@ export function ActivateScreen() {
       <PageHeader 
         title="Libérez votre son exclusif."
         subtitle="Entrez votre PassCode pour activer votre album et l'ajouter à votre bibliothèque sécurisée."
-        style={{ paddingTop: 'var(--header-padding)' }}
+
       />
       
       <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', gap: 32 }}>

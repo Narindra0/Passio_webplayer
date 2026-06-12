@@ -1,14 +1,22 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
-import {
-  List, Shuffle, SkipBack, SkipForward, Play, Pause,
-  Repeat, Repeat1, Infinity, TextQuote, Volume2, X, ChevronLeft,
-} from 'lucide-react';
 import { useAudioPlayback, useAudioProgress } from '@/contexts/AudioContext';
 import { useLibraryMode } from '@/contexts/LibraryModeContext';
-import { PlayerWaveform } from './PlayerWaveform';
-import { FullPlayerLyrics } from './FullPlayerLyrics';
+import { useAlbumColors } from '@/hooks/useAlbumColors';
+import { useCachedImage } from '@/hooks/useCachedImage';
 import type { PublicAlbumDetails } from '@/types/backend';
+import {
+    ChevronLeft,
+    Infinity,
+    List,
+    Pause,
+    Play,
+    Repeat, Repeat1,
+    Shuffle, SkipBack, SkipForward,
+    TextQuote, Volume2, X,
+} from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { FullPlayerLyrics } from './FullPlayerLyrics';
+import { PlayerWaveform } from './PlayerWaveform';
 
 function formatAlbumArtist(albumData: PublicAlbumDetails | null | undefined): string {
   if (!albumData) return 'Artiste inconnu';
@@ -75,9 +83,12 @@ export function FullPlayer() {
   const currentTimeLabel = formatTime(progress * duration);
   const totalTimeLabel = formatTime(duration);
   const repeatIcon = repeatMode === 'off' ? Repeat : repeatMode === 'one' ? Repeat1 : Infinity;
-  const repeatColor = repeatMode === 'off' ? 'rgba(255,255,255,0.38)' : 'var(--color-accent)';
-  const shuffleColor = queueMode === 'shuffle' ? 'var(--color-accent)' : 'rgba(255,255,255,0.38)';
+  const repeatColor = repeatMode === 'off' ? 'var(--color-text-muted)' : 'var(--color-accent)';
+  const shuffleColor = queueMode === 'shuffle' ? 'var(--color-accent)' : 'var(--color-text-muted)';
   const trackKey = isDeviceMode ? deviceCurrentTrack!.id : currentTrack!.id;
+  const coverColors = useAlbumColors(coverUri);
+  const cachedCover = useCachedImage(coverUri);
+  const cachedArtistPic = useCachedImage(album?.artist?.profile_picture_url || album?.artist_pdp || null);
 
   const fullQueue = isDeviceMode ? deviceQueue : queue;
   const currentIdx = isDeviceMode ? deviceCurrentIndex : currentIndex;
@@ -87,10 +98,10 @@ export function FullPlayer() {
     <aside
       className="fullplayer"
       style={{
-        width: 360,
+        width: 380,
         height: '100%',
-        backgroundColor: '#111112',
-        borderLeft: '1px solid rgba(255,255,255,0.06)',
+        backgroundColor: 'var(--color-bg-dark)',
+        borderLeft: '1px solid var(--color-border-subtle)',
         display: 'flex',
         flexDirection: 'column',
         flexShrink: 0,
@@ -98,17 +109,16 @@ export function FullPlayer() {
         position: 'relative',
       }}
     >
-      {/* Gradient Background */}
+      {/* Background gradient — dynamic from album cover */}
       <div
         style={{
           position: 'absolute',
           top: 0,
           left: 0,
           right: 0,
-          height: '100%',
-          background: coverUri
-            ? `linear-gradient(180deg, rgba(120,0,0,0.04) 0%, transparent 30%, transparent 100%)`
-            : undefined,
+          height: '50%',
+          background: coverColors.playerGradient,
+          transition: 'background 0.6s ease',
           pointerEvents: 'none',
         }}
       />
@@ -119,111 +129,98 @@ export function FullPlayer() {
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          padding: '16px 16px 8px',
+          padding: '16px 20px 12px',
           position: 'relative',
           zIndex: 1,
           flexShrink: 0,
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <button
-            onClick={() => setFullPlayerVisible(false)}
-            style={{
-              width: 28,
-              height: 28,
-              borderRadius: 6,
-              border: 'none',
-              background: 'rgba(255,255,255,0.04)',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: 'rgba(255,255,255,0.5)',
-              transition: 'all 0.15s ease',
-            }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; e.currentTarget.style.color = '#fff'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; e.currentTarget.style.color = 'rgba(255,255,255,0.5)'; }}
-          >
-            <ChevronLeft size={16} />
-          </button>
-          <span
-            style={{
-              color: 'rgba(255,255,255,0.5)',
-              fontSize: 11,
-              fontWeight: 700,
-              textTransform: 'uppercase',
-              letterSpacing: '1.2px',
-            }}
-          >
-            En cours
-          </span>
-        </div>
         <button
-          onClick={() => setQueueModalVisible(true)}
+          onClick={() => setFullPlayerVisible(false)}
           style={{
-            width: 28,
-            height: 28,
-            borderRadius: 6,
+            width: 32,
+            height: 32,
+            borderRadius: 'var(--radius-full)',
             border: 'none',
             background: 'transparent',
             cursor: 'pointer',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            color: 'rgba(255,255,255,0.5)',
-            transition: 'all 0.15s ease',
+            color: 'var(--color-text-secondary)',
+            transition: 'all var(--transition-fast) ease',
           }}
-          onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; e.currentTarget.style.color = '#fff'; }}
-          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'rgba(255,255,255,0.5)'; }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-surface-hover)'; e.currentTarget.style.color = 'var(--color-text-primary)'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--color-text-secondary)'; }}
+        >
+          <ChevronLeft size={18} />
+        </button>
+        <span style={{ color: 'var(--color-text-muted)', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px' }}>
+          En cours
+        </span>
+        <button
+          onClick={() => setQueueModalVisible(true)}
+          style={{
+            width: 32,
+            height: 32,
+            borderRadius: 'var(--radius-full)',
+            border: 'none',
+            background: 'transparent',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: 'var(--color-text-secondary)',
+            transition: 'all var(--transition-fast) ease',
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-surface-hover)'; e.currentTarget.style.color = 'var(--color-text-primary)'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--color-text-secondary)'; }}
         >
           <List size={18} />
         </button>
       </div>
 
-      {/* Scrollable Content */}
+      {/* Content */}
       <div
         className="fullplayer-content"
         style={{
           flex: 1,
           overflowY: 'auto',
-          padding: '0 20px 20px',
+          padding: '0 24px 28px',
           position: 'relative',
           zIndex: 1,
         }}
       >
-        {/* Cover Art */}
+        {/* Cover art — centered */}
         <div
-          className={`fullplayer-cover ${isPlaying ? 'cover-rotate playing' : 'cover-rotate'}`}
           style={{
             width: '100%',
+            maxWidth: 320,
+            margin: '0 auto 20px',
             aspectRatio: '1',
-            borderRadius: 12,
+            borderRadius: 'var(--radius-sm)',
             overflow: 'hidden',
-            backgroundColor: '#1c1c1c',
-            boxShadow: '0 16px 32px rgba(0,0,0,0.5)',
-            marginBottom: 20,
-            transform: isPlaying ? 'scale(1)' : 'scale(0.97)',
-            transition: 'transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1)',
+            backgroundColor: 'var(--color-surface-elevated)',
+            boxShadow: 'var(--shadow-xl)',
             position: 'relative',
           }}
         >
           {coverUri ? (
-            <img src={coverUri} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            <img src={cachedCover || coverUri} alt="" loading="lazy" decoding="async" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
           ) : (
             <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <span style={{ fontSize: 48, color: 'rgba(255,255,255,0.18)' }}>♪</span>
+              <span style={{ fontSize: 48, color: 'var(--color-text-muted)' }}>♪</span>
             </div>
           )}
         </div>
 
-        {/* Track Info */}
+        {/* Track info */}
         <div style={{ marginBottom: 16 }}>
           <div
             style={{
-              color: '#fff',
+              color: 'var(--color-text-primary)',
               fontSize: 20,
               fontWeight: 700,
-              letterSpacing: '-0.3px',
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               whiteSpace: 'nowrap',
@@ -234,7 +231,7 @@ export function FullPlayer() {
           </div>
           <div
             style={{
-              color: 'rgba(255,255,255,0.55)',
+              color: 'var(--color-text-secondary)',
               fontSize: 14,
               fontWeight: 500,
               marginTop: 4,
@@ -247,24 +244,33 @@ export function FullPlayer() {
           </div>
         </div>
 
-        {/* Controls */}
+        {/* Waveform / Progress */}
         <div style={{ marginBottom: 16 }}>
-          <PlayerWaveform progress={progress} trackKey={trackKey} onSeek={seekTo} playedColor="var(--color-primary-light)" unplayedColor="rgba(255,255,255,0.15)" />
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
-            <span style={{ color: 'rgba(255,255,255,0.35)', fontSize: 11, fontWeight: 600, letterSpacing: '0.3px' }}>{currentTimeLabel}</span>
-            <span style={{ color: 'rgba(255,255,255,0.35)', fontSize: 11, fontWeight: 600, letterSpacing: '0.3px' }}>{totalTimeLabel}</span>
+          <PlayerWaveform
+            progress={progress}
+            trackKey={trackKey}
+            onSeek={seekTo}
+            playedColor="var(--color-accent)"
+            unplayedColor="var(--color-border-subtle)"
+          />
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6 }}>
+            <span style={{ color: 'var(--color-text-muted)', fontSize: 11, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
+              {currentTimeLabel}
+            </span>
+            <span style={{ color: 'var(--color-text-muted)', fontSize: 11, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
+              {totalTimeLabel}
+            </span>
           </div>
         </div>
 
-        {/* Playback buttons */}
+        {/* Controls */}
         <div
           style={{
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            gap: 6,
+            gap: 12,
             marginBottom: 20,
-            padding: '4px 0',
           }}
         >
           <button
@@ -275,15 +281,15 @@ export function FullPlayer() {
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              background: 'none',
+              background: 'transparent',
               border: 'none',
               cursor: 'pointer',
-              borderRadius: 20,
+              borderRadius: 'var(--radius-full)',
               color: shuffleColor,
-              transition: 'all 0.15s ease',
+              transition: 'all var(--transition-fast) ease',
             }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+            onMouseEnter={(e) => { if (queueMode !== 'shuffle') e.currentTarget.style.color = 'var(--color-text-primary)'; }}
+            onMouseLeave={(e) => { if (queueMode !== 'shuffle') e.currentTarget.style.color = 'var(--color-text-muted)'; }}
           >
             <Shuffle size={18} />
           </button>
@@ -292,21 +298,19 @@ export function FullPlayer() {
             onClick={() => hasPrev && void previous()}
             disabled={!hasPrev}
             style={{
-              width: 44,
-              height: 44,
+              width: 40,
+              height: 40,
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              background: 'none',
+              background: 'transparent',
               border: 'none',
               cursor: hasPrev ? 'pointer' : 'default',
-              borderRadius: 22,
-              color: '#fff',
-              opacity: hasPrev ? 1 : 0.28,
-              transition: 'all 0.15s ease',
+              borderRadius: 'var(--radius-full)',
+              color: 'var(--color-text-primary)',
+              opacity: hasPrev ? 1 : 0.3,
+              transition: 'all var(--transition-fast) ease',
             }}
-            onMouseEnter={(e) => { if (hasPrev) e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
           >
             <SkipBack size={22} />
           </button>
@@ -316,27 +320,26 @@ export function FullPlayer() {
             style={{
               width: 56,
               height: 56,
-              borderRadius: '50%',
-              backgroundColor: '#fff',
+              borderRadius: 'var(--radius-full)',
+              background: 'var(--color-accent)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               border: 'none',
               cursor: 'pointer',
-              transition: 'transform 0.15s cubic-bezier(0.34, 1.56, 0.64, 1)',
-              boxShadow: isPlaying 
-                ? '0 0 20px rgba(255,255,255,0.2)' 
-                : '0 0 0px rgba(255,255,255,0)',
+              transition: 'all var(--transition-fast) ease',
             }}
-            onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.06)'; e.currentTarget.style.boxShadow = '0 0 24px rgba(255,255,255,0.25)'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.boxShadow = isPlaying ? '0 0 20px rgba(255,255,255,0.2)' : 'none'; }}
-            onMouseDown={(e) => { e.currentTarget.style.transform = 'scale(0.94)'; }}
+            onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.06)'; e.currentTarget.style.background = 'var(--color-accent-light)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.background = 'var(--color-accent)'; }}
+            onMouseDown={(e) => { e.currentTarget.style.transform = 'scale(0.96)'; }}
             onMouseUp={(e) => { e.currentTarget.style.transform = 'scale(1.06)'; }}
           >
-            {isPlaying ? (
-              <Pause size={28} color="#0a0a0a" />
+            {isLoading ? (
+              <div className="loader-spinner" style={{ width: 20, height: 20, borderWidth: 2, borderColor: 'rgba(255,255,255,0.2)', borderTopColor: '#fff' }} />
+            ) : isPlaying ? (
+              <Pause size={24} color="#fff" />
             ) : (
-              <Play size={28} color="#0a0a0a" style={{ marginLeft: 3 }} />
+              <Play size={24} color="#fff" style={{ marginLeft: 2 }} />
             )}
           </button>
 
@@ -344,21 +347,19 @@ export function FullPlayer() {
             onClick={() => hasNext && void next()}
             disabled={!hasNext}
             style={{
-              width: 44,
-              height: 44,
+              width: 40,
+              height: 40,
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              background: 'none',
+              background: 'transparent',
               border: 'none',
               cursor: hasNext ? 'pointer' : 'default',
-              borderRadius: 22,
-              color: '#fff',
-              opacity: hasNext ? 1 : 0.28,
-              transition: 'all 0.15s ease',
+              borderRadius: 'var(--radius-full)',
+              color: 'var(--color-text-primary)',
+              opacity: hasNext ? 1 : 0.3,
+              transition: 'all var(--transition-fast) ease',
             }}
-            onMouseEnter={(e) => { if (hasNext) e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
           >
             <SkipForward size={22} />
           </button>
@@ -371,55 +372,55 @@ export function FullPlayer() {
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              background: 'none',
+              background: 'transparent',
               border: 'none',
               cursor: 'pointer',
-              borderRadius: 20,
+              borderRadius: 'var(--radius-full)',
               color: repeatColor,
-              transition: 'all 0.15s ease',
+              transition: 'all var(--transition-fast) ease',
               position: 'relative',
             }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+            onMouseEnter={(e) => { if (repeatMode === 'off') e.currentTarget.style.color = 'var(--color-text-primary)'; }}
+            onMouseLeave={(e) => { if (repeatMode === 'off') e.currentTarget.style.color = 'var(--color-text-muted)'; }}
           >
             {React.createElement(repeatIcon, { size: 18 })}
           </button>
         </div>
 
-        {/* Lyrics button & about artist */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+        {/* Lyrics toggle */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
           {showLyricsControls && (
             <button
-              onClick={() => setLyricsMode((p) => p === 'hidden' ? 'compact' : 'hidden')}
+              onClick={() => setLyricsMode((p) => (p === 'hidden' ? 'compact' : 'hidden'))}
               style={{
                 display: 'flex',
                 alignItems: 'center',
                 gap: 6,
-                padding: '8px 14px',
-                borderRadius: 8,
+                padding: '8px 16px',
+                borderRadius: 'var(--radius-full)',
                 border: 'none',
-                background: lyricsMode !== 'hidden' ? 'rgba(120,0,0,0.15)' : 'rgba(255,255,255,0.04)',
+                background: lyricsMode !== 'hidden' ? 'var(--color-surface-elevated)' : 'transparent',
                 cursor: 'pointer',
-                color: lyricsMode !== 'hidden' ? 'var(--color-accent)' : 'rgba(255,255,255,0.5)',
-                fontSize: 12,
+                color: lyricsMode !== 'hidden' ? 'var(--color-accent)' : 'var(--color-text-muted)',
+                fontSize: 13,
                 fontWeight: 600,
-                transition: 'all 0.15s ease',
+                transition: 'all var(--transition-fast) ease',
               }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = lyricsMode !== 'hidden' ? 'rgba(120,0,0,0.2)' : 'rgba(255,255,255,0.08)'; }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = lyricsMode !== 'hidden' ? 'rgba(120,0,0,0.15)' : 'rgba(255,255,255,0.04)'; }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-surface-elevated)'; e.currentTarget.style.color = lyricsMode !== 'hidden' ? 'var(--color-accent)' : 'var(--color-text-secondary)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = lyricsMode !== 'hidden' ? 'var(--color-surface-elevated)' : 'transparent'; e.currentTarget.style.color = lyricsMode !== 'hidden' ? 'var(--color-accent)' : 'var(--color-text-muted)'; }}
             >
-              <TextQuote size={14} />
+              <TextQuote size={16} />
               <span>Paroles</span>
             </button>
           )}
         </div>
 
-        {/* Lyrics (compact) */}
+        {/* Lyrics content */}
         {lyricsMode !== 'hidden' && showLyricsControls && currentTrack && (
           <div
             style={{
-              backgroundColor: 'rgba(255,255,255,0.02)',
-              borderRadius: 10,
+              backgroundColor: 'var(--color-surface-elevated)',
+              borderRadius: 'var(--radius-sm)',
               overflow: 'hidden',
               marginBottom: 16,
               minHeight: 80,
@@ -435,73 +436,74 @@ export function FullPlayer() {
           </div>
         )}
 
-        {/* About Artist */}
+        {/* About artist */}
         {effectiveMode === 'online' && !isDeviceMode && album && (
           <div style={{ marginTop: 8 }}>
             <h3
               style={{
-                color: 'rgba(255,255,255,0.5)',
+                color: 'var(--color-text-muted)',
                 fontSize: 11,
                 fontWeight: 700,
                 textTransform: 'uppercase',
-                letterSpacing: '1.2px',
-                marginBottom: 10,
-                margin: '0 0 10px 0',
+                letterSpacing: '1px',
+                margin: '0 0 12px',
               }}
             >
               À propos de l'artiste
             </h3>
             <button
-              onClick={() => { if (album.artist_id) { navigate(`/artist/${album.artist_id}`); setFullPlayerVisible(false); } }}
+              onClick={() => {
+                if (album.artist_id) {
+                  navigate(`/artist/${album.artist_id}`);
+                  setFullPlayerVisible(false);
+                }
+              }}
               style={{
                 display: 'flex',
                 alignItems: 'center',
                 gap: 12,
-                backgroundColor: 'rgba(255,255,255,0.04)',
-                borderRadius: 10,
-                padding: 12,
+                backgroundColor: 'transparent',
+                borderRadius: 'var(--radius-sm)',
+                padding: 8,
                 border: 'none',
                 cursor: 'pointer',
                 width: '100%',
                 textAlign: 'left',
-                transition: 'background-color 0.15s ease',
+                transition: 'background-color var(--transition-fast) ease',
               }}
-              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.08)'; }}
-              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.04)'; }}
+              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--color-surface-hover)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
             >
               <img
-                src={album.artist?.profile_picture_url || album.artist_pdp || album.cover_url || undefined}
+                src={cachedArtistPic || album.artist?.profile_picture_url || album.artist_pdp || album.cover_url || undefined}
                 alt=""
+                loading="lazy"
+                decoding="async"
                 style={{
                   width: 44,
                   height: 44,
-                  borderRadius: '50%',
+                  borderRadius: 'var(--radius-full)',
                   objectFit: 'cover',
-                  backgroundColor: '#2a2a2a',
+                  backgroundColor: 'var(--color-surface-elevated)',
                   flexShrink: 0,
                 }}
               />
-              <div style={{ minWidth: 0 }}>
-                <p style={{ color: '#fff', fontSize: 14, fontWeight: 600, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{artistName}</p>
-                <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12, fontWeight: 500, margin: '3px 0 0 0' }}>Artiste</p>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <p style={{ color: 'var(--color-text-primary)', fontSize: 14, fontWeight: 600, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {artistName}
+                </p>
+                <p style={{ color: 'var(--color-text-muted)', fontSize: 12, fontWeight: 500, margin: '2px 0 0' }}>
+                  Artiste
+                </p>
               </div>
             </button>
           </div>
         )}
 
-        {/* Queue Section (inline in right panel) */}
+        {/* Up next */}
         {upcomingTracks.length > 0 && (
-          <div style={{ marginTop: 20, marginBottom: 12 }}>
-            <h3
-              style={{
-                color: 'rgba(255,255,255,0.5)',
-                fontSize: 11,
-                fontWeight: 700,
-                textTransform: 'uppercase',
-                letterSpacing: '1.2px',
-                margin: '0 0 10px 0',
-              }}
-            >
+          <div style={{ marginTop: 24, marginBottom: 12 }}>
+            <h3 style={{ color: 'var(--color-text-muted)', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px', margin: '0 0 12px' }}>
               À suivre ({upcomingTracks.length})
             </h3>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -524,26 +526,26 @@ export function FullPlayer() {
                       display: 'flex',
                       alignItems: 'center',
                       gap: 10,
-                      padding: '8px 8px',
-                      borderRadius: 8,
+                      padding: '8px 10px',
+                      borderRadius: 'var(--radius-sm)',
                       border: 'none',
-                      background: isActive ? 'rgba(120,0,0,0.1)' : 'transparent',
+                      background: isActive ? 'var(--color-surface-elevated)' : 'transparent',
                       cursor: 'pointer',
                       width: '100%',
                       textAlign: 'left',
-                      transition: 'background-color 0.15s ease',
+                      transition: 'background-color var(--transition-fast) ease',
                     }}
-                    onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.background = 'rgba(255,255,255,0.03)'; }}
+                    onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.background = 'var(--color-surface-hover)'; }}
                     onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.background = 'transparent'; }}
                   >
-                    <span style={{ color: 'rgba(255,255,255,0.25)', fontSize: 11, fontWeight: 600, minWidth: 16, textAlign: 'center' }}>
+                    <span style={{ color: 'var(--color-text-muted)', fontSize: 12, fontWeight: 600, minWidth: 18, textAlign: 'center' }}>
                       {index + 1}
                     </span>
                     <div style={{ minWidth: 0, flex: 1 }}>
-                      <p style={{ color: isActive ? 'var(--color-accent)' : 'rgba(255,255,255,0.85)', fontSize: 13, fontWeight: 500, margin: 0, lineHeight: '17px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      <p style={{ color: isActive ? 'var(--color-accent)' : 'var(--color-text-primary)', fontSize: 13, fontWeight: 600, margin: 0, lineHeight: '18px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {(item as { title: string }).title}
                       </p>
-                      <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11, fontWeight: 400, margin: '2px 0 0 0', lineHeight: '15px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      <p style={{ color: 'var(--color-text-muted)', fontSize: 12, fontWeight: 500, margin: '2px 0 0', lineHeight: '16px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {rowArtist}
                       </p>
                     </div>
@@ -555,7 +557,7 @@ export function FullPlayer() {
         )}
       </div>
 
-      {/* Queue Modal (overlay) */}
+      {/* Queue Modal */}
       {queueModalVisible && (
         <div
           onClick={() => setQueueModalVisible(false)}
@@ -565,77 +567,69 @@ export function FullPlayer() {
             left: 0,
             right: 0,
             bottom: 0,
-            backgroundColor: 'rgba(0,0,0,0.6)',
+            backgroundColor: 'rgba(0,0,0,0.7)',
             zIndex: 10000,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
+            backdropFilter: 'blur(8px)',
           }}
         >
           <div
             ref={queueRef}
             onClick={(e) => e.stopPropagation()}
             style={{
-              backgroundColor: '#1c1c1e',
-              borderRadius: 16,
-              padding: '16px 20px 24px',
-              maxHeight: '70%',
+              backgroundColor: 'var(--color-surface)',
+              borderRadius: 'var(--radius-lg)',
+              padding: '20px 24px 28px',
+              maxHeight: '75%',
               width: '90%',
-              maxWidth: 480,
+              maxWidth: 460,
               overflowY: 'auto',
-              boxShadow: '0 24px 48px rgba(0,0,0,0.5)',
-              border: '1px solid rgba(255,255,255,0.06)',
+              boxShadow: 'var(--shadow-xl)',
+              border: '1px solid var(--color-border-subtle)',
             }}
           >
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                paddingBottom: 12,
-                borderBottom: '1px solid rgba(255,255,255,0.06)',
-                marginBottom: 10,
-              }}
-            >
-              <h3 style={{ color: '#fff', fontSize: 16, fontWeight: 700, margin: 0 }}>File d'attente</h3>
-              <button onClick={() => setQueueModalVisible(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, color: 'rgba(255,255,255,0.5)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingBottom: 16, borderBottom: '1px solid var(--color-border-subtle)', marginBottom: 16 }}>
+              <h3 style={{ color: 'var(--color-text-primary)', fontSize: 16, fontWeight: 700, margin: 0 }}>
+                File d'attente
+              </h3>
+              <button
+                onClick={() => setQueueModalVisible(false)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 6, color: 'var(--color-text-secondary)', borderRadius: 'var(--radius-full)' }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-surface-hover)'; e.currentTarget.style.color = 'var(--color-text-primary)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--color-text-secondary)'; }}
+              >
                 <X size={20} />
               </button>
             </div>
 
-            {/* Current track */}
-            <div style={{ marginBottom: 8 }}>
-              <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px', marginBottom: 8 }}>En cours</p>
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 12,
-                  padding: '10px 12px',
-                  borderRadius: 10,
-                  backgroundColor: 'rgba(120,0,0,0.08)',
-                  border: '1px solid rgba(120,0,0,0.15)',
-                }}
-              >
-                <div style={{ width: 20, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <Volume2 size={14} color="var(--color-accent)" />
-                </div>
+            {/* Now playing */}
+            <div style={{ marginBottom: 12 }}>
+              <p style={{ color: 'var(--color-text-muted)', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px', marginBottom: 8 }}>
+                En cours
+              </p>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', borderRadius: 'var(--radius-sm)', backgroundColor: 'var(--color-surface-elevated)' }}>
+                <Volume2 size={16} color="var(--color-accent)" />
                 <div style={{ minWidth: 0, flex: 1 }}>
-                  <p style={{ color: 'var(--color-accent)', fontSize: 14, fontWeight: 600, margin: 0, lineHeight: '18px' }}>
+                  <p style={{ color: 'var(--color-text-primary)', fontSize: 14, fontWeight: 600, margin: 0, lineHeight: '18px' }}>
                     {isDeviceMode ? deviceCurrentTrack!.title : currentTrack!.title}
-                  </p>                    <p style={{ color: 'rgba(120,0,0,0.6)', fontSize: 12, fontWeight: 400, margin: '2px 0 0 0' }}>
+                  </p>
+                  <p style={{ color: 'var(--color-text-secondary)', fontSize: 12, fontWeight: 500, margin: '2px 0 0' }}>
                     {isDeviceMode ? deviceCurrentTrack!.artist : formatAlbumArtist(queueAlbums[currentIdx] ?? album ?? undefined)}
                   </p>
                 </div>
               </div>
             </div>
 
-            {/* Upcoming */}
-            <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px', margin: '12px 0 8px' }}>
+            {/* Up next */}
+            <p style={{ color: 'var(--color-text-muted)', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px', margin: '16px 0 12px' }}>
               À suivre ({upcomingTracks.length})
             </p>
             {upcomingTracks.length === 0 ? (
-              <p style={{ color: 'rgba(255,255,255,0.3)', fontSize: 13, textAlign: 'center', padding: '12px 0' }}>Aucun autre titre dans la file.</p>
+              <p style={{ color: 'var(--color-text-muted)', fontSize: 14, textAlign: 'center', padding: '16px 0' }}>
+                Aucun autre titre dans la file.
+              </p>
             ) : (
               upcomingTracks.map((item, index) => {
                 const originalIndex = currentIdx + 1 + index;
@@ -654,24 +648,26 @@ export function FullPlayer() {
                       display: 'flex',
                       alignItems: 'center',
                       gap: 12,
-                      padding: '9px 10px',
-                      borderRadius: 8,
+                      padding: '8px 12px',
+                      borderRadius: 'var(--radius-sm)',
                       border: 'none',
-                      background: 'none',
+                      background: 'transparent',
                       cursor: 'pointer',
                       width: '100%',
                       textAlign: 'left',
-                      transition: 'background-color 0.15s ease',
+                      transition: 'background-color var(--transition-fast) ease',
                     }}
-                    onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.03)'; }}
+                    onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--color-surface-hover)'; }}
                     onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
                   >
-                    <span style={{ color: 'rgba(255,255,255,0.2)', fontSize: 12, fontWeight: 600, minWidth: 20, textAlign: 'center' }}>{index + 1}</span>
+                    <span style={{ color: 'var(--color-text-muted)', fontSize: 12, fontWeight: 600, minWidth: 20, textAlign: 'center' }}>
+                      {index + 1}
+                    </span>
                     <div style={{ minWidth: 0, flex: 1 }}>
-                      <p style={{ color: 'rgba(255,255,255,0.88)', fontSize: 14, fontWeight: 500, margin: 0, lineHeight: '18px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      <p style={{ color: 'var(--color-text-primary)', fontSize: 14, fontWeight: 600, margin: 0, lineHeight: '18px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {(item as { title: string }).title}
                       </p>
-                      <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: 12, fontWeight: 400, margin: '2px 0 0 0', lineHeight: '16px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      <p style={{ color: 'var(--color-text-muted)', fontSize: 12, fontWeight: 500, margin: '2px 0 0', lineHeight: '16px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {rowArtist}
                       </p>
                     </div>

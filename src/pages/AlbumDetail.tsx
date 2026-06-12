@@ -1,17 +1,18 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { ChevronLeft, Lock, Play, Pause, ShieldCheck, Radio, Clock, Download, CheckCircle, AlertCircle } from 'lucide-react';
+import { LyricsDisplay } from '@/components/LyricsDisplay';
+import { PrimaryButton } from '@/components/PrimaryButton';
+import { Screen } from '@/components/Screen';
+import { getPurchaseAlbumUrl } from '@/config/urls';
+import { useCachedImage } from '@/hooks/useCachedImage';
 import { useAudioPlayback, useAudioProgress } from '@/contexts/AudioContext';
 import { useLibraryMode } from '@/contexts/LibraryModeContext';
-import { loadOwnedAlbumForPlayback, resolveAlbumDecryptionKey, albumHasStreamableTracks } from '@/services/albumOwnership';
-import { readEncryptedValue } from '@/services/storage';
+import { albumHasStreamableTracks, loadOwnedAlbumForPlayback, resolveAlbumDecryptionKey } from '@/services/albumOwnership';
+import { downloadAlbumWithStreaming, getDownloadProgress, isAlbumReadyOffline, subscribeToDownloadProgress, type DownloadProgress } from '@/services/downloadManager';
 import { resolveOfflinePlayback } from '@/services/offlineAccess';
-import { downloadAlbumWithStreaming, subscribeToDownloadProgress, getDownloadProgress, isAlbumReadyOffline, type DownloadProgress } from '@/services/downloadManager';
-import { Screen, PageHeader } from '@/components/Screen';
-import { PrimaryButton } from '@/components/PrimaryButton';
-import { LyricsDisplay } from '@/components/LyricsDisplay';
-import { getPurchaseAlbumUrl } from '@/config/urls';
 import type { PublicAlbumDetails, PublicTrack } from '@/types/backend';
+import { useAlbumColors } from '@/hooks/useAlbumColors';
+import { CheckCircle, ChevronLeft, Download, Lock, Pause, Play, ShieldCheck } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
 
 export function AlbumDetailScreen() {
   const { id } = useParams<{ id: string }>();
@@ -26,9 +27,12 @@ export function AlbumDetailScreen() {
   const [ownedByDevice, setOwnedByDevice] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState<DownloadProgress | null>(null);
   const [isOfflineReady, setIsOfflineReady] = useState(false);
-  const [showLyrics, setShowLyrics] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const unsubscribeRef = useRef<(() => void) | null>(null);
+
+  // Call all hooks BEFORE any early returns
+  const cachedCover = useCachedImage(album?.cover_url);
+  const coverColors = useAlbumColors(album?.cover_url);
 
   const loadAlbumData = useCallback(async () => {
     if (!id) return;
@@ -67,10 +71,8 @@ export function AlbumDetailScreen() {
     return () => { if (unsubscribeRef.current) unsubscribeRef.current(); };
   }, [id, loadAlbumData]);
 
-  useEffect(() => { setShowLyrics(false); }, [audio.currentTrack?.id]);
-
   if (loading) return <Screen><div className="flex justify-center items-center" style={{ minHeight: 300 }}><div className="loader-spinner" /></div></Screen>;
-  if (!album) return <Screen><div className="flex flex-col items-center gap-4 p-10"><p className="text-muted">Album introuvable</p><button onClick={() => navigate(-1)} className="btn btn-secondary">Retour</button></div></Screen>;
+  if (!album) return <Screen><div className="flex flex-col items-center gap-4 p-10"><p className="text-muted">Album introuvable</p><button onClick={() => navigate(-1)} className="btn-secondary">Retour</button></div></Screen>;
 
   const isFreeRelease = Boolean(album.is_free);
   const streamReady = Boolean(isFreeRelease && album.stream_status === 'ready' && album.stream_url);
@@ -78,6 +80,7 @@ export function AlbumDetailScreen() {
   const isPaidNotOwned = !isFreeRelease && !isOwned;
   const canPlay = (isFreeRelease && streamReady) || isOwned;
   const sortedTracks = [...(album.tracks || [])].sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
+  const artistName = album.artist_name || album.artist?.name || 'Artiste inconnu';
 
   async function handlePressTrack(track: PublicTrack, index: number) {
     if (!canPlay || !album) return;
@@ -111,92 +114,196 @@ export function AlbumDetailScreen() {
 
   return (
     <Screen padded={false}>
-      <div style={{ maxWidth: 800, margin: '0 auto', width: '100%' }}>
-        {/* Gradient decoration */}
-        <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 300, background: 'linear-gradient(180deg, rgba(120,0,0,0.1), transparent)', pointerEvents: 'none', zIndex: 0 }} />
+      <div style={{ maxWidth: 900, margin: '0 auto', width: '100%' }}>
+        {/* Hero Section — Spotify-style with dynamic color */}
+        <div
+          style={{
+            position: 'relative',
+            padding: '48px 32px 32px',
+            background: coverColors.gradientStyle,
+            transition: 'background 0.6s ease',
+            display: 'flex',
+            gap: 32,
+            alignItems: 'flex-end',
+          }}
+        >
+          {/* Back button */}
+          <button
+            onClick={() => navigate(-1)}
+            style={{
+              position: 'absolute',
+              top: 20,
+              left: 24,
+              width: 36,
+              height: 36,
+              borderRadius: 'var(--radius-full)',
+              background: 'rgba(0,0,0,0.5)',
+              backdropFilter: 'blur(8px)',
+              border: 'none',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: 'pointer',
+              zIndex: 2,
+              color: 'var(--color-text-primary)',
+              transition: 'all var(--transition-fast) ease',
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(0,0,0,0.7)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(0,0,0,0.5)'; }}
+          >
+            <ChevronLeft size={22} />
+          </button>
 
-        {/* Header with cover */}
-        <div style={{ position: 'relative', zIndex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', padding: 'var(--page-padding)', paddingTop: 20, gap: 24 }}>
-          <div style={{ alignSelf: 'flex-start' }}>
-            <button onClick={() => navigate(-1)} style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
-              <ChevronLeft size={28} color="#fff" />
-            </button>
-          </div>
-
-          <div className="album-cover" style={{ width: '85%', maxWidth: 400, aspectRatio: '1', borderRadius: 32, overflow: 'hidden', boxShadow: '0 20px 30px rgba(120,0,0,0.3)' }}>
+          {/* Album Cover */}
+          <div
+            style={{
+              width: 200,
+              height: 200,
+              minWidth: 200,
+              borderRadius: 'var(--radius-sm)',
+              overflow: 'hidden',
+              boxShadow: 'var(--shadow-xl)',
+              marginTop: 20,
+            }}
+          >
             {album.cover_url ? (
-              <img src={album.cover_url} alt={album.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              <img src={cachedCover || album.cover_url} alt={album.title} loading="lazy" decoding="async" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
             ) : (
-              <div style={{ width: '100%', height: '100%', backgroundColor: 'var(--color-surface-elevated)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <span style={{ fontSize: 64, color: 'rgba(255,255,255,0.18)' }}>♪</span>
+              <div style={{
+                width: '100%', height: '100%',
+                background: 'var(--color-surface-elevated)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}>
+                <span style={{ fontSize: 48, color: 'var(--color-text-muted)' }}>♪</span>
               </div>
             )}
           </div>
 
-          <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', gap: 8, padding: '0 8px' }}>
-            <h1 style={{ color: '#fff', fontSize: 22, fontFamily: "var(--font-hanken)", fontWeight: 700, lineHeight: '31px', margin: 0 }}>
-              <span style={{ color: 'var(--color-accent)', fontFamily: "var(--font-inter)", fontWeight: 800, textTransform: 'uppercase', fontSize: 14, letterSpacing: 1 }}>
-                {album.artist_name || album.artist?.name}
-              </span>
-              <span style={{ color: 'rgba(255,255,255,0.2)' }}> — </span>
+          {/* Album Info */}
+          <div style={{ flex: 1, paddingBottom: 8 }}>
+            <p style={{ color: 'var(--color-text-secondary)', fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px', marginBottom: 8 }}>
+              {album.type === 'single' ? 'Single' : 'Album'}
+            </p>
+            <h1 style={{
+              color: 'var(--color-text-primary)',
+              fontSize: 'clamp(28px, 4vw, 48px)',
+              fontWeight: 800,
+              letterSpacing: '-1px',
+              lineHeight: 1.1,
+              margin: '0 0 8px',
+            }}>
               {album.title}
             </h1>
-            {isOwned && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.05)', padding: '5px 12px', borderRadius: 12 }}>
-                <ShieldCheck size={13} color="#00C853" />
-                <span style={{ color: '#00C853', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Album activé</span>
-              </div>
-            )}
-            {isOfflineReady && isOwned && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.05)', padding: '5px 12px', borderRadius: 12 }}>
-                <CheckCircle size={13} color="#00C853" />
-                <span style={{ color: '#00C853', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Disponible hors-ligne</span>
-              </div>
-            )}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <span style={{ color: 'var(--color-text-primary)', fontSize: 14, fontWeight: 600, whiteSpace: 'nowrap' }}>
+                {artistName}
+              </span>
+              <span style={{ color: 'var(--color-text-muted)', fontSize: 12 }}>·</span>
+              <span style={{ color: 'var(--color-text-secondary)', fontSize: 14, fontWeight: 500 }}>
+                {album.tracks?.length ?? 0} titres
+              </span>
+            </div>
+
+            {/* Status badges */}
+            <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+              {isOwned && (
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  padding: '4px 12px',
+                  borderRadius: 'var(--radius-full)',
+                  background: 'rgba(29, 185, 84, 0.1)',
+                  border: '1px solid rgba(29, 185, 84, 0.2)',
+                }}>
+                  <ShieldCheck size={14} color="var(--color-success)" />
+                  <span style={{ color: 'var(--color-success)', fontSize: 12, fontWeight: 600 }}>
+                    {isOfflineReady ? 'Disponible hors-ligne' : 'Activé'}
+                  </span>
+                </div>
+              )}
+              {isFreeRelease && (
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  padding: '4px 12px',
+                  borderRadius: 'var(--radius-full)',
+                  background: 'var(--color-surface-elevated)',
+                }}>
+                  <span style={{ color: 'var(--color-text-secondary)', fontSize: 12, fontWeight: 600 }}>
+                    Gratuit
+                  </span>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
         {/* Purchase section */}
         {isPaidNotOwned && (
-          <div className="album-purchase-section" style={{ margin: '0 24px 28px', padding: 24, backgroundColor: 'var(--color-surface-elevated)', borderRadius: 28, border: '1px solid rgba(120,0,0,0.2)', display: 'flex', flexDirection: 'column', gap: 20 }}>
+          <div style={{
+            margin: '24px 32px',
+            padding: 24,
+            background: 'var(--color-surface-elevated)',
+            borderRadius: 'var(--radius-md)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 16,
+            alignItems: 'center',
+          }}>
             <div style={{ textAlign: 'center' }}>
-              <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, margin: '0 0 4px' }}>Prix de l'album</p>
-              <p style={{ color: 'var(--color-accent)', fontSize: 28, fontFamily: "var(--font-hanken)", fontWeight: 700, margin: 0 }}>
+              <p style={{ color: 'var(--color-text-muted)', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, margin: '0 0 4px' }}>
+                Prix
+              </p>
+              <p style={{ color: 'var(--color-text-primary)', fontSize: 32, fontWeight: 800, margin: 0 }}>
                 {album.price_ariary > 0 ? `${album.price_ariary.toLocaleString()} Ar` : 'Gratuit'}
               </p>
             </div>
-            <a href={getPurchaseAlbumUrl(id!)} target="_blank" rel="noopener noreferrer">
+            <a href={getPurchaseAlbumUrl(id!)} target="_blank" rel="noopener noreferrer" style={{ width: '100%', maxWidth: 300 }}>
               <PrimaryButton label="Acheter sur le Web" />
             </a>
-            <button onClick={() => navigate('/activate')} style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center', background: 'none', border: 'none', cursor: 'pointer', padding: 6 }}>
-              <Lock size={14} color="var(--color-accent)" />
-              <span style={{ color: 'var(--color-accent)', fontSize: 14, fontWeight: 600 }}>J'ai déjà un PassCode →</span>
+            <button
+              onClick={() => navigate('/activate')}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                background: 'none', border: 'none', cursor: 'pointer', padding: 6,
+                color: 'var(--color-text-secondary)',
+                fontSize: 13,
+                fontWeight: 600,
+                transition: 'color var(--transition-fast) ease',
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--color-text-primary)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--color-text-secondary)'; }}
+            >
+              <Lock size={14} />
+              J'ai déjà un PassCode
             </button>
           </div>
         )}
 
         {/* Track list */}
-        <div style={{ padding: 'var(--page-padding)' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 }}>
-            <h2 style={{ color: '#fff', fontSize: 18, fontWeight: 800, margin: 0 }}>
-              {showLyrics ? 'Paroles' : 'Pistes'}
-            </h2>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              {audio.currentTrack?.has_lyrics && (
-                <button onClick={() => setShowLyrics(!showLyrics)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
-                  <Radio size={20} color="var(--color-accent)" />
-                </button>
-              )}
-              <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: 13, fontWeight: 600 }}>{album.tracks?.length ?? 0} titres</span>
-            </div>
-          </div>
-
-          {showLyrics && audio.currentTrack && (
-            <div style={{ height: 300, backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: 20, overflow: 'hidden', marginBottom: 24 }}>
-              <LyricsDisplay lyricsUrl={audio.currentTrack.lyrics_url || null} trackId={audio.currentTrack.id} currentTime={progress * duration} isPlaying={audio.isPlaying} />
-            </div>
+        <div style={{ padding: '8px 32px 32px' }}>
+          {/* Play all button */}
+          {canPlay && sortedTracks.length > 0 && (
+            <button
+              onClick={() => void handlePressTrack(sortedTracks[0], 0)}
+              style={{
+                width: 48, height: 48,
+                borderRadius: 'var(--radius-full)',
+                background: 'var(--color-accent)',
+                border: 'none',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer',
+                marginBottom: 20,
+                transition: 'all var(--transition-fast) ease',
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.06)'; e.currentTarget.style.background = 'var(--color-accent-light)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.background = 'var(--color-accent)'; }}
+            >
+              <Play size={24} color="#fff" style={{ marginLeft: 2 }} />
+            </button>
           )}
 
+          {/* Track rows */}
           {sortedTracks.map((track, index) => {
             const isCurrent = audio.currentTrack?.id === track.id;
             const isThisPlaying = isCurrent && audio.isPlaying;
@@ -206,49 +313,134 @@ export function AlbumDetailScreen() {
                 onClick={() => void handlePressTrack(track, index)}
                 disabled={!canPlay && !isPaidNotOwned}
                 style={{
-                  display: 'flex', alignItems: 'flex-start', padding: 16, width: '100%',
-                  backgroundColor: isCurrent ? 'rgba(120,0,0,0.15)' : 'rgba(255,255,255,0.035)',
-                  border: `1px solid ${isCurrent ? 'rgba(120,0,0,0.4)' : 'rgba(255,255,255,0.06)'}`,
-                  borderRadius: 18, gap: 16, marginBottom: 10, cursor: canPlay ? 'pointer' : 'default',
-                  textAlign: 'left', opacity: !canPlay && !isPaidNotOwned ? 0.5 : 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 14,
+                  padding: '8px 12px',
+                  width: '100%',
+                  background: 'transparent',
+                  border: 'none',
+                  borderRadius: 'var(--radius-sm)',
+                  cursor: canPlay ? 'pointer' : 'default',
+                  textAlign: 'left',
+                  opacity: !canPlay && !isPaidNotOwned ? 0.5 : 1,
+                  transition: 'background-color var(--transition-fast) ease',
                 }}
+                onMouseEnter={(e) => { if (canPlay && !isCurrent) e.currentTarget.style.background = 'var(--color-surface-hover)'; }}
+                onMouseLeave={(e) => { if (canPlay && !isCurrent) e.currentTarget.style.background = 'transparent'; }}
               >
-                <div style={{ width: 28, textAlign: 'center', paddingTop: 2 }}>
-                  {isThisPlaying ? <Pause size={16} color="var(--color-accent)" /> : isCurrent ? <Play size={16} color="var(--color-accent)" /> : <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: 13, fontWeight: 800 }}>{index + 1}</span>}
+                {/* Track number or play icon */}
+                <div style={{ width: 24, textAlign: 'center', flexShrink: 0 }}>
+                  {isThisPlaying ? (
+                    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 2, height: 16, justifyContent: 'center' }}>
+                      <div className="equalizer-bar" style={{ width: 3, backgroundColor: 'var(--color-accent)', borderRadius: 2 }} />
+                      <div className="equalizer-bar" style={{ width: 3, backgroundColor: 'var(--color-accent)', borderRadius: 2 }} />
+                      <div className="equalizer-bar" style={{ width: 3, backgroundColor: 'var(--color-accent)', borderRadius: 2 }} />
+                      <div className="equalizer-bar" style={{ width: 3, backgroundColor: 'var(--color-accent)', borderRadius: 2 }} />
+                    </div>
+                  ) : isCurrent ? (
+                    <Play size={14} color="var(--color-accent)" />
+                  ) : (
+                    <span style={{ color: 'var(--color-text-muted)', fontSize: 14, fontWeight: 500 }}>
+                      {index + 1}
+                    </span>
+                  )}
                 </div>
+
+                {/* Track info */}
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <p style={{ color: isCurrent ? 'var(--color-accent)' : '#fff', fontSize: 14, fontWeight: 600, lineHeight: '20px', margin: 0 }}>{track.title}</p>
+                  <p style={{
+                    color: isCurrent ? 'var(--color-accent)' : 'var(--color-text-primary)',
+                    fontSize: 14,
+                    fontWeight: 600,
+                    lineHeight: '20px',
+                    margin: 0,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}>
+                    {track.title}
+                  </p>
+                  <p style={{
+                    color: isCurrent ? 'var(--color-text-secondary)' : 'var(--color-text-muted)',
+                    fontSize: 13,
+                    lineHeight: '18px',
+                    margin: '2px 0 0',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}>
+                    {artistName}
+                  </p>
                 </div>
-                {isPaidNotOwned ? <Lock size={16} color="rgba(255,255,255,0.45)" /> : isThisPlaying ? <Pause size={18} color="var(--color-accent)" /> : <Play size={18} color={isCurrent ? 'var(--color-accent)' : 'rgba(255,255,255,0.3)'} />}
+
+                {/* Action icon */}
+                {isPaidNotOwned ? (
+                  <Lock size={14} color="var(--color-text-muted)" />
+                ) : isThisPlaying ? (
+                  <Pause size={16} color="var(--color-accent)" />
+                ) : isCurrent ? (
+                  <Play size={16} color="var(--color-accent)" />
+                ) : null}
               </button>
             );
           })}
         </div>
 
-        {actionError && (
-          <div style={{ margin: '16px 24px', padding: 12, borderRadius: 12, backgroundColor: 'rgba(120,0,0,0.12)', border: '1px solid rgba(120,0,0,0.35)' }}>
-            <p className="text-error" style={{ fontSize: 13, lineHeight: '18px', margin: 0 }}>{actionError}</p>
-          </div>
-        )}
-
+        {/* Download section */}
         {isOwned && !isOfflineReady && (
-          <div style={{ margin: '24px 24px', padding: 16, backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: 16, border: '1px solid rgba(255,255,255,0.08)' }}>
+          <div style={{ margin: '0 32px 24px' }}>
             {downloadProgress?.status === 'downloading' ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div style={{
+                padding: 16,
+                background: 'var(--color-surface-elevated)',
+                borderRadius: 'var(--radius-sm)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 8,
+              }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Download size={16} color="var(--color-accent)" />
-                  <span style={{ color: '#fff', fontSize: 13, fontWeight: 600 }}>{Math.round(downloadProgress.progress)}%</span>
+                  <Download size={16} color="var(--color-text-muted)" />
+                  <span style={{ color: 'var(--color-text-secondary)', fontSize: 13, fontWeight: 600 }}>
+                    Téléchargement... {Math.round(downloadProgress.progress)}%
+                  </span>
                 </div>
                 <div className="progress-bar">
-                  <div className="progress-fill" style={{ width: `${downloadProgress.progress}%` }} />
+                  <div className="progress-fill accent" style={{ width: `${downloadProgress.progress}%` }} />
                 </div>
               </div>
             ) : (
-              <button onClick={handleDownload} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, background: 'none', border: 'none', cursor: 'pointer', padding: 12, width: '100%' }}>
-                <Download size={18} color="var(--color-accent)" />
-                <span style={{ color: 'var(--color-accent)', fontSize: 14, fontWeight: 600 }}>Télécharger hors-ligne</span>
+              <button
+                onClick={handleDownload}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 8,
+                  padding: '12px 20px',
+                  borderRadius: 'var(--radius-full)',
+                  background: 'var(--color-surface-elevated)',
+                  border: '1px solid var(--color-border-subtle)',
+                  cursor: 'pointer',
+                  width: 'auto',
+                  color: 'var(--color-text-primary)',
+                  fontSize: 14,
+                  fontWeight: 600,
+                  transition: 'all var(--transition-fast) ease',
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-surface-hover)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--color-surface-elevated)'; }}
+              >
+                <Download size={18} />
+                Télécharger hors-ligne
               </button>
             )}
+          </div>
+        )}
+
+        {actionError && (
+          <div style={{ margin: '0 32px 24px', padding: 12, borderRadius: 'var(--radius-sm)', background: 'rgba(233, 20, 41, 0.1)', border: '1px solid rgba(233, 20, 41, 0.2)' }}>
+            <p style={{ color: 'var(--color-error)', fontSize: 13, lineHeight: '18px', margin: 0 }}>{actionError}</p>
           </div>
         )}
       </div>

@@ -3,7 +3,6 @@
  */
 
 import Hls from 'hls.js';
-import { decryptTrackBuffer } from './crypto';
 import { getApiBaseUrl } from './api';
 import { secureAudioPlayer } from './secureAudioPlayer';
 
@@ -82,21 +81,21 @@ export async function stopCurrentTrack(): Promise<void> {
   stopProgressInterval();
 }
 
-export function togglePlayPause(): boolean {
+export async function togglePlayPause(): Promise<boolean> {
   if (isSecureAudio) {
     if (secureAudioPlayer.isCurrentlyPlaying()) {
       secureAudioPlayer.pause();
       return false;
     } else {
-      secureAudioPlayer.play();
-      return true;
+      const started = await secureAudioPlayer.play();
+      return started;
     }
   }
 
   if (!currentAudio) return false;
   try {
     if (currentAudio.paused) {
-      currentAudio.play();
+      await currentAudio.play();
       return true;
     } else {
       currentAudio.pause();
@@ -217,85 +216,80 @@ export async function playRemoteTrack(
   isEncrypted: boolean = true,
   onStatusUpdate?: StatusCallback,
   fallbackUrls: string[] = []
-): Promise<HTMLAudioElement | null> {
+): Promise<HTMLAudioElement | any> {
   cancelCurrentPrefetch();
   await stopCurrentTrack();
+
+  const playWithHtmlAudio = async (audioUrl: string) => {
+    const audio = new Audio();
+    currentAudio = audio;
+    isSecureAudio = false;
+    currentStatusCallback = onStatusUpdate || null;
+    if (onStatusUpdate) setupAudioEvents(audio, onStatusUpdate);
+    audio.src = audioUrl;
+    audio.crossOrigin = 'anonymous';
+    audio.preload = 'auto';
+    
+    console.log('[Audio] Loading audio from:', audioUrl);
+    
+    // Wait for canplay or error with timeout
+    await new Promise<void>((resolve, reject) => {
+      let timeoutId: NodeJS.Timeout | null = null;
+      
+      const onCanPlay = () => {
+        if (timeoutId) clearTimeout(timeoutId);
+        resolve();
+      };
+      
+      const onError = (e: Event) => {
+        if (timeoutId) clearTimeout(timeoutId);
+        console.error('[Audio] Audio error event:', e);
+        reject(new Error('Failed to load audio'));
+      };
+      
+      timeoutId = setTimeout(() => {
+        audio.removeEventListener('canplay', onCanPlay);
+        audio.removeEventListener('error', onError);
+        reject(new Error('Audio load timeout'));
+      }, 30000); // 30 second timeout
+      
+      audio.addEventListener('canplay', onCanPlay, { once: true });
+      audio.addEventListener('error', onError, { once: true });
+    });
+    
+    await audio.play();
+    console.log('[Audio] Started playing');
+    return audio;
+  };
 
   try {
     const resolvedUrl = resolvePlaybackUrl(url);
     
-    // Always use secure audio player for remote non-m3u8 tracks to bypass IDM
-    if (!resolvedUrl.includes('.m3u8')) {
-      isSecureAudio = true;
-      currentStatusCallback = onStatusUpdate || null;
-      
-      (secureAudioPlayer as any).onEnded = () => {
-        if (currentStatusCallback) currentStatusCallback({ playing: false, playbackState: 'ended' });
-        if (currentTrackEndHandler) currentTrackEndHandler();
-      };
-
-      await secureAudioPlayer.loadTrack(resolvedUrl, (progress) => {
-         // optional progress update
-      });
-      secureAudioPlayer.play();
-
-      if (onStatusUpdate) {
-        onStatusUpdate({
-          isLoaded: true,
-          currentTime: 0,
-          duration: secureAudioPlayer.getDuration(),
-          playing: true
-        });
-        startProgressInterval(onStatusUpdate);
-      }
-      return secureAudioPlayer as any;
+    // Skip secure player entirely, use HTML5 audio directly
+    // Try main URL
+    try {
+      console.log('[Audio] Trying main URL:', resolvedUrl);
+      return await playWithHtmlAudio(resolvedUrl);
+    } catch (err) {
+      console.warn('[Audio] Main URL failed, trying fallbacks:', err);
     }
-
-    // fallback to normal HTML audio for others
-    const audio = new Audio();
-    currentAudio = audio;
-    currentStatusCallback = onStatusUpdate || null;
-
-    if (onStatusUpdate) setupAudioEvents(audio, onStatusUpdate);
-
-    audio.src = resolvedUrl;
-    audio.crossOrigin = 'anonymous';
-    await audio.play();
-    return audio;
-  } catch (err) {
-    console.error('[Audio] Failed to play remote track:', err);
+    
+    // Try fallback URLs
     for (const fallback of fallbackUrls) {
       try {
         const resolved = resolvePlaybackUrl(fallback);
-        
-        if (!resolved.includes('.m3u8')) {
-          isSecureAudio = true;
-          await secureAudioPlayer.loadTrack(resolved);
-          secureAudioPlayer.play();
-          if (onStatusUpdate) {
-            onStatusUpdate({
-              isLoaded: true,
-              currentTime: 0,
-              duration: secureAudioPlayer.getDuration(),
-              playing: true
-            });
-            startProgressInterval(onStatusUpdate);
-          }
-          return secureAudioPlayer as any;
-        }
-
-        const audio = new Audio();
-        currentAudio = audio;
-        if (onStatusUpdate) setupAudioEvents(audio, onStatusUpdate);
-        audio.src = resolved;
-        audio.crossOrigin = 'anonymous';
-        await audio.play();
-        return audio;
+        console.log('[Audio] Trying fallback URL:', resolved);
+        return await playWithHtmlAudio(resolved);
       } catch {
         continue;
       }
     }
-    return null;
+    
+    // All attempts failed, throw error
+    throw new Error('All playback attempts failed');
+  } catch (err) {
+    console.error('[Audio] Failed to play remote track:', err);
+    throw err; // Re-throw so caller can handle it
   }
 }
 
@@ -335,68 +329,55 @@ export async function playDeviceFile(
 export async function playStream(
   streamUrl: string,
   onStatusUpdate?: StatusCallback
-): Promise<HTMLAudioElement | null> {
+): Promise<HTMLAudioElement | any> {
   await stopCurrentTrack();
   const resolvedUrl = resolvePlaybackUrl(streamUrl);
 
   currentStatusCallback = onStatusUpdate || null;
 
-  // Try HLS.js for m3u8 streams
-  if (resolvedUrl.includes('.m3u8')) {
+  const playWithHtmlAudio = async (audioUrl: string) => {
     const audio = new Audio();
     currentAudio = audio;
+    isSecureAudio = false;
     if (onStatusUpdate) setupAudioEvents(audio, onStatusUpdate);
-
-    if (Hls.isSupported()) {
-      const hls = new Hls();
-      currentHls = hls;
-      hls.loadSource(resolvedUrl);
-      hls.attachMedia(audio);
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        audio.play().catch(console.error);
-      });
-      hls.on(Hls.Events.ERROR, (_event, data) => {
-        if (data.fatal) {
-          console.error('[Audio] HLS fatal error:', data);
-        }
-      });
-    } else {
-      audio.src = resolvedUrl;
-      audio.crossOrigin = 'anonymous';
-      try {
-        await audio.play();
-      } catch (err) {
-        console.error('[Audio] Error calling play():', err);
-      }
-    }
-    return audio;
-  } else {
-    // SECURE AUDIO PLAYER FOR MP3/AAC streams
-    isSecureAudio = true;
-    (secureAudioPlayer as any).onEnded = () => {
-      if (currentStatusCallback) currentStatusCallback({ playing: false, playbackState: 'ended' });
-      if (currentTrackEndHandler) currentTrackEndHandler();
-    };
-
-    try {
-      await secureAudioPlayer.loadTrack(resolvedUrl);
-      secureAudioPlayer.play();
+    audio.src = audioUrl;
+    audio.crossOrigin = 'anonymous';
+    audio.preload = 'auto';
+    
+    console.log('[Audio] Loading stream from:', audioUrl);
+    
+    // Wait for canplay or error with timeout
+    await new Promise<void>((resolve, reject) => {
+      let timeoutId: NodeJS.Timeout | null = null;
       
-      if (onStatusUpdate) {
-        onStatusUpdate({
-          isLoaded: true,
-          currentTime: 0,
-          duration: secureAudioPlayer.getDuration(),
-          playing: true
-        });
-        startProgressInterval(onStatusUpdate);
-      }
-      return secureAudioPlayer as any;
-    } catch (err) {
-      console.error('[Audio] Error with secure stream:', err);
-      return null;
-    }
-  }
+      const onCanPlay = () => {
+        if (timeoutId) clearTimeout(timeoutId);
+        resolve();
+      };
+      
+      const onError = (e: Event) => {
+        if (timeoutId) clearTimeout(timeoutId);
+        console.error('[Audio] Stream error event:', e);
+        reject(new Error('Failed to load stream'));
+      };
+      
+      timeoutId = setTimeout(() => {
+        audio.removeEventListener('canplay', onCanPlay);
+        audio.removeEventListener('error', onError);
+        reject(new Error('Stream load timeout'));
+      }, 30000); // 30 second timeout
+      
+      audio.addEventListener('canplay', onCanPlay, { once: true });
+      audio.addEventListener('error', onError, { once: true });
+    });
+    
+    await audio.play();
+    console.log('[Audio] Started playing stream');
+    return audio;
+  };
+
+  // Use HTML5 audio directly for all streams
+  return await playWithHtmlAudio(resolvedUrl);
 }
 
 export function setTrackEndHandler(handler: () => void) {

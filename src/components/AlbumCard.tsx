@@ -1,5 +1,6 @@
-import { Download } from 'lucide-react';
 import type { Album } from '@/types/album';
+import { useCachedImage } from '@/hooks/useCachedImage';
+import { Download, Play } from 'lucide-react';
 
 type AlbumCardProps = {
   album: Album;
@@ -10,45 +11,158 @@ type AlbumCardProps = {
 
 export function AlbumCard({ album, variant = 'row', onPress, isOffline = false }: AlbumCardProps) {
   const artistName = album.artist_name || album.artist?.name || 'Artiste inconnu';
+  const cachedCover = useCachedImage(album.cover_url);
 
   if (variant === 'tile') {
     return (
       <button
-        onClick={onPress}          style={{
-          width: '48%',
-          backgroundColor: 'rgba(255,255,255,0.055)',
-          borderRadius: 16,
-          border: '1px solid rgba(255,255,255,0.08)',
-          padding: 8,
+        className="group"
+        onClick={onPress}
+        style={{
+          width: '100%',
+          backgroundColor: 'transparent',
+          borderRadius: 'var(--radius-md)',
+          padding: 0,
           cursor: 'pointer',
           textAlign: 'left',
           position: 'relative',
           display: 'flex',
           flexDirection: 'column',
           gap: 8,
-          transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
-          boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+          transition: 'none',
+          border: 'none',
         }}
-        onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-3px)'; e.currentTarget.style.boxShadow = '0 8px 24px rgba(0,0,0,0.3)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.12)'; }}
-        onMouseLeave={(e) => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.15)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)'; }}
       >
-        {album.cover_url ? (
-          <img src={album.cover_url} alt={album.title} style={{ width: '100%', aspectRatio: '1', borderRadius: 12, objectFit: 'cover' }} />
-        ) : (
-          <div style={{ width: '100%', aspectRatio: '1', borderRadius: 12, backgroundColor: 'var(--color-surface)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <div style={{ width: '60%', height: '60%', borderRadius: '50%', backgroundColor: 'rgba(255,255,255,0.04)' }} />
+        {/* Album Cover with Play Button Overlay */}
+        <div
+          style={{
+            position: 'relative',
+            width: '100%',
+            aspectRatio: '1',
+            borderRadius: 'var(--radius-md)',
+            overflow: 'hidden',
+            backgroundColor: 'var(--color-surface-elevated)',
+            boxShadow: 'var(--shadow-md)',
+            transition: 'box-shadow var(--transition-normal) ease',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.boxShadow = '0 4px 20px rgba(220,20,60,0.25)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.boxShadow = 'var(--shadow-md)';
+          }}
+        >
+          {album.cover_url ? (
+            <img
+              src={cachedCover || album.cover_url}
+              alt={album.title}
+              loading="lazy"
+              decoding="async"
+              style={{
+                width: '100%',
+                height: '100%',
+                objectFit: 'cover',
+                transition: 'transform var(--transition-normal) ease',
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.06)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
+            />
+          ) : (
+            <div
+              style={{
+                width: '100%',
+                height: '100%',
+                background: 'var(--color-surface-elevated)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <span style={{ fontSize: 40, color: 'var(--color-text-muted)' }}>♪</span>
+            </div>
+          )}
+
+          {/* Play Button Overlay — Spotify-style */}
+          <div
+            style={{
+              position: 'absolute',
+              bottom: 8,
+              right: 8,
+              width: 48,
+              height: 48,
+              borderRadius: 'var(--radius-full)',
+              background: 'var(--color-accent)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+              transition: 'all var(--transition-fast) ease',
+              opacity: 0,
+              transform: 'translateY(8px)',
+            }}
+            className="group-hover:opacity-100 group-hover:translate-y-0"
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = 'var(--color-accent-light)';
+              e.currentTarget.style.transform = 'scale(1.04)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = 'var(--color-accent)';
+              e.currentTarget.style.transform = 'scale(1)';
+            }}
+          >
+            <Play size={22} color="#fff" style={{ marginLeft: 3 }} />
           </div>
-        )}
-        {isOffline && (
-          <div style={{ position: 'absolute', bottom: 8, right: 8, backgroundColor: 'rgba(0,0,0,0.7)', padding: 6, borderRadius: 12 }}>
-            <Download size={16} color="var(--color-accent)" />
-          </div>
-        )}
-        <div style={{ padding: '4px 0' }}>
-          <div style={{ color: '#fff', fontSize: 14, fontWeight: 600, lineHeight: '20px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+
+          {/* Offline Indicator */}
+          {isOffline && (
+            <div
+              style={{
+                position: 'absolute',
+                top: 8,
+                right: 8,
+                background: 'rgba(0,0,0,0.7)',
+                padding: '4px 8px',
+                borderRadius: 'var(--radius-full)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 4,
+                backdropFilter: 'blur(8px)',
+              }}
+            >
+              <Download size={12} color="var(--color-success)" />
+              <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--color-success)' }}>
+                Hors-ligne
+              </span>
+            </div>
+          )}
+        </div>
+
+        {/* Album Info */}
+        <div style={{ padding: '2px 4px', minHeight: 48 }}>
+          <div
+            style={{
+              color: 'var(--color-text-primary)',
+              fontSize: 14,
+              fontWeight: 600,
+              lineHeight: '18px',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              marginBottom: 2,
+            }}
+          >
             {album.title}
           </div>
-          <div style={{ color: 'rgba(255,255,255,0.75)', fontSize: 12, lineHeight: '17px', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <div
+            style={{
+              color: 'var(--color-text-secondary)',
+              fontSize: 13,
+              lineHeight: '16px',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
             {artistName}
           </div>
         </div>
@@ -56,42 +170,82 @@ export function AlbumCard({ album, variant = 'row', onPress, isOffline = false }
     );
   }
 
+  // Row variant — used in artist detail or list
   return (
     <button
       onClick={onPress}
       style={{
         display: 'flex',
-        gap: 16,
-        padding: 12,
-        borderRadius: 20,
-        backgroundColor: 'rgba(255,255,255,0.055)',
-        border: '1px solid rgba(255,255,255,0.08)',
+        gap: 14,
+        padding: 8,
+        borderRadius: 'var(--radius-sm)',
+        background: 'transparent',
+        border: 'none',
         cursor: 'pointer',
         textAlign: 'left',
-        position: 'relative',
-        transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
-        boxShadow: '0 2px 8px rgba(0,0,0,0.12)',
+        transition: 'background-color var(--transition-fast) ease',
+        alignItems: 'center',
+        minWidth: 180,
       }}
-      onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 8px 20px rgba(0,0,0,0.25)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.12)'; }}
-      onMouseLeave={(e) => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.12)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)'; }}
+      onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-surface-hover)'; }}
+      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
     >
       {album.cover_url ? (
-        <img src={album.cover_url} alt={album.title} style={{ width: 60, height: 60, borderRadius: 16, objectFit: 'cover' }} />
+        <img
+          src={cachedCover || album.cover_url}
+          alt={album.title}
+          loading="lazy"
+          decoding="async"
+          style={{
+            width: 48,
+            height: 48,
+            borderRadius: 'var(--radius-sm)',
+            objectFit: 'cover',
+            flexShrink: 0,
+          }}
+        />
       ) : (
-        <div style={{ width: 60, height: 60, borderRadius: 16, backgroundColor: 'var(--color-surface)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ width: '60%', height: '60%', borderRadius: '50%', backgroundColor: 'rgba(255,255,255,0.04)' }} />
+        <div
+          style={{
+            width: 48,
+            height: 48,
+            borderRadius: 'var(--radius-sm)',
+            background: 'var(--color-surface-elevated)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0,
+          }}
+        >
+          <span style={{ fontSize: 20, color: 'var(--color-text-muted)' }}>♪</span>
         </div>
       )}
-      {isOffline && (
-        <div style={{ position: 'absolute', bottom: 8, right: 8, backgroundColor: 'rgba(0,0,0,0.7)', padding: 6, borderRadius: 12 }}>
-          <Download size={16} color="var(--color-primary)" />
-        </div>
-      )}
-      <div style={{ flex: 1, justifyContent: 'center', display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-        <div style={{ color: '#fff', fontSize: 14, fontWeight: 600, lineHeight: '20px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div
+          style={{
+            color: 'var(--color-text-primary)',
+            fontSize: 14,
+            fontWeight: 600,
+            lineHeight: '18px',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            marginBottom: 2,
+          }}
+        >
           {album.title}
         </div>
-        <div style={{ color: 'rgba(255,255,255,0.75)', fontSize: 12, lineHeight: '17px', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <div
+          style={{
+            color: 'var(--color-text-secondary)',
+            fontSize: 12,
+            lineHeight: '16px',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
           {artistName}
         </div>
       </div>

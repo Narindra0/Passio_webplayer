@@ -35,35 +35,69 @@ export class SecureAudioPlayer {
 
   /**
    * Downloads the file in chunks using Range requests to evade IDM.
+   * Inclut une logique de retry et un fallback vers le téléchargement complet si le Range n'est pas supporté.
    */
   public async downloadInChunks(url: string, onProgress?: (progress: number) => void): Promise<Uint8Array> {
     this.abortController = new AbortController();
     const signal = this.abortController.signal;
 
+    const MAX_RETRIES = 2;
     let totalLength = 0;
-    
-    // Attempt to get file size first using HEAD request if possible, 
-    // but some servers don't support it or return incorrect size.
-    // We will handle dynamic size by looking at the Content-Range response header.
     
     let currentByte = 0;
     let chunks: Uint8Array[] = [];
     let isFinished = false;
+    let usedFullDownload = false;
 
     while (!isFinished) {
       const start = currentByte;
       const end = currentByte + this.CHUNK_SIZE - 1;
       
-      const response = await fetch(url, {
-        headers: {
-          'Range': `bytes=${start}-${end}`
-        },
-        signal
-      });
+      let response: Response | null = null;
+      let retries = 0;
 
-      if (!response.ok && response.status !== 206) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+      while (retries <= MAX_RETRIES && !response) {
+        try {
+          const resp = await fetch(url, {
+            headers: {
+              'Range': `bytes=${start}-${end}`
+            },
+            signal
+          });
+
+          if (resp.ok || resp.status === 206) {
+            response = resp;
+          } else if (resp.status === 416) {
+            // Range not satisfiable — we have the whole file
+            isFinished = true;
+            break;
+          } else {
+            throw new Error(`HTTP ${resp.status}`);
+          }
+        } catch (err: any) {
+          // Si l'abortController.stop() a été appelé, on abandonne immédiatement
+          if (err.name === 'AbortError') throw err;
+
+          retries++;
+          if (retries > MAX_RETRIES) {
+            // Si le serveur ne supporte pas les Range, fallback vers un téléchargement complet
+            if (!usedFullDownload) {
+              console.warn('SecureAudioPlayer: Range requests not supported, falling back to full download');
+              usedFullDownload = true;
+              const fullResp = await fetch(url, { signal });
+              if (!fullResp.ok) throw new Error(`HTTP ${fullResp.status}`);
+              const fullBuffer = await fullResp.arrayBuffer();
+              if (onProgress) onProgress(100);
+              return new Uint8Array(fullBuffer);
+            }
+            throw err;
+          }
+          // Attendre un peu avant de réessayer
+          await new Promise(r => setTimeout(r, 500 * retries));
+        }
       }
+
+      if (!response) break;
 
       const buffer = await response.arrayBuffer();
       const uint8Array = new Uint8Array(buffer);
@@ -71,7 +105,7 @@ export class SecureAudioPlayer {
       
       currentByte += uint8Array.length;
 
-      // Extract total size from Content-Range if available: e.g. "bytes 0-511999/3145728"
+      // Extract total size from Content-Range
       const contentRange = response.headers.get('Content-Range');
       if (contentRange) {
         const match = contentRange.match(/\/(\d+)$/);
@@ -148,7 +182,10 @@ export class SecureAudioPlayer {
       } else {
         arrayBuffer = fileData as ArrayBuffer;
       }
-      this.audioBuffer = await this.audioContext!.decodeAudioData(arrayBuffer);
+      if (!this.audioContext) {
+        throw new Error('SecureAudioPlayer: AudioContext not available');
+      }
+      this.audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer);
 
       // === VIDER LA RAM : efface le fichier MP3 brut (ArrayBuffer) après décodage ===
       // Empêche l'extraction du MP3 par dump mémoire
@@ -170,18 +207,29 @@ export class SecureAudioPlayer {
 
   /**
    * Plays the decoded audio.
+   * Retourne true si la lecture a démarré, false sinon.
    */
-  public play() {
+  public async play(): Promise<boolean> {
     if (!this.audioContext || !this.audioBuffer) {
       console.warn("SecureAudioPlayer: Audio context or buffer not ready.");
-      return;
+      return false;
     }
 
-    if (this.isPlaying) return;
+    if (this.isPlaying) return true;
 
-    // Must resume context on user action if suspended
+    // Must resume context on user action if suspended — ATTENDRE le resume !
     if (this.audioContext.state === 'suspended') {
-      this.audioContext.resume();
+      try {
+        await this.audioContext.resume();
+      } catch (e) {
+        console.error('SecureAudioPlayer: Failed to resume AudioContext', e);
+        return false;
+      }
+    }
+
+    if (this.audioContext.state !== 'running') {
+      console.warn('SecureAudioPlayer: AudioContext not running, state:', this.audioContext.state);
+      return false;
     }
 
     this.sourceNode = this.audioContext.createBufferSource();
@@ -198,9 +246,15 @@ export class SecureAudioPlayer {
     };
 
     // Start playback from paused position
-    this.sourceNode.start(0, this.pausedAt);
+    try {
+      this.sourceNode.start(0, this.pausedAt);
+    } catch (e) {
+      console.error('SecureAudioPlayer: Failed to start source node', e);
+      return false;
+    }
     this.startTime = this.audioContext.currentTime - this.pausedAt;
     this.isPlaying = true;
+    return true;
   }
 
   /**
@@ -257,7 +311,7 @@ export class SecureAudioPlayer {
     this.pausedAt = Math.max(0, Math.min(seconds, this.audioBuffer.duration));
 
     if (wasPlaying) {
-      this.play();
+      void this.play();
     }
   }
 

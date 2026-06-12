@@ -2,8 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search } from 'lucide-react';
 import { AlbumCard } from '@/components/AlbumCard';
-import { Screen, PageHeader } from '@/components/Screen';
-import { SectionTitle } from '@/components/SectionTitle';
+import { Screen } from '@/components/Screen';
 import { useLibraryMode } from '@/contexts/LibraryModeContext';
 import { listOwnedAlbums } from '@/services/api';
 import { listVaultAlbums } from '@/services/downloadManager';
@@ -32,7 +31,7 @@ export function CatalogScreen() {
           // If network error, ignore and just show offline
         }
       }
-      
+
       const vaultAlbums = await listVaultAlbums();
       const offlineIds = new Set(vaultAlbums.map(a => a.id));
 
@@ -68,38 +67,63 @@ export function CatalogScreen() {
 
   return (
     <Screen padded>
-      <PageHeader 
-        title={isOfflineMode ? 'Ma Musique Hors-ligne' : 'Mes albums'}
-        subtitle="Rechercher dans votre collection"
-        style={{ paddingTop: 'var(--header-padding)' }}
-      />
-      
-      <div className="search-bar" style={{ marginBottom: 24, maxWidth: 480 }}>
-        <Search size={20} color="rgba(255,255,255,0.45)" />
+      {/* Header with red accent */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, paddingBottom: 8 }}>
+        <div style={{ width: 4, height: 28, borderRadius: 2, background: 'var(--color-accent-gradient)', flexShrink: 0 }} />
+        <div>
+          <h1 style={{ color: 'var(--color-text-primary)', fontSize: 'clamp(28px, 3.5vw, 32px)', fontWeight: 700, letterSpacing: '-0.5px', margin: 0, lineHeight: 1.15 }}>
+            {isOfflineMode ? 'Bibliothèque' : 'Bibliothèque'}
+          </h1>
+          <p style={{ color: 'var(--color-text-secondary)', fontSize: 15, margin: '2px 0 0', maxWidth: 600 }}>
+            {isOfflineMode ? 'Votre musique téléchargée' : 'Vos albums et vos téléchargements'}
+          </p>
+        </div>
+      </div>
+
+      {/* Search */}
+      <div className="search-bar" style={{ marginBottom: 24 }}>
+        <Search size={18} color="var(--color-text-muted)" />
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Rechercher un titre ou un artiste"
+          placeholder="Filtrer par titre ou artiste"
         />
       </div>
-          {loading ? (
-            <div className="flex justify-center p-10"><div className="loader-spinner" /></div>
-          ) : error ? (
-            <div style={{ textAlign: 'center', padding: 24 }}>
-              <p className="text-error">{error}</p>
-              <button onClick={() => void loadAlbums()} className="btn btn-secondary" style={{ marginTop: 12 }}>Réessayer</button>
-            </div>
-          ) : filteredAlbums.length > 0 ? (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, justifyContent: 'space-between' }}>
-              {filteredAlbums.map((album) => (
-                <AlbumCard key={album.id} album={album} variant="tile" isOffline={album.isOffline} onPress={() => navigate(`/album/${album.id}`)} />
-              ))}
-            </div>
-          ) : (
-            <div style={{ textAlign: 'center', padding: 24 }}>
-              <p className="text-muted">{query.trim() ? 'Aucun album ne correspond à cette recherche.' : 'Aucun album activé pour le moment.'}</p>
-            </div>
-          )}
+
+      {loading ? (
+        <div className="flex justify-center p-10"><div className="loader-spinner" /></div>
+      ) : error ? (
+        <div style={{ textAlign: 'center', padding: 24 }}>
+          <p className="text-error">{error}</p>
+          <button onClick={() => void loadAlbums()} className="btn-secondary" style={{ marginTop: 12 }}>
+            Réessayer
+          </button>
+        </div>
+      ) : filteredAlbums.length > 0 ? (
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(175px, 1fr))',
+            gap: 16,
+          }}
+        >
+          {filteredAlbums.map((album) => (
+            <AlbumCard
+              key={album.id}
+              album={album}
+              variant="tile"
+              isOffline={album.isOffline}
+              onPress={() => navigate(`/album/${album.id}`)}
+            />
+          ))}
+        </div>
+      ) : (
+        <div style={{ textAlign: 'center', padding: 24 }}>
+          <p style={{ color: 'var(--color-text-muted)' }}>
+            {query.trim() ? 'Aucun album ne correspond à cette recherche.' : 'Aucun album activé pour le moment.'}
+          </p>
+        </div>
+      )}
     </Screen>
   );
 }

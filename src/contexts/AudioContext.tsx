@@ -306,6 +306,17 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     key: string | null,
     retryCount: number = 0,
   ) {
+    console.log('[AudioContext] startPlayback called with:', {
+      trackId: track.id,
+      trackTitle: track.title,
+      previewUrl: track.preview_url,
+      streamUrl: track.stream_url,
+      encryptedAudioUrl: track.encrypted_audio_url,
+      albumId: albumData.id,
+      albumTitle: albumData.title,
+      retryCount
+    });
+    
     if (retryCount === 0) setPlaybackError(null);
     setIsLoading(true);
     setIsPlaying(false);
@@ -321,6 +332,7 @@ export function AudioProvider({ children }: { children: ReactNode }) {
       }
 
       const mode = await resolvePlayMode(track, albumData, effectiveKey);
+      console.log('[AudioContext] Resolved playback mode:', mode);
       setPlayMode(mode);
 
       const handleStatus = (status: {
@@ -340,21 +352,70 @@ export function AudioProvider({ children }: { children: ReactNode }) {
       };
 
       if (mode === 'remote') {
+        // First try the track's own preview/stream URL if available, before proxy
+        const directUrl = track.preview_url ?? track.stream_url;
+        console.log('[AudioContext] Trying direct URL:', directUrl);
+        if (directUrl) {
+          try {
+            const streamPlayer = await playStream(directUrl, handleStatus);
+            if (streamPlayer) {
+              console.log('[AudioContext] Playback started with direct URL');
+              currentIndexRef.current = index;
+              setCurrentIndex(index);
+              return;
+            }
+          } catch (err) {
+            console.warn('[AudioContext] Direct URL failed:', err);
+          }
+        }
+        
         const proxyUrl = `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(track.id)}/audio`;
+        console.log('[AudioContext] Trying proxy URL:', proxyUrl);
         const fallbackUrls = [track.preview_url, track.encrypted_audio_url].filter(Boolean) as string[];
         const player = await playRemoteTrack(proxyUrl, track.id, effectiveKey ?? '', true, handleStatus, fallbackUrls);
         if (!player) throw new Error('Impossible de lire ce titre.');
+        console.log('[AudioContext] Playback started with proxy URL');
       } else {
         const url = track.preview_url ?? track.encrypted_audio_url ?? track.stream_url;
+        console.log('[AudioContext] Trying local mode URL:', url);
         if (!url) throw new Error("L'aperçu de cette piste n'est pas disponible.");
-        await playStream(url, handleStatus);
+        const streamPlayer = await playStream(url, handleStatus);
+        if (!streamPlayer) throw new Error('Impossible de lire ce titre.');
       }
 
       currentIndexRef.current = index;
       setCurrentIndex(index);
-      setIsPlaying(true);
-      isPlayingRef.current = true;
+      // Ne PAS overrider isPlaying ici — handleStatus a déjà été appelé
+      // depuis playRemoteTrack/playStream avec la bonne valeur (playing: true/false)
     } catch (err) {
+      console.error('[AudioContext] Playback failed with error:', err);
+      // If playback fails and we haven't retried yet, refresh album data to get new signed URLs
+      if (retryCount < 1) {
+        try {
+          console.log('[AudioContext] Refreshing album data to get fresh signed URLs');
+          const freshAlbum = unwrapAlbumDetails(await getAlbum(albumData.id));
+          console.log('[AudioContext] Fresh album data received:', freshAlbum);
+          
+          // Update album and queue with fresh data
+          albumRef.current = freshAlbum;
+          setAlbum(freshAlbum);
+          const sortedTracks = sortTracksByPosition(freshAlbum.tracks || []);
+          queueRef.current = sortedTracks;
+          setQueue(sortedTracks);
+          
+          // Find the same track in the refreshed data
+          const freshTrack = sortedTracks.find(t => t.id === track.id);
+          console.log('[AudioContext] Fresh track found:', freshTrack);
+          if (freshTrack) {
+            // Retry playback with fresh track data
+            await startPlayback(freshTrack, index, freshAlbum, key, retryCount + 1);
+            return;
+          }
+        } catch (refreshErr) {
+          console.error('[AudioContext] Failed to refresh album data:', refreshErr);
+        }
+      }
+      
       reportPlaybackError('AudioContext.playback', err);
       setIsPlaying(false);
       isPlayingRef.current = false;
@@ -494,9 +555,12 @@ export function AudioProvider({ children }: { children: ReactNode }) {
   const playTrackAtIndex = useCallback(async (index: number) => { await playAtIndex(index); }, [playAtIndex]);
 
   const togglePlayPause = useCallback(() => {
-    const newState = toggleAudioPlayPause();
-    setIsPlaying(newState);
-    isPlayingRef.current = newState;
+    toggleAudioPlayPause().then((newState) => {
+      setIsPlaying(newState);
+      isPlayingRef.current = newState;
+    }).catch(() => {
+      // ignore
+    });
   }, []);
 
   const next = useCallback(async () => {

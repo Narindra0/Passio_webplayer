@@ -1,5 +1,6 @@
 import { Play, Pause, CloudCheck } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { useCachedImage } from '@/hooks/useCachedImage';
 import { isTrackInDB } from '../services/indexedDB';
 
 export interface TrackWithAlbum {
@@ -27,6 +28,7 @@ type TrackListItemProps = {
 
 export function TrackListItem({ track, onPress, isPlaying = false }: TrackListItemProps) {
   const [isOfflineAvailable, setIsOfflineAvailable] = useState(false);
+  const cachedCover = useCachedImage(track.cover_url);
 
   useEffect(() => {
     isTrackInDB(track.id).then(setIsOfflineAvailable);
@@ -36,43 +38,106 @@ export function TrackListItem({ track, onPress, isPlaying = false }: TrackListIt
     <button
       onClick={onPress}
       className="track-item"
-      style={isPlaying ? { backgroundColor: 'rgba(120, 0, 0, 0.15)' } : undefined}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 12,
+        padding: '8px 12px',
+        borderRadius: 'var(--radius-sm)',
+        cursor: 'pointer',
+        transition: 'background-color var(--transition-fast) ease',
+        width: '100%',
+        textAlign: 'left',
+        border: 'none',
+        background: isPlaying ? 'var(--color-accent-soft)' : 'transparent',
+        color: 'inherit',
+      }}
+      onMouseEnter={(e) => {
+        if (!isPlaying) e.currentTarget.style.background = 'var(--color-surface-hover)';
+        else e.currentTarget.style.background = 'var(--color-accent-soft)';
+      }}
+      onMouseLeave={(e) => {
+        if (!isPlaying) e.currentTarget.style.background = 'transparent';
+        else e.currentTarget.style.background = 'var(--color-accent-soft)';
+      }}
     >
-      <div className="track-item-left">
-        {track.cover_url ? (
-          <img
-            src={track.cover_url}
-            alt=""
-            style={{ width: 48, height: 48, borderRadius: 8, objectFit: 'cover', backgroundColor: 'rgba(255,255,255,0.05)' }}
-          />
-        ) : (
-          <div style={{ width: 48, height: 48, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <span style={{ color: 'rgba(255,255,255,0.45)', fontSize: 20 }}>♪</span>
-          </div>
-        )}
-        <div className="track-item-info">
-          <div className="track-item-title" style={isPlaying ? { color: 'var(--color-accent)' } : undefined}>
-            {track.title}
-          </div>
-          <div className="track-item-artist">{track.artist_name}</div>
+      {/* Cover */}
+      {track.cover_url ? (
+        <img
+          src={cachedCover || track.cover_url}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          style={{
+            width: 44,
+            height: 44,
+            borderRadius: 'var(--radius-sm)',
+            objectFit: 'cover',
+            backgroundColor: 'var(--color-surface-elevated)',
+            flexShrink: 0,
+          }}
+        />
+      ) : (
+        <div style={{
+          width: 44,
+          height: 44,
+          borderRadius: 'var(--radius-sm)',
+          background: 'var(--color-surface-elevated)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          flexShrink: 0,
+        }}>
+          <span style={{ color: 'var(--color-text-muted)', fontSize: 16 }}>♪</span>
+        </div>
+      )}
+
+      {/* Info */}
+      <div className="track-item-info" style={{ flex: 1, minWidth: 0 }}>
+        <div
+          style={{
+            color: isPlaying ? 'var(--color-text-primary)' : 'var(--color-text-primary)',
+            fontSize: 14,
+            fontWeight: 600,
+            lineHeight: '20px',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {track.title}
+        </div>
+        <div
+          style={{
+            color: isPlaying ? 'var(--color-text-secondary)' : 'var(--color-text-muted)',
+            fontSize: 13,
+            lineHeight: '18px',
+            marginTop: 1,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {track.artist_name}
         </div>
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+
+      {/* Actions */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
         {isOfflineAvailable && (
-          <span title="Disponible hors-ligne" style={{ display: 'flex' }}>
-            <CloudCheck size={18} color="var(--color-accent)" />
-          </span>
+          <CloudCheck size={16} color="var(--color-success)" />
         )}
-        <div style={{ width: 40, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+
+        <div style={{ width: 32, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           {isPlaying ? (
-            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 2, height: 20 }}>
+            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 2, height: 16 }}>
               <div className="equalizer-bar" style={{ width: 3, backgroundColor: 'var(--color-accent)', borderRadius: 2 }} />
               <div className="equalizer-bar" style={{ width: 3, backgroundColor: 'var(--color-accent)', borderRadius: 2 }} />
               <div className="equalizer-bar" style={{ width: 3, backgroundColor: 'var(--color-accent)', borderRadius: 2 }} />
               <div className="equalizer-bar" style={{ width: 3, backgroundColor: 'var(--color-accent)', borderRadius: 2 }} />
             </div>
           ) : (
-            <Play size={20} color="rgba(255,255,255,0.45)" />
+            <Play size={18} color="var(--color-text-muted)" />
           )}
         </div>
       </div>

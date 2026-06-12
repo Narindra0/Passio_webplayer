@@ -55,7 +55,7 @@ export function LocalScreen() {
       <PageHeader 
         title="Fichiers Locaux"
         subtitle="Importez vos fichiers audio pour les écouter directement depuis votre appareil."
-        style={{ paddingTop: 'var(--header-padding)' }}
+
       />
 
         <input

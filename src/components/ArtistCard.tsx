@@ -1,3 +1,5 @@
+import { useCachedImage } from '@/hooks/useCachedImage';
+
 export interface Artist {
   id: string;
   name: string;
@@ -13,53 +15,84 @@ type ArtistCardProps = {
 
 export function ArtistCard({ artist, onPress }: ArtistCardProps) {
   const imageUrl = artist.profile_picture_url || artist.fallback_image_url;
+  const cachedImage = useCachedImage(imageUrl);
 
   return (
     <button
       onClick={onPress}
+      className="group"
       style={{
-        width: 110,
-        height: 140,
-        borderRadius: 20,
-        overflow: 'hidden',
-        backgroundColor: 'var(--color-surface-elevated)',
+        width: 160,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: 12,
+        padding: '20px 16px 16px',
+        borderRadius: 'var(--radius-md)',
+        background: 'transparent',
         border: 'none',
         cursor: 'pointer',
-        padding: 0,
-        position: 'relative',
+        transition: 'background-color var(--transition-fast) ease',
         flexShrink: 0,
-        transition: 'all 0.15s ease',
-        boxShadow: '0 6px 10px rgba(0,0,0,0.3)',
       }}
-      onMouseEnter={(e) => { e.currentTarget.style.opacity = '0.85'; e.currentTarget.style.transform = 'scale(0.98)'; }}
-      onMouseLeave={(e) => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.transform = 'scale(1)'; }}
+      onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-surface-elevated)'; }}
+      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
     >
-      {imageUrl ? (
-        <img
-          src={imageUrl}
-          alt={artist.name}
-          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-        />
-      ) : (
-        <div style={{
-          width: '100%', height: '100%', backgroundColor: '#2A2B32',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-        }}>
-          <span style={{ color: '#fff', fontSize: 40, fontWeight: 800 }}>
-            {artist.name.charAt(0).toUpperCase()}
-          </span>
-        </div>
-      )}
-      <div style={{
-        position: 'absolute', bottom: 0, left: 0, right: 0, height: '60%',
-        background: 'linear-gradient(transparent, rgba(0,0,0,0.8))',
-        display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
-        padding: 10,
-      }}>
+      {/* Circular Artist Image */}
+      <div
+        style={{
+          width: 120,
+          height: 120,
+          borderRadius: 'var(--radius-full)',
+          overflow: 'hidden',
+          backgroundColor: 'var(--color-surface-elevated)',
+          boxShadow: 'var(--shadow-md)',
+          position: 'relative',
+        }}
+      >
+        {imageUrl ? (
+          <img
+            src={cachedImage || imageUrl}
+            alt={artist.name}
+            loading="lazy"
+            decoding="async"
+            style={{
+              width: '100%',
+              height: '100%',
+              objectFit: 'cover',
+              transition: 'transform var(--transition-normal) ease',
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.08)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
+          />
+        ) : (
+          <div style={{
+            width: '100%',
+            height: '100%',
+            background: 'var(--color-surface-elevated)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}>
+            <span style={{ color: 'var(--color-text-muted)', fontSize: 40, fontWeight: 800 }}>
+              {artist.name.charAt(0).toUpperCase()}
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* Artist Name */}
+      <div style={{ width: '100%', textAlign: 'center' }}>
         <span style={{
-          color: '#fff', fontSize: 13, fontWeight: 600, textAlign: 'center',
-          lineHeight: '18px', overflow: 'hidden', textOverflow: 'ellipsis',
-          display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as any,
+          color: 'var(--color-text-primary)',
+          fontSize: 14,
+          fontWeight: 600,
+          lineHeight: '18px',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          display: '-webkit-box',
+          WebkitLineClamp: 2,
+          WebkitBoxOrient: 'vertical' as any,
         }}>
           {artist.name}
         </span>

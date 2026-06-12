@@ -1,5 +1,5 @@
+import { Compass, KeyRound, Library, Search, Sparkles } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Compass, Search, Library, KeyRound } from 'lucide-react';
 import { useLibraryMode } from '../contexts/LibraryModeContext';
 
 interface NavItem {
@@ -15,7 +15,7 @@ export function MobileNav() {
   const currentPath = location.pathname;
 
   const navItems: NavItem[] = effectiveMode === 'online' ? [
-    { path: '/tabs', label: 'Accueil', icon: Compass },
+    { path: '/discover', label: 'Découvertes', icon: Sparkles },
     { path: '/search', label: 'Rechercher', icon: Search },
     { path: '/catalog', label: 'Bibliothèque', icon: Library },
     { path: '/activate', label: 'Activer', icon: KeyRound },
