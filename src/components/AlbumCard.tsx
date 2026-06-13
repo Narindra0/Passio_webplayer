@@ -7,9 +7,10 @@ type AlbumCardProps = {
   variant?: 'row' | 'tile';
   onPress?: () => void;
   isOffline?: boolean;
+  premiumLabel?: string;
 };
 
-export function AlbumCard({ album, variant = 'row', onPress, isOffline = false }: AlbumCardProps) {
+export function AlbumCard({ album, variant = 'row', onPress, isOffline = false, premiumLabel }: AlbumCardProps) {
   const artistName = album.artist_name || album.artist?.name || 'Artiste inconnu';
   const cachedCover = useCachedImage(album.cover_url);
 
@@ -153,8 +154,8 @@ export function AlbumCard({ album, variant = 'row', onPress, isOffline = false }
           >
             {album.title}
           </div>
-          <div
-            style={{
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
+            <span style={{
               color: 'var(--color-text-secondary)',
               fontSize: 13,
               lineHeight: '16px',
@@ -162,8 +163,27 @@ export function AlbumCard({ album, variant = 'row', onPress, isOffline = false }
               textOverflow: 'ellipsis',
               whiteSpace: 'nowrap',
             }}
-          >
-            {artistName}
+            >
+              {artistName}
+            </span>
+            {premiumLabel && (
+              <span style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 3,
+                padding: '1px 6px',
+                borderRadius: 'var(--radius-full)',
+                background: 'rgba(255,215,0,0.1)',
+                border: '1px solid rgba(255,215,0,0.15)',
+                color: '#cca300',
+                fontSize: 9,
+                fontWeight: 700,
+                whiteSpace: 'nowrap',
+                flexShrink: 0,
+              }}>
+                {premiumLabel}
+              </span>
+            )}
           </div>
         </div>
       </button>

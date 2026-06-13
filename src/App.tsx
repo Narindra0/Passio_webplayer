@@ -16,6 +16,7 @@ const Local = React.lazy(() => import('./pages/Local').then(m => ({ default: m.L
 const AlbumDetail = React.lazy(() => import('./pages/AlbumDetail').then(m => ({ default: m.AlbumDetailScreen })));
 const ArtistDetail = React.lazy(() => import('./pages/ArtistDetail').then(m => ({ default: m.ArtistDetailScreen })));
 const Search = React.lazy(() => import('./pages/Search').then(m => ({ default: m.SearchScreen })));
+const Tracks = React.lazy(() => import('./pages/Tracks').then(m => ({ default: m.TracksScreen })));
 const Artists = React.lazy(() => import('./pages/Artists').then(m => ({ default: m.ArtistsScreen })));
 const Discover = React.lazy(() => import('./pages/Discover').then(m => ({ default: m.DiscoverScreen })));
 
@@ -76,6 +77,7 @@ export function App() {
                   <Route path="/artist/:id" element={<ArtistDetail />} />
                   <Route path="/artists" element={<Artists />} />
                   <Route path="/search" element={<Search />} />
+                  <Route path="/tracks" element={<Tracks />} />
                   <Route path="*" element={<Navigate to="/discover" replace />} />
                 </Routes>
               </Suspense>

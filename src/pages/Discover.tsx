@@ -1,15 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Sparkles, Clock, TrendingUp, ChevronLeft, ChevronRight, ShoppingBag, Filter, Music, Users, Disc, Trophy, Play, Heart } from 'lucide-react';
+import {
+  Sparkles, ChevronLeft, ChevronRight,
+  ShoppingBag, Filter, Music, Users, Disc, Play,
+  Crown, Store, User, ArrowUpDown,
+} from 'lucide-react';
 import { AlbumCard } from '@/components/AlbumCard';
+import { PremiumAlbumCard } from '@/components/PremiumAlbumCard';
 import { ArtistCard } from '@/components/ArtistCard';
 import { TrackListItem, type TrackWithAlbum } from '@/components/TrackListItem';
 import { Screen } from '@/components/Screen';
 import { getAlbum, listAlbums, unwrapAlbumDetails } from '@/services/api';
 import { isAlbumReadyOffline } from '@/services/downloadManager';
+import { isAlbumOwnedByDevice } from '@/services/albumOwnership';
 import { freeCatalogDetailsMap, readFreeCatalogCache, writeFreeCatalogCache, staleWhileRevalidate } from '@/services/freeCatalogCache';
 import { buildArtistsFromAlbums, mapTracksFromAlbum } from '@/services/freeCatalogSearch';
 import { resolveOfflinePlayback } from '@/services/offlineAccess';
+import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useAlbumColors } from '@/hooks/useAlbumColors';
 import { useAudioPlayback } from '@/contexts/AudioContext';
 import { getPurchaseAlbumUrl } from '@/config/urls';
@@ -24,6 +31,8 @@ interface FilterState {
 const ALBUM_TYPES = ['Tous', 'album', 'single', 'ep'];
 const PRICE_FILTERS = ['Tous', 'Gratuit', 'Payant'];
 const SORT_OPTIONS = ['Plus récent', 'Plus ancien', 'A-Z', 'Z-A'];
+const TITRES_INITIAL_PAGE_SIZE = 15;
+const TITRES_SCROLL_INCREMENT = 10;
 
 export function DiscoverScreen() {
   const navigate = useNavigate();
@@ -42,12 +51,19 @@ export function DiscoverScreen() {
     priceFilter: 'Tous',
     sortBy: 'Plus récent',
   });
+  const [ownedMap, setOwnedMap] = useState<Map<string, boolean>>(new Map());
   const bannerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [showFilters, setShowFilters] = useState(false);
+  const [showAllPremium, setShowAllPremium] = useState(false);
+  const [catalogSortBy, setCatalogSortBy] = useState('A-Z');
+  const [mobileTab, setMobileTab] = useState<'titres' | 'albums'>('titres');
+  const [titresDisplayCount, setTitresDisplayCount] = useState(TITRES_INITIAL_PAGE_SIZE);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
   const albumCacheRef = useRef<Map<string, PublicAlbumDetails>>(new Map());
   const scrollRefs = useRef<{ [key: string]: HTMLDivElement | null }>({});
+  const isMobile = useMediaQuery('(max-width: 768px)');
 
-  // Auto-advance banners using real album data when available
+  // Auto-advance banners
   useEffect(() => {
     const count = bannerAlbums.length || 1;
     const interval = setInterval(() => {
@@ -57,32 +73,41 @@ export function DiscoverScreen() {
     return () => clearInterval(interval);
   }, [bannerAlbums.length]);
 
+  const loadOwnershipStatus = useCallback(async (albums: PublicAlbumSummary[]) => {
+    const paid = albums.filter((a) => !a.is_free && a.status === 'published');
+    const results = await Promise.allSettled(
+      paid.map(async (a) => ({ id: a.id, owned: await isAlbumOwnedByDevice(a.id) })),
+    );
+    const map = new Map<string, boolean>();
+    results.forEach((r) => {
+      if (r.status === 'fulfilled') map.set(r.value.id, r.value.owned);
+    });
+    setOwnedMap(map);
+  }, []);
+
   const loadData = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      // Stratégie stale-while-revalidate : vérifier le cache d'abord
       const cacheResult = await staleWhileRevalidate(async () => {
         const albums = await listAlbums();
         const freeAlbums = albums.filter((a) => a.is_free === true);
         const detailsMap = new Map<string, PublicAlbumDetails>();
-        const albumDetailsList = await Promise.all(
+        await Promise.all(
           freeAlbums.map(async (album) => {
             try {
               const offline = await resolveOfflinePlayback(album.id);
-              if (offline.metadata) { detailsMap.set(album.id, offline.metadata); return { album, details: offline.metadata }; }
+              if (offline.metadata) { detailsMap.set(album.id, offline.metadata); return; }
               const details = unwrapAlbumDetails(await getAlbum(album.id));
               detailsMap.set(album.id, details);
-              return { album, details };
-            } catch { return null; }
+            } catch { /* skip */ }
           }),
         );
         return { albums, albumDetails: detailsMap };
       });
 
-      // Si on a des données en cache, les utiliser immédiatement
       if (cacheResult.data) {
-        const { albums, albumDetails } = cacheResult.data;
+        const { albums } = cacheResult.data;
         const detailsMap = freeCatalogDetailsMap(cacheResult.data);
         albumCacheRef.current = detailsMap;
 
@@ -93,13 +118,19 @@ export function DiscoverScreen() {
         });
         setNewAlbums(sorted);
 
-        const bannerAlbums = albums
-          .filter((a) => a.cover_url && a.status === 'published')
-          .slice(0, 5);
-        setBannerAlbums(bannerAlbums);
+        // Banner: prioritize paid albums, fallback to free
+        const paidWithCover = albums.filter((a) => !a.is_free && a.cover_url && a.status === 'published');
+        const freeWithCover = albums.filter((a) => a.is_free && a.cover_url && a.status === 'published');
+        setBannerAlbums(
+          paidWithCover.length >= 2 ? paidWithCover.slice(0, 3)
+            : [...paidWithCover, ...freeWithCover].slice(0, 3),
+        );
 
         const paid = albums.filter((a) => !a.is_free && a.status === 'published');
-        setPaidAlbums(paid.slice(0, 4));
+        setPaidAlbums(paid);
+
+        // Load ownership for paid albums
+        void loadOwnershipStatus(albums);
 
         const tracks: TrackWithAlbum[] = [];
         for (const album of albums) {
@@ -113,29 +144,24 @@ export function DiscoverScreen() {
           const db = albumB?.created_at ? new Date(albumB.created_at).getTime() : 0;
           return db - da;
         });
-        setFreeTracks(tracks.slice(0, 20));
-
+        setFreeTracks(tracks);
         setArtists(buildArtistsFromAlbums(albums));
-
-        // Si le cache était périmé, un rafraîchissement arrière-plan est en cours
-        // Les données seront mises à jour lors du prochain chargement
         setLoading(false);
         return;
       }
 
-      // Aucun cache disponible — faire l'appel réseau normal
+      // No cache — network fetch
       const albums = await listAlbums();
       const freeAlbums = albums.filter((a) => a.is_free === true);
       const cache = new Map<string, PublicAlbumDetails>();
-      const albumDetailsList = await Promise.all(
+      await Promise.all(
         freeAlbums.map(async (album) => {
           try {
             const offline = await resolveOfflinePlayback(album.id);
-            if (offline.metadata) { cache.set(album.id, offline.metadata); return { album, details: offline.metadata }; }
+            if (offline.metadata) { cache.set(album.id, offline.metadata); return; }
             const details = unwrapAlbumDetails(await getAlbum(album.id));
             cache.set(album.id, details);
-            return { album, details };
-          } catch { return null; }
+          } catch { /* skip */ }
         }),
       );
       albumCacheRef.current = cache;
@@ -147,17 +173,23 @@ export function DiscoverScreen() {
       });
       setNewAlbums(sorted);
 
-      const bannerAlbums = albums
-        .filter((a) => a.cover_url && a.status === 'published')
-        .slice(0, 5);
-      setBannerAlbums(bannerAlbums);
+      const paidWithCover = albums.filter((a) => !a.is_free && a.cover_url && a.status === 'published');
+      const freeWithCover = albums.filter((a) => a.is_free && a.cover_url && a.status === 'published');
+      setBannerAlbums(
+        paidWithCover.length >= 2 ? paidWithCover.slice(0, 3)
+          : [...paidWithCover, ...freeWithCover].slice(0, 3),
+      );
 
       const paid = albums.filter((a) => !a.is_free && a.status === 'published');
-      setPaidAlbums(paid.slice(0, 4));
+      setPaidAlbums(paid);
+
+      // Load ownership
+      void loadOwnershipStatus(albums);
 
       const tracks: TrackWithAlbum[] = [];
-      for (const item of albumDetailsList) {
-        if (item) tracks.push(...mapTracksFromAlbum(item.album, item.details));
+      for (const album of albums) {
+        const details = cache.get(album.id);
+        if (details) tracks.push(...mapTracksFromAlbum(album, details));
       }
       tracks.sort((a, b) => {
         const albumA = albums.find((al) => al.id === a.album_id);
@@ -166,12 +198,11 @@ export function DiscoverScreen() {
         const db = albumB?.created_at ? new Date(albumB.created_at).getTime() : 0;
         return db - da;
       });
-      setFreeTracks(tracks.slice(0, 20));
+      setFreeTracks(tracks);
 
       await writeFreeCatalogCache(freeAlbums, cache);
       setArtists(buildArtistsFromAlbums(albums));
     } catch {
-      // Fallback : utiliser le cache même s'il est périmé
       const cached = await readFreeCatalogCache();
       if (cached) {
         const detailsMap = freeCatalogDetailsMap(cached);
@@ -187,11 +218,15 @@ export function DiscoverScreen() {
         });
         setNewAlbums(sorted);
         const paid = offlineAlbums.filter((a) => !a.is_free && a.status === 'published');
-        setPaidAlbums(paid.slice(0, 4));
+        setPaidAlbums(paid);
+        // In cache fallback, all offline albums are owned
+        const fallbackOwnedMap = new Map<string, boolean>();
+        paid.forEach((a) => fallbackOwnedMap.set(a.id, true));
+        setOwnedMap(fallbackOwnedMap);
         setArtists(buildArtistsFromAlbums(offlineAlbums));
         const bannerAlbums = offlineAlbums
           .filter((a) => a.cover_url && a.status === 'published')
-          .slice(0, 5);
+          .slice(0, 3);
         setBannerAlbums(bannerAlbums);
         const tracks = offlineAlbums.flatMap((album) => {
           const details = detailsMap.get(album.id);
@@ -204,18 +239,44 @@ export function DiscoverScreen() {
           const db = albumB?.created_at ? new Date(albumB.created_at).getTime() : 0;
           return db - da;
         });
-        setFreeTracks(tracks.slice(0, 20));
+        setFreeTracks(tracks);
       } else {
         setError('Impossible de charger les nouveautés.');
       }
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [loadOwnershipStatus]);
 
   useEffect(() => {
     void loadData();
   }, [loadData]);
+
+  // IntersectionObserver pour l'infinite scroll des titres mobile
+  useEffect(() => {
+    if (mobileTab !== 'titres') return;
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting) {
+          setTitresDisplayCount((prev) =>
+            Math.min(prev + TITRES_SCROLL_INCREMENT, freeTracks.length),
+          );
+        }
+      },
+      { rootMargin: '200px' },
+    );
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [mobileTab, freeTracks.length, catalogSortBy]);
+
+  // Reset display count when sort changes
+  useEffect(() => {
+    setTitresDisplayCount(TITRES_INITIAL_PAGE_SIZE);
+  }, [catalogSortBy]);
 
   const scrollSection = (key: string, direction: 'left' | 'right') => {
     const ref = scrollRefs.current[key];
@@ -227,6 +288,87 @@ export function DiscoverScreen() {
     });
   };
 
+  function PaginationBar({ page, totalPages, onPrev, onNext }: {
+    page: number;
+    totalPages: number;
+    onPrev: () => void;
+    onNext: () => void;
+  }) {
+    if (totalPages <= 1) return null;
+    return (
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 12,
+        marginTop: 20,
+        padding: '12px 0',
+      }}>
+        <button
+          onClick={onPrev}
+          disabled={page === 0}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6,
+            padding: '8px 18px',
+            borderRadius: 'var(--radius-full)',
+            background: page === 0 ? 'var(--color-surface)' : 'var(--color-surface-elevated)',
+            border: '1px solid var(--color-border-subtle)',
+            cursor: page === 0 ? 'default' : 'pointer',
+            color: page === 0 ? 'var(--color-text-muted)' : 'var(--color-text-secondary)',
+            fontSize: 13,
+            fontWeight: 600,
+            transition: 'all var(--transition-fast) ease',
+            opacity: page === 0 ? 0.4 : 1,
+          }}
+          onMouseEnter={(e) => {
+            if (page > 0) { e.currentTarget.style.background = 'var(--color-surface-hover)'; e.currentTarget.style.color = 'var(--color-text-primary)'; }
+          }}
+          onMouseLeave={(e) => {
+            if (page > 0) { e.currentTarget.style.background = 'var(--color-surface-elevated)'; e.currentTarget.style.color = 'var(--color-text-secondary)'; }
+          }}
+        >
+          <ChevronLeft size={15} />
+          Précédent
+        </button>
+
+        <span style={{ color: 'var(--color-text-muted)', fontSize: 13, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
+          {page + 1} / {totalPages}
+        </span>
+
+        <button
+          onClick={onNext}
+          disabled={page >= totalPages - 1}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6,
+            padding: '8px 18px',
+            borderRadius: 'var(--radius-full)',
+            background: page >= totalPages - 1 ? 'var(--color-surface)' : 'var(--color-surface-elevated)',
+            border: '1px solid var(--color-border-subtle)',
+            cursor: page >= totalPages - 1 ? 'default' : 'pointer',
+            color: page >= totalPages - 1 ? 'var(--color-text-muted)' : 'var(--color-text-secondary)',
+            fontSize: 13,
+            fontWeight: 600,
+            transition: 'all var(--transition-fast) ease',
+            opacity: page >= totalPages - 1 ? 0.4 : 1,
+          }}
+          onMouseEnter={(e) => {
+            if (page < totalPages - 1) { e.currentTarget.style.background = 'var(--color-surface-hover)'; e.currentTarget.style.color = 'var(--color-text-primary)'; }
+          }}
+          onMouseLeave={(e) => {
+            if (page < totalPages - 1) { e.currentTarget.style.background = 'var(--color-surface-elevated)'; e.currentTarget.style.color = 'var(--color-text-secondary)'; }
+          }}
+        >
+          Suivant
+          <ChevronRight size={15} />
+        </button>
+      </div>
+    );
+  }
+
   async function handleTrackPress(track: TrackWithAlbum) {
     try { await playFromTrackList(freeTracks, albumCacheRef.current, track.id); }
     catch { /* ignore */ }
@@ -234,12 +376,10 @@ export function DiscoverScreen() {
 
   const filteredAlbums = newAlbums
     .filter(album => {
-      // Filtre par type d'album
-      if (filters.albumType !== 'Tous') {
-        const albumType = album.type || 'album';
-        if (albumType !== filters.albumType) return false;
-      }
-      // Filtre gratuit/payant
+      // Only show albums (no singles or EPs)
+      const albumType = album.type || 'album';
+      if (albumType !== 'album') return false;
+
       if (filters.priceFilter !== 'Tous') {
         if (filters.priceFilter === 'Gratuit' && !album.is_free) return false;
         if (filters.priceFilter === 'Payant' && album.is_free) return false;
@@ -262,9 +402,24 @@ export function DiscoverScreen() {
       return 0;
     });
 
+  // Pagination — albums
+  const [albumPage, setAlbumPage] = useState(0);
+  const ALBUMS_PER_PAGE = 8;
+  const totalAlbumPages = Math.max(1, Math.ceil(filteredAlbums.length / ALBUMS_PER_PAGE));
+
+  // Reset album page when filters change
+  useEffect(() => { setAlbumPage(0); }, [filters]);
+
+  // Premium albums sorted by newest first
+  const sortedPaidAlbums = [...paidAlbums].sort((a, b) => {
+    const da = a.created_at ? new Date(a.created_at).getTime() : 0;
+    const db = b.created_at ? new Date(b.created_at).getTime() : 0;
+    return db - da;
+  });
+
   return (
     <Screen gradient padded>
-      {/* Header with Filter Button */}
+      {/* ========== HEADER ========== */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingBottom: 12 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <div style={{
@@ -291,19 +446,19 @@ export function DiscoverScreen() {
             }}>
               Découverte
             </h1>
-            <p style={{
+            <p className="desktop-only" style={{
               color: 'var(--color-text-secondary)',
               fontSize: 14,
               margin: '2px 0 0',
               lineHeight: 1.4,
             }}>
-              Nouveautés et tendances
+              Nouveautés, collections et tendances
             </p>
           </div>
         </div>
         <button
           onClick={() => setShowFilters(!showFilters)}
-          className="btn-ghost"
+          className="btn-ghost desktop-only"
           style={{
             display: 'flex',
             alignItems: 'center',
@@ -413,22 +568,31 @@ export function DiscoverScreen() {
         </div>
       )}
 
-      {/* Content */}
+      {/* ========== CONTENT ========== */}
       {!loading && !error && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 40 }}>
-          {/* Rotating Banner Carousel — alimenté par les albums réels */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 48, maxWidth: 1200, margin: '0 auto', width: '100%' }} className="discover-content">
+
+          {!isMobile && (
+            <>
+
+          {/* ──────── 1. HERO — Premium Shop Window ──────── */}
           {bannerAlbums.length > 0 && (
-            <div className="desktop-only">
+            <div>
               <div style={{
                 position: 'relative',
                 width: '100%',
-                height: 340,
+                height: 280,
                 borderRadius: 'var(--radius-lg)',
                 overflow: 'hidden',
               }}>
-                {bannerAlbums.map((album, index) => {
+                {bannerAlbums.slice(0, 3).map((album, index) => {
                   const artistName = album.artist_name || album.artist?.name || 'Artiste';
                   const albumType = album.type === 'single' ? 'Single' : album.type === 'ep' ? 'EP' : 'Album';
+                  const isPremium = !album.is_free;
+                  const price = album.price_ariary > 0
+                    ? `${album.price_ariary.toLocaleString()} Ar`
+                    : null;
+
                   return (
                     <div
                       key={album.id}
@@ -453,7 +617,9 @@ export function DiscoverScreen() {
                         <div style={{
                           position: 'absolute',
                           inset: 0,
-                          background: 'linear-gradient(135deg, rgba(220,20,60,0.85), rgba(100,10,40,0.85))',
+                          background: isPremium
+                            ? 'linear-gradient(135deg, rgba(180,120,20,0.75) 0%, rgba(139,0,0,0.85) 50%, rgba(60,10,30,0.85) 100%)'
+                            : 'linear-gradient(135deg, rgba(220,20,60,0.85), rgba(100,10,40,0.85))',
                         }} />
                         <div style={{
                           position: 'absolute',
@@ -461,33 +627,72 @@ export function DiscoverScreen() {
                           background: 'linear-gradient(90deg, rgba(0,0,0,0.7) 0%, transparent 50%, rgba(0,0,0,0.4) 100%)',
                         }} />
                       </div>
+
+                      {/* Decorative gold sparkles for premium */}
+                      {isPremium && (
+                        <div style={{
+                          position: 'absolute',
+                          top: 40,
+                          right: 60,
+                          zIndex: 5,
+                          opacity: 0.15,
+                          fontSize: 120,
+                          color: '#FFD700',
+                          fontWeight: 100,
+                          lineHeight: 1,
+                          fontFamily: 'serif',
+                          pointerEvents: 'none',
+                        }}>
+                          ✦
+                        </div>
+                      )}
+
                       {/* Banner Content */}
                       <div
                         style={{
                           position: 'relative',
                           zIndex: 10,
                           padding: '40px 60px',
-                          maxWidth: 600,
+                          maxWidth: 650,
                           cursor: 'pointer',
                         }}
                         onClick={() => navigate(`/album/${album.id}`)}
                       >
-                        <p style={{
-                          color: 'rgba(255,255,255,0.8)',
-                          fontSize: 14,
-                          fontWeight: 700,
-                          textTransform: 'uppercase',
-                          letterSpacing: '1.5px',
-                          margin: '0 0 8px',
-                        }}>
-                          {album.is_free ? 'Gratuit' : 'Premium'} · {albumType}
-                        </p>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                          {isPremium && (
+                            <div style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 5,
+                              padding: '3px 10px',
+                              borderRadius: 'var(--radius-full)',
+                              background: 'rgba(255,215,0,0.15)',
+                              border: '1px solid rgba(255,215,0,0.2)',
+                            }}>
+                              <Crown size={12} color="#FFD700" />
+                              <span style={{ color: '#FFD700', fontSize: 11, fontWeight: 700, letterSpacing: '0.5px', textTransform: 'uppercase' }}>
+                                Premium
+                              </span>
+                            </div>
+                          )}
+                          <p style={{
+                            color: 'rgba(255,255,255,0.7)',
+                            fontSize: 13,
+                            fontWeight: 600,
+                            textTransform: 'uppercase',
+                            letterSpacing: '1.2px',
+                            margin: 0,
+                          }}>
+                            {isPremium ? 'Collection' : 'Gratuit'} · {albumType}
+                          </p>
+                        </div>
+
                         <h2 style={{
                           color: '#fff',
                           fontSize: 48,
                           fontWeight: 800,
                           lineHeight: '52px',
-                          margin: '0 0 8px',
+                          margin: '0 0 6px',
                           overflow: 'hidden',
                           textOverflow: 'ellipsis',
                           whiteSpace: 'nowrap',
@@ -497,28 +702,67 @@ export function DiscoverScreen() {
                         <p style={{
                           color: 'rgba(255,255,255,0.9)',
                           fontSize: 18,
-                          margin: '0 0 24px',
+                          margin: '0 0 20px',
                         }}>
                           {artistName}
                         </p>
-                        <button
-                          className="btn-primary"
-                          style={{
-                            padding: '14px 32px',
-                            fontSize: 16,
-                            fontWeight: 700,
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: 8,
-                          }}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            navigate(`/album/${album.id}`);
-                          }}
-                        >
-                          <Play size={20} fill="#fff" />
-                          Découvrir
-                        </button>
+
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                          <button
+                            className="btn-primary"
+                            style={{
+                              padding: '14px 32px',
+                              fontSize: 16,
+                              fontWeight: 700,
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 8,
+                            }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              navigate(`/album/${album.id}`);
+                            }}
+                          >
+                            <Play size={20} fill="#fff" />
+                            Découvrir
+                          </button>
+
+                          {isPremium && price && (
+                            <a
+                              href={getPurchaseAlbumUrl(album.id)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: 8,
+                                padding: '12px 24px',
+                                borderRadius: 'var(--radius-full)',
+                                background: 'rgba(255,255,255,0.08)',
+                                border: '1px solid rgba(255,255,255,0.15)',
+                                cursor: 'pointer',
+                                color: '#fff',
+                                fontSize: 14,
+                                fontWeight: 700,
+                                textDecoration: 'none',
+                                backdropFilter: 'blur(8px)',
+                                transition: 'all var(--transition-fast) ease',
+                              }}
+                              onMouseEnter={(e) => {
+                                e.currentTarget.style.background = 'rgba(255,215,0,0.15)';
+                                e.currentTarget.style.borderColor = '#FFD700';
+                              }}
+                              onMouseLeave={(e) => {
+                                e.currentTarget.style.background = 'rgba(255,255,255,0.08)';
+                                e.currentTarget.style.borderColor = 'rgba(255,255,255,0.15)';
+                              }}
+                            >
+                              <ShoppingBag size={16} />
+                              Acheter — {price}
+                            </a>
+                          )}
+                        </div>
                       </div>
                     </div>
                   );
@@ -553,597 +797,103 @@ export function DiscoverScreen() {
             </div>
           )}
 
-          {/* Premium Projects Banner — Desktop only */}
-          {paidAlbums.length > 0 && (
-            <div className="desktop-only">
+          {/* ──────── 2. COLLECTIONS PAYANTES ──────── */}
+          {sortedPaidAlbums.length > 0 && (
+            <div>
               <div className="section-header">
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   <div style={{
-                    width: 28,
-                    height: 28,
+                    width: 32,
+                    height: 32,
                     borderRadius: 'var(--radius-full)',
                     background: 'linear-gradient(135deg, #FFD700, #FFA500)',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    fontSize: 13,
+                    flexShrink: 0,
+                    boxShadow: '0 0 12px rgba(255,215,0,0.25)',
                   }}>
-                    ★
+                    <Store size={16} color="#000" />
                   </div>
-                  <h2 className="section-title">Projets Premium</h2>
+                  <div>
+                    <h2 className="section-title" style={{ margin: 0 }}>Collections Payantes</h2>
+                    <p style={{
+                      color: 'var(--color-text-muted)',
+                      fontSize: 13,
+                      margin: '2px 0 0',
+                      fontWeight: 500,
+                    }}>
+                      {showAllPremium ? sortedPaidAlbums.length : Math.min(4, sortedPaidAlbums.length)} album{sortedPaidAlbums.length > 1 ? 's' : ''} premium
+                    </p>
+                  </div>
                 </div>
               </div>
               <div style={{
                 display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
-                gap: 16,
-              }}>
-                {paidAlbums.slice(0, 4).map((album) => (
-                  <PromoBannerCard
+                gridTemplateColumns: showAllPremium ? 'repeat(auto-fill, minmax(240px, 1fr))' : 'repeat(4, 1fr)',
+                gap: 20,
+              }} className="collections-grid">
+                {(showAllPremium ? sortedPaidAlbums : sortedPaidAlbums.slice(0, 4)).map((album) => (
+                  <PremiumAlbumCard
                     key={album.id}
                     album={album}
+                    isOwned={ownedMap.get(album.id) ?? false}
                     onPress={() => navigate(`/album/${album.id}`)}
                   />
                 ))}
               </div>
+              {/* Voir plus / Voir moins */}
+              {sortedPaidAlbums.length > 4 && (
+                <div style={{ display: 'flex', justifyContent: 'center', marginTop: 20 }}>
+                  <button
+                    onClick={() => setShowAllPremium(!showAllPremium)}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      padding: '10px 24px',
+                      borderRadius: 'var(--radius-full)',
+                      background: showAllPremium ? 'var(--color-surface-elevated)' : 'linear-gradient(135deg, #FFD700, #FFA500)',
+                      border: showAllPremium ? '1px solid var(--color-border-subtle)' : 'none',
+                      cursor: 'pointer',
+                      color: showAllPremium ? 'var(--color-text-secondary)' : '#000',
+                      fontSize: 13,
+                      fontWeight: 700,
+                      transition: 'all var(--transition-fast) ease',
+                    }}
+                    onMouseEnter={(e) => {
+                      if (showAllPremium) {
+                        e.currentTarget.style.background = 'var(--color-surface-hover)';
+                        e.currentTarget.style.color = 'var(--color-text-primary)';
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      if (showAllPremium) {
+                        e.currentTarget.style.background = 'var(--color-surface-elevated)';
+                        e.currentTarget.style.color = 'var(--color-text-secondary)';
+                      }
+                    }}
+                  >
+                    {showAllPremium ? (
+                      <>Réduire <ChevronLeft size={16} style={{ transform: 'rotate(-90deg)' }} /></>
+                    ) : (
+                      <>Voir les {sortedPaidAlbums.length} albums <ChevronRight size={16} style={{ transform: 'rotate(90deg)' }} /></>
+                    )}
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
-          {/* Trending Top 3 - Horizontal Scroll */}
-          {artists.length > 0 && (
-            <div>
-              <div className="section-header">
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Trophy size={20} color="var(--color-accent)" />
-                  <h2 className="section-title">Top 3 du moment</h2>
-                </div>
-              </div>
-              <div style={{ position: 'relative' }}>
-                <div
-                  ref={(el) => { scrollRefs.current['trending'] = el; }}
-                  style={{
-                    display: 'flex',
-                    gap: 16,
-                    overflowX: 'auto',
-                    padding: '4px 0',
-                    scrollbarWidth: 'none',
-                    scrollBehavior: 'smooth',
-                  }}
-                >
-                  {/* Top Artists */}
-                  {artists.slice(0, 3).map((artist, index) => (
-                    <div key={artist.id} style={{ minWidth: 280, flexShrink: 0 }}>
-                      <div style={{
-                        position: 'relative',
-                        borderRadius: 'var(--radius-lg)',
-                        overflow: 'hidden',
-                        background: 'var(--color-surface-elevated)',
-                        padding: 20,
-                        cursor: 'pointer',
-                        transition: 'transform var(--transition-normal) ease',
-                      }}
-                        onClick={() => navigate(`/artist/${artist.id}`)}
-                        onMouseEnter={(e) => e.currentTarget.style.transform = 'translateY(-4px)'}
-                        onMouseLeave={(e) => e.currentTarget.style.transform = 'translateY(0)'}
-                      >
-                        <div style={{
-                          position: 'absolute',
-                          top: 12,
-                          left: 12,
-                          width: 40,
-                          height: 40,
-                          borderRadius: 'var(--radius-full)',
-                          background: index === 0 ? '#FFD700' : index === 1 ? '#C0C0C0' : '#CD7F32',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          fontSize: 20,
-                          fontWeight: 800,
-                          color: index === 0 ? '#000' : '#fff',
-                          boxShadow: 'var(--shadow-md)',
-                        }}>
-                          {index + 1}
-                        </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginTop: 20 }}>
-                          <div style={{
-                            width: 80,
-                            height: 80,
-                            borderRadius: 'var(--radius-full)',
-                            overflow: 'hidden',
-                            flexShrink: 0,
-                          }}>
-                            {(artist.profile_picture_url || artist.fallback_image_url) ? (
-                              <img
-                                src={artist.profile_picture_url || artist.fallback_image_url || ''}
-                                alt={artist.name}
-                                loading="lazy"
-                                decoding="async"
-                                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                              />
-                            ) : (
-                              <div style={{
-                                width: '100%',
-                                height: '100%',
-                                background: 'var(--color-accent)',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                fontSize: 32,
-                                fontWeight: 800,
-                                color: '#fff',
-                              }}>
-                                {artist.name.charAt(0).toUpperCase()}
-                              </div>
-                            )}
-                          </div>
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <p style={{
-                              color: 'var(--color-text-secondary)',
-                              fontSize: 12,
-                              fontWeight: 600,
-                              margin: 0,
-                            }}>
-                              Artiste
-                            </p>
-                            <h3 style={{
-                              color: 'var(--color-text-primary)',
-                              fontSize: 20,
-                              fontWeight: 700,
-                              margin: '4px 0',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              whiteSpace: 'nowrap',
-                            }}>
-                              {artist.name}
-                            </h3>
-                            <p style={{
-                              color: 'var(--color-text-muted)',
-                              fontSize: 13,
-                              margin: 0,
-                            }}>
-                              Artiste à découvrir
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                  {/* Top Albums */}
-                  {newAlbums.slice(0, 3).map((album, index) => (
-                    <div key={album.id} style={{ minWidth: 280, flexShrink: 0 }}>
-                      <div style={{
-                        position: 'relative',
-                        borderRadius: 'var(--radius-lg)',
-                        overflow: 'hidden',
-                        background: 'var(--color-surface-elevated)',
-                        padding: 20,
-                        cursor: 'pointer',
-                        transition: 'transform var(--transition-normal) ease',
-                      }}
-                        onClick={() => navigate(`/album/${album.id}`)}
-                        onMouseEnter={(e) => e.currentTarget.style.transform = 'translateY(-4px)'}
-                        onMouseLeave={(e) => e.currentTarget.style.transform = 'translateY(0)'}
-                      >
-                        <div style={{
-                          position: 'absolute',
-                          top: 12,
-                          left: 12,
-                          width: 40,
-                          height: 40,
-                          borderRadius: 'var(--radius-full)',
-                          background: index === 0 ? '#FFD700' : index === 1 ? '#C0C0C0' : '#CD7F32',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          fontSize: 20,
-                          fontWeight: 800,
-                          color: index === 0 ? '#000' : '#fff',
-                          boxShadow: 'var(--shadow-md)',
-                        }}>
-                          {index + 1}
-                        </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginTop: 20 }}>
-                          <div style={{
-                            width: 80,
-                            height: 80,
-                            borderRadius: 'var(--radius-sm)',
-                            overflow: 'hidden',
-                            flexShrink: 0,
-                          }}>
-                            {album.cover_url ? (
-                              <img
-                                src={album.cover_url}
-                                alt={album.title}
-                                loading="lazy"
-                                decoding="async"
-                                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                              />
-                            ) : (
-                              <div style={{
-                                width: '100%',
-                                height: '100%',
-                                background: 'var(--color-accent)',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                fontSize: 32,
-                                fontWeight: 800,
-                                color: '#fff',
-                              }}>
-                                ♪
-                              </div>
-                            )}
-                          </div>
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <p style={{
-                              color: 'var(--color-text-secondary)',
-                              fontSize: 12,
-                              fontWeight: 600,
-                              margin: 0,
-                            }}>
-                              Album
-                            </p>
-                            <h3 style={{
-                              color: 'var(--color-text-primary)',
-                              fontSize: 20,
-                              fontWeight: 700,
-                              margin: '4px 0',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              whiteSpace: 'nowrap',
-                            }}>
-                              {album.title}
-                            </h3>
-                            <p style={{
-                              color: 'var(--color-text-muted)',
-                              fontSize: 13,
-                              margin: 0,
-                            }}>
-                              {album.artist_name || album.artist?.name}
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                {artists.length + newAlbums.length > 4 && (
-                  <>
-                    <button
-                      onClick={() => scrollSection('trending', 'left')}
-                      className="btn-ghost"
-                      style={{
-                        position: 'absolute',
-                        left: -10,
-                        top: '50%',
-                        transform: 'translateY(-50%)',
-                        width: 40,
-                        height: 40,
-                        borderRadius: 'var(--radius-full)',
-                        padding: 0,
-                        background: 'var(--color-bg-dark)',
-                        border: '1px solid var(--color-border-subtle)',
-                        zIndex: 10,
-                      }}
-                    >
-                      <ChevronLeft size={20} />
-                    </button>
-                    <button
-                      onClick={() => scrollSection('trending', 'right')}
-                      className="btn-ghost"
-                      style={{
-                        position: 'absolute',
-                        right: -10,
-                        top: '50%',
-                        transform: 'translateY(-50%)',
-                        width: 40,
-                        height: 40,
-                        borderRadius: 'var(--radius-full)',
-                        padding: 0,
-                        background: 'var(--color-bg-dark)',
-                        border: '1px solid var(--color-border-subtle)',
-                        zIndex: 10,
-                      }}
-                    >
-                      <ChevronRight size={20} />
-                    </button>
-                  </>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* New Releases — Horizontal Scroll */}
-          {filteredAlbums.length > 0 && (
-            <div>
-              <div className="section-header">
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Clock size={20} color="var(--color-accent)" />
-                  <h2 className="section-title">Nouveautés</h2>
-                </div>
-              </div>
-              <div style={{ position: 'relative' }}>
-                <div
-                  ref={(el) => { scrollRefs.current['newAlbums'] = el; }}
-                  style={{
-                    display: 'flex',
-                    gap: 16,
-                    overflowX: 'auto',
-                    padding: '4px 0',
-                    scrollbarWidth: 'none',
-                    scrollBehavior: 'smooth',
-                  }}
-                >
-                  {filteredAlbums.slice(0, 20).map((album) => (
-                    <div key={album.id} style={{ width: 180, flexShrink: 0 }}>
-                      <AlbumCard album={album} variant="tile" onPress={() => navigate(`/album/${album.id}`)} />
-                    </div>
-                  ))}
-                </div>
-                {filteredAlbums.length > 5 && (
-                  <>
-                    <button
-                      onClick={() => scrollSection('newAlbums', 'left')}
-                      className="btn-ghost"
-                      style={{
-                        position: 'absolute',
-                        left: -10,
-                        top: '50%',
-                        transform: 'translateY(-50%)',
-                        width: 40,
-                        height: 40,
-                        borderRadius: 'var(--radius-full)',
-                        padding: 0,
-                        background: 'var(--color-bg-dark)',
-                        border: '1px solid var(--color-border-subtle)',
-                        zIndex: 10,
-                      }}
-                    >
-                      <ChevronLeft size={20} />
-                    </button>
-                    <button
-                      onClick={() => scrollSection('newAlbums', 'right')}
-                      className="btn-ghost"
-                      style={{
-                        position: 'absolute',
-                        right: -10,
-                        top: '50%',
-                        transform: 'translateY(-50%)',
-                        width: 40,
-                        height: 40,
-                        borderRadius: 'var(--radius-full)',
-                        padding: 0,
-                        background: 'var(--color-bg-dark)',
-                        border: '1px solid var(--color-border-subtle)',
-                        zIndex: 10,
-                      }}
-                    >
-                      <ChevronRight size={20} />
-                    </button>
-                  </>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Trending Tracks — Horizontal Scroll */}
-          {freeTracks.length > 0 && (
-            <div>
-              <div className="section-header">
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Music size={20} color="var(--color-accent)" />
-                  <h2 className="section-title">Titres du moment</h2>
-                </div>
-              </div>
-              <div style={{ position: 'relative' }}>
-                <div
-                  ref={(el) => { scrollRefs.current['tracks'] = el; }}
-                  style={{
-                    display: 'flex',
-                    gap: 12,
-                    overflowX: 'auto',
-                    padding: '4px 0',
-                    scrollbarWidth: 'none',
-                    scrollBehavior: 'smooth',
-                  }}
-                >
-                  {freeTracks.slice(0, 15).map((track, index) => (
-                    <div key={track.id} style={{ minWidth: 300, flexShrink: 0 }}>
-                      <div style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 12,
-                        padding: '12px 16px',
-                        borderRadius: 'var(--radius-md)',
-                        background: 'transparent',
-                        cursor: 'pointer',
-                        transition: 'background-color var(--transition-fast) ease',
-                      }}
-                        onClick={() => void handleTrackPress(track)}
-                        onMouseEnter={(e) => e.currentTarget.style.background = 'var(--color-surface-elevated)'}
-                        onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-                      >
-                        <span style={{
-                          width: 24,
-                          color: 'var(--color-text-muted)',
-                          fontSize: 14,
-                          fontWeight: 600,
-                          textAlign: 'center',
-                        }}>
-                          {index + 1}
-                        </span>
-                        <div style={{
-                          width: 56,
-                          height: 56,
-                          borderRadius: 'var(--radius-sm)',
-                          overflow: 'hidden',
-                          flexShrink: 0,
-                        }}>
-                          {track.cover_url ? (
-                            <img
-                              src={track.cover_url}
-                              alt={track.title}
-                              loading="lazy"
-                              decoding="async"
-                              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                            />
-                          ) : (
-                            <div style={{
-                              width: '100%',
-                              height: '100%',
-                              background: 'var(--color-surface-elevated)',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              fontSize: 24,
-                            }}>
-                              ♪
-                            </div>
-                          )}
-                        </div>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <p style={{
-                            color: 'var(--color-text-primary)',
-                            fontSize: 14,
-                            fontWeight: 600,
-                            margin: 0,
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                          }}>
-                            {track.title}
-                          </p>
-                          <p style={{
-                            color: 'var(--color-text-secondary)',
-                            fontSize: 13,
-                            margin: '2px 0 0',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                          }}>
-                            {track.artist_name}
-                          </p>
-                        </div>
-                        <div style={{ display: 'flex', gap: 8 }}>
-                          <button style={{
-                            width: 36,
-                            height: 36,
-                            borderRadius: 'var(--radius-full)',
-                            background: 'transparent',
-                            border: 'none',
-                            color: 'var(--color-text-secondary)',
-                            cursor: 'pointer',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                          }}
-                            onMouseEnter={(e) => e.currentTarget.style.color = 'var(--color-text-primary)'}
-                            onMouseLeave={(e) => e.currentTarget.style.color = 'var(--color-text-secondary)'}
-                          >
-                            <Heart size={18} />
-                          </button>
-                          {currentTrack?.id === track.id && isPlaying ? (
-                            <div style={{
-                              width: 36,
-                              height: 36,
-                              borderRadius: 'var(--radius-full)',
-                              background: 'var(--color-accent)',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                            }}>
-                              <div style={{ display: 'flex', gap: 2, alignItems: 'flex-end' }}>
-                                {[1, 2, 3].map((i) => (
-                                  <div key={i} style={{
-                                    width: 3,
-                                    height: 12 + Math.sin(Date.now() / 200 + i) * 6,
-                                    background: '#fff',
-                                    borderRadius: 'var(--radius-full)',
-                                    transition: 'height 0.1s ease',
-                                  }} />
-                                ))}
-                              </div>
-                            </div>
-                          ) : (
-                            <button style={{
-                              width: 36,
-                              height: 36,
-                              borderRadius: 'var(--radius-full)',
-                              background: 'var(--color-accent)',
-                              border: 'none',
-                              color: '#fff',
-                              cursor: 'pointer',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                            }}>
-                              <Play size={18} fill="#fff" style={{ marginLeft: 2 }} />
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                {freeTracks.length > 4 && (
-                  <>
-                    <button
-                      onClick={() => scrollSection('tracks', 'left')}
-                      className="btn-ghost"
-                      style={{
-                        position: 'absolute',
-                        left: -10,
-                        top: '50%',
-                        transform: 'translateY(-50%)',
-                        width: 40,
-                        height: 40,
-                        borderRadius: 'var(--radius-full)',
-                        padding: 0,
-                        background: 'var(--color-bg-dark)',
-                        border: '1px solid var(--color-border-subtle)',
-                        zIndex: 10,
-                      }}
-                    >
-                      <ChevronLeft size={20} />
-                    </button>
-                    <button
-                      onClick={() => scrollSection('tracks', 'right')}
-                      className="btn-ghost"
-                      style={{
-                        position: 'absolute',
-                        right: -10,
-                        top: '50%',
-                        transform: 'translateY(-50%)',
-                        width: 40,
-                        height: 40,
-                        borderRadius: 'var(--radius-full)',
-                        padding: 0,
-                        background: 'var(--color-bg-dark)',
-                        border: '1px solid var(--color-border-subtle)',
-                        zIndex: 10,
-                      }}
-                    >
-                      <ChevronRight size={20} />
-                    </button>
-                  </>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Artists to Discover — Horizontal Scroll */}
+          {/* ──────── 3. ARTISTES — Top tendances + à découvrir ──────── */}
           {artists.length > 0 && (
             <div>
               <div className="section-header">
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <Users size={20} color="var(--color-accent)" />
-                  <h2 className="section-title">Artistes à découvrir</h2>
+                  <h2 className="section-title">Artistes</h2>
                 </div>
-                <span
-                  className="section-link"
-                  onClick={() => navigate('/artists')}
-                  style={{ cursor: 'pointer' }}
-                >
+                <span className="section-link" onClick={() => navigate('/artists')} style={{ cursor: 'pointer' }}>
                   Voir tout
                 </span>
               </div>
@@ -1159,7 +909,7 @@ export function DiscoverScreen() {
                     scrollBehavior: 'smooth',
                   }}
                 >
-                  {artists.slice(0, 15).map((artist) => (
+                  {artists.slice(0, 10).map((artist) => (
                     <div key={artist.id} style={{ minWidth: 170, flexShrink: 0 }}>
                       <ArtistCard
                         artist={artist}
@@ -1214,7 +964,56 @@ export function DiscoverScreen() {
             </div>
           )}
 
-          {/* All Albums Grid */}
+          {/* ──────── 4. TITRES GRATUITS — Aperçu rapide avec lien vers le catalogue ──────── */}
+          {freeTracks.length > 0 && (
+            <div>
+              <div className="section-header">
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Music size={20} color="var(--color-accent)" />
+                  <h2 className="section-title">Titres Gratuits</h2>
+                </div>
+                <span
+                  className="section-link"
+                  onClick={() => navigate('/tracks')}
+                  style={{ cursor: 'pointer' }}
+                >
+                  Voir tout →
+                </span>
+              </div>
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(2, 1fr)',
+                gap: '4px 24px',
+                borderRadius: 'var(--radius-md)',
+                overflow: 'hidden',
+              }} className="tracks-grid-2col">
+                {freeTracks.slice(0, 20).map((track, index) => (
+                  <div key={track.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{
+                      width: 24,
+                      color: currentTrack?.id === track.id ? 'var(--color-accent)' : 'var(--color-text-muted)',
+                      fontSize: 12,
+                      fontWeight: 600,
+                      textAlign: 'center',
+                      flexShrink: 0,
+                      fontVariantNumeric: 'tabular-nums',
+                    }}>
+                      {index + 1}
+                    </span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <TrackListItem
+                        track={track}
+                        isPlaying={currentTrack?.id === track.id && isPlaying}
+                        onPress={() => void handleTrackPress(track)}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* ──────── 5. TOUS LES ALBUMS — Paginé ──────── */}
           {filteredAlbums.length > 0 && (
             <div>
               <div className="section-header">
@@ -1222,250 +1021,398 @@ export function DiscoverScreen() {
                   <Disc size={20} color="var(--color-accent)" />
                   <h2 className="section-title">Tous les albums</h2>
                 </div>
+                <span style={{ color: 'var(--color-text-muted)', fontSize: 12, fontWeight: 600 }}>
+                  {filteredAlbums.length} albums · Page {albumPage + 1}/{totalAlbumPages}
+                </span>
               </div>
               <div style={{
                 display: 'grid',
                 gridTemplateColumns: 'repeat(auto-fill, minmax(175px, 1fr))',
                 gap: 16,
-              }}>
-                {filteredAlbums.map((album) => (
-                  <AlbumCard
-                    key={album.id}
-                    album={album}
-                    variant="tile"
-                    onPress={() => navigate(`/album/${album.id}`)}
-                  />
-                ))}
+              }} className="albums-grid">
+                {filteredAlbums
+                  .slice(albumPage * ALBUMS_PER_PAGE, (albumPage + 1) * ALBUMS_PER_PAGE)
+                  .map((album) => (
+                    <AlbumCard
+                      key={album.id}
+                      album={album}
+                      variant="tile"
+                      onPress={() => navigate(`/album/${album.id}`)}
+                    />
+                  ))}
               </div>
+              {/* Pagination */}
+              {totalAlbumPages > 1 && (
+                <PaginationBar
+                  page={albumPage}
+                  totalPages={totalAlbumPages}
+                  onPrev={() => setAlbumPage((p) => Math.max(0, p - 1))}
+                  onNext={() => setAlbumPage((p) => Math.min(totalAlbumPages - 1, p + 1))}
+                />
+              )}
             </div>
+          )}
+
+          {/* Bottom spacing */}
+          <div style={{ height: 16 }} />
+          </>
+          )}
+
+          {isMobile && (
+            <>
+
+            {/* ──────── M1. ARTISTES ──────── */}
+            {artists.length > 0 && (
+              <div>
+                <div className="section-header">
+                  <h2 className="section-title">Artistes</h2>
+                  <span className="section-link" onClick={() => navigate('/artists')} style={{ cursor: 'pointer' }}>
+                    Voir tout
+                  </span>
+                </div>
+                <div style={{
+                  display: 'flex',
+                  gap: 8,
+                  overflowX: 'auto',
+                  paddingBottom: 4,
+                  scrollbarWidth: 'none',
+                }}>
+                  {artists.slice(0, 8).map((artist) => (
+                    <button
+                      key={artist.id}
+                      onClick={() => navigate(`/artist/${artist.id}`)}
+                      style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        gap: 6,
+                        padding: '8px 6px',
+                        borderRadius: 'var(--radius-md)',
+                        background: 'transparent',
+                        border: 'none',
+                        cursor: 'pointer',
+                        minWidth: 90,
+                        flexShrink: 0,
+                      }}
+                    >
+                      <div style={{
+                        width: 56,
+                        height: 56,
+                        borderRadius: 'var(--radius-full)',
+                        overflow: 'hidden',
+                        backgroundColor: 'var(--color-surface-elevated)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        boxShadow: 'var(--shadow-sm)',
+                      }}>
+                        {(artist.profile_picture_url || artist.fallback_image_url) ? (
+                          <img
+                            src={artist.profile_picture_url || artist.fallback_image_url || ''}
+                            alt={artist.name}
+                            loading="lazy"
+                            decoding="async"
+                            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                          />
+                        ) : (
+                          <User size={22} color="var(--color-text-muted)" />
+                        )}
+                      </div>
+                      <span style={{
+                        color: 'var(--color-text-primary)',
+                        fontSize: 11,
+                        fontWeight: 600,
+                        lineHeight: '14px',
+                        textAlign: 'center',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                        maxWidth: 80,
+                      }}>
+                        {artist.name}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* ──────── M2. TABS: Titres / Albums ──────── */}
+            {(freeTracks.length > 0 || filteredAlbums.length > 0) && (
+              <div style={{ marginTop: 4 }}>
+                {/* Tab selector + sort button */}
+                <div style={{
+                  display: 'flex',
+                  gap: 6,
+                  marginBottom: 12,
+                  alignItems: 'center',
+                }}>
+                  <div style={{
+                    display: 'flex',
+                    gap: 0,
+                    flex: 1,
+                    background: 'var(--color-surface-elevated)',
+                    borderRadius: 'var(--radius-full)',
+                    padding: 3,
+                    alignSelf: 'flex-start',
+                  }}>
+                    <button
+                      onClick={() => setMobileTab('titres')}
+                      style={{
+                        flex: 1,
+                        padding: '8px 20px',
+                        borderRadius: 'var(--radius-full)',
+                        border: 'none',
+                        fontSize: 13,
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        whiteSpace: 'nowrap',
+                        background: mobileTab === 'titres' ? 'var(--color-bg-dark)' : 'transparent',
+                        color: mobileTab === 'titres' ? 'var(--color-text-primary)' : 'var(--color-text-muted)',
+                        transition: 'all var(--transition-fast) ease',
+                      }}
+                    >
+                      Titres
+                    </button>
+                    <button
+                      onClick={() => setMobileTab('albums')}
+                      style={{
+                        flex: 1,
+                        padding: '8px 20px',
+                        borderRadius: 'var(--radius-full)',
+                        border: 'none',
+                        fontSize: 13,
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        whiteSpace: 'nowrap',
+                        background: mobileTab === 'albums' ? 'var(--color-bg-dark)' : 'transparent',
+                        color: mobileTab === 'albums' ? 'var(--color-text-primary)' : 'var(--color-text-muted)',
+                        transition: 'all var(--transition-fast) ease',
+                      }}
+                    >
+                      Albums
+                    </button>
+                  </div>
+
+                  {/* Sort toggle button */}
+                  <button
+                    onClick={() => {
+                      const options = ['A-Z', 'Z-A', 'Plus récent', 'Plus ancien'];
+                      const idx = options.indexOf(catalogSortBy);
+                      setCatalogSortBy(options[(idx + 1) % options.length]);
+                    }}
+                    title={`Tri : ${catalogSortBy}`}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 4,
+                      padding: '8px 12px',
+                      borderRadius: 'var(--radius-full)',
+                      border: '1px solid var(--color-border-subtle)',
+                      background: 'var(--color-surface-elevated)',
+                      cursor: 'pointer',
+                      color: 'var(--color-text-secondary)',
+                      fontSize: 11,
+                      fontWeight: 700,
+                      whiteSpace: 'nowrap',
+                      flexShrink: 0,
+                      transition: 'all var(--transition-fast) ease',
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-surface-hover)'; e.currentTarget.style.color = 'var(--color-text-primary)'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--color-surface-elevated)'; e.currentTarget.style.color = 'var(--color-text-secondary)'; }}
+                  >
+                    <ArrowUpDown size={14} />
+                    <span>{catalogSortBy}</span>
+                  </button>
+                </div>
+
+                {/* Titres tab content */}
+                {mobileTab === 'titres' && freeTracks.length > 0 && (
+                  <div>
+                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                      {(() => {
+                        let sorted = [...freeTracks];
+                        if (catalogSortBy === 'Plus récent') {
+                          // Already sorted by newest first
+                        } else if (catalogSortBy === 'Plus ancien') {
+                          sorted.reverse();
+                        } else if (catalogSortBy === 'A-Z') {
+                          sorted.sort((a, b) => a.title.localeCompare(b.title));
+                        } else if (catalogSortBy === 'Z-A') {
+                          sorted.sort((a, b) => b.title.localeCompare(a.title));
+                        }
+                        const visibleTracks = sorted.slice(0, titresDisplayCount);
+                        return (
+                          <>
+                            {visibleTracks.map((track, index) => (
+                              <div key={track.id} style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 10,
+                                padding: '6px 0',
+                                borderBottom: index < visibleTracks.length - 1 ? '1px solid var(--color-border-subtle)' : 'none',
+                              }}>
+                                <span style={{
+                                  width: 20,
+                                  color: currentTrack?.id === track.id ? 'var(--color-accent)' : 'var(--color-text-muted)',
+                                  fontSize: 11,
+                                  fontWeight: 600,
+                                  textAlign: 'center',
+                                  flexShrink: 0,
+                                  fontVariantNumeric: 'tabular-nums',
+                                }}>
+                                  {index + 1}
+                                </span>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <TrackListItem
+                                    track={track}
+                                    isPlaying={currentTrack?.id === track.id && isPlaying}
+                                    onPress={() => void handleTrackPress(track)}
+                                  />
+                                </div>
+                              </div>
+                            ))}
+                            {/* Sentinel + loading indicator for infinite scroll */}
+                            {titresDisplayCount < sorted.length && (
+                              <div ref={sentinelRef} style={{
+                                display: 'flex',
+                                justifyContent: 'center',
+                                padding: '12px 0',
+                              }}>
+                                <div style={{
+                                  width: 20,
+                                  height: 20,
+                                  border: '2px solid var(--color-border-subtle)',
+                                  borderTopColor: 'var(--color-accent)',
+                                  borderRadius: '50%',
+                                  animation: 'spin 0.8s linear infinite',
+                                }} />
+                              </div>
+                            )}
+                          </>
+                        );
+                      })()}
+                    </div>
+                  </div>
+                )}
+
+                {/* Albums tab content */}
+                {mobileTab === 'albums' && filteredAlbums.length > 0 && (
+                  <div style={{ display: 'flex', flexDirection: 'column' }}>
+                    {(() => {
+                      const sorted = [...filteredAlbums];
+                      if (catalogSortBy === 'A-Z') sorted.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+                      else if (catalogSortBy === 'Z-A') sorted.sort((a, b) => (b.title || '').localeCompare(a.title || ''));
+                      else if (catalogSortBy === 'Plus récent') sorted.sort((a, b) => {
+                        const da = a.created_at ? new Date(a.created_at).getTime() : 0;
+                        const db = b.created_at ? new Date(b.created_at).getTime() : 0;
+                        return db - da;
+                      });
+                      else if (catalogSortBy === 'Plus ancien') sorted.sort((a, b) => {
+                        const da = a.created_at ? new Date(a.created_at).getTime() : 0;
+                        const db = b.created_at ? new Date(b.created_at).getTime() : 0;
+                        return da - db;
+                      });
+                      return sorted.map((album) => (
+                      <button
+                        key={album.id}
+                        onClick={() => navigate(`/album/${album.id}`)}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 10,
+                          padding: '8px 0',
+                          background: 'transparent',
+                          border: 'none',
+                          cursor: 'pointer',
+                          borderBottom: '1px solid var(--color-border-subtle)',
+                          textAlign: 'left',
+                          width: '100%',
+                        }}
+                      >
+                        {/* Cover */}
+                        <div style={{
+                          width: 44,
+                          height: 44,
+                          borderRadius: 'var(--radius-sm)',
+                          overflow: 'hidden',
+                          flexShrink: 0,
+                          backgroundColor: 'var(--color-surface-elevated)',
+                        }}>
+                          {album.cover_url ? (
+                            <img
+                              src={album.cover_url}
+                              alt={album.title}
+                              loading="lazy"
+                              decoding="async"
+                              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                            />
+                          ) : (
+                            <div style={{
+                              width: '100%',
+                              height: '100%',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              color: 'var(--color-text-muted)',
+                              fontSize: 18,
+                            }}>
+                              ♪
+                            </div>
+                          )}
+                        </div>
+                        {/* Info */}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <span style={{
+                            color: 'var(--color-text-primary)',
+                            fontSize: 13,
+                            fontWeight: 600,
+                            display: 'block',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }}>
+                            {album.title}
+                          </span>
+                          <span style={{
+                            color: 'var(--color-text-muted)',
+                            fontSize: 12,
+                            display: 'block',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                            marginTop: 1,
+                          }}>
+                            {album.artist_name || album.artist?.name || 'Artiste inconnu'}
+                          </span>
+                        </div>
+                        {/* Free / Premium badge */}
+                        {!album.is_free && (
+                          <span style={{
+                            fontSize: 10,
+                            fontWeight: 700,
+                            color: '#FFD700',
+                            padding: '2px 6px',
+                            borderRadius: 'var(--radius-full)',
+                            background: 'rgba(255,215,0,0.1)',
+                            border: '1px solid rgba(255,215,0,0.2)',
+                            flexShrink: 0,
+                          }}>
+                            Premium
+                          </span>
+                        )}
+                      </button>                      ));
+                    })()}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div style={{ height: 16 }} />
+          </>
           )}
         </div>
       )}
     </Screen>
-  );
-}
-
-interface PromoBannerProps {
-  album: PublicAlbumSummary;
-  onPress: () => void;
-}
-
-function PromoBannerCard({ album, onPress }: PromoBannerProps) {
-  const coverColors = useAlbumColors(album.cover_url);
-  const artistName = album.artist_name || album.artist?.name || 'Artiste inconnu';
-  const price = album.price_ariary > 0
-    ? `${album.price_ariary.toLocaleString()} Ar`
-    : 'Gratuit';
-
-  return (
-    <button
-      onClick={onPress}
-      style={{
-        position: 'relative',
-        display: 'flex',
-        alignItems: 'flex-end',
-        gap: 20,
-        padding: 20,
-        borderRadius: 'var(--radius-lg)',
-        background: coverColors.gradientStyle || 'var(--color-surface-elevated)',
-        border: '1px solid var(--color-border-subtle)',
-        cursor: 'pointer',
-        textAlign: 'left',
-        minHeight: 180,
-        overflow: 'hidden',
-        transition: 'all var(--transition-normal) ease',
-      }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.transform = 'translateY(-4px)';
-        e.currentTarget.style.boxShadow = 'var(--shadow-lg)';
-        e.currentTarget.style.borderColor = 'var(--color-border-highlight)';
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.transform = 'translateY(0)';
-        e.currentTarget.style.boxShadow = 'none';
-        e.currentTarget.style.borderColor = 'var(--color-border-subtle)';
-      }}
-    >        {album.cover_url && (
-        <div
-          style={{
-            position: 'absolute',
-            top: 0, left: 0, right: 0, bottom: 0,
-            overflow: 'hidden',
-            zIndex: 0,
-            borderRadius: 'var(--radius-lg)',
-          }}
-        >
-          <img
-            src={album.cover_url}
-            alt=""
-            loading="lazy"
-            decoding="async"
-            style={{
-              width: '100%',
-              height: '100%',
-              objectFit: 'cover',
-              opacity: 0.15,
-              filter: 'blur(20px)',
-              transform: 'scale(1.2)',
-            }}
-          />
-        </div>
-      )}
-
-      <div
-        style={{
-          position: 'absolute',
-          bottom: 0, left: 0, right: 0,
-          height: '60%',
-          background: 'linear-gradient(transparent, rgba(0,0,0,0.6))',
-          zIndex: 1,
-        }}
-      />
-
-      <div
-        style={{
-          position: 'relative',
-          zIndex: 2,
-          width: 120,
-          height: 120,
-          minWidth: 120,
-          borderRadius: 'var(--radius-sm)',
-          overflow: 'hidden',
-          boxShadow: 'var(--shadow-lg)',
-          flexShrink: 0,
-        }}
-      >
-        {album.cover_url ? (
-          <img
-            src={album.cover_url}
-            alt={album.title}
-            loading="lazy"
-            decoding="async"
-            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-          />
-        ) : (
-          <div
-            style={{
-              width: '100%', height: '100%',
-              background: 'var(--color-surface-elevated)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
-            <span style={{ fontSize: 32, color: 'var(--color-text-muted)' }}>♪</span>
-          </div>
-        )}
-
-        <div
-          style={{
-            position: 'absolute',
-            top: 6,
-            right: 6,
-            width: 24,
-            height: 24,
-            borderRadius: 'var(--radius-full)',
-            background: 'linear-gradient(135deg, #FFD700, #FFA500)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontSize: 12,
-            boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
-          }}
-        >
-          ★
-        </div>
-      </div>
-
-      <div
-        style={{
-          position: 'relative',
-          zIndex: 2,
-          flex: 1,
-          minWidth: 0,
-          paddingBottom: 4,
-        }}
-      >
-        <p
-          style={{
-            color: 'rgba(255,255,255,0.5)',
-            fontSize: 11,
-            fontWeight: 700,
-            textTransform: 'uppercase',
-            letterSpacing: '1px',
-            margin: '0 0 6px',
-          }}
-        >
-          Projet Premium
-        </p>
-        <h3
-          style={{
-            color: '#fff',
-            fontSize: 18,
-            fontWeight: 700,
-            lineHeight: '22px',
-            margin: '0 0 4px',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          {album.title}
-        </h3>
-        <p
-          style={{
-            color: 'rgba(255,255,255,0.7)',
-            fontSize: 13,
-            fontWeight: 500,
-            margin: '0 0 12px',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          {artistName}
-        </p>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span
-            style={{
-              color: '#FFD700',
-              fontSize: 14,
-              fontWeight: 700,
-            }}
-          >
-            {price}
-          </span>
-          <a
-            href={getPurchaseAlbumUrl(album.id)}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 6,
-              padding: '6px 16px',
-              borderRadius: 'var(--radius-full)',
-              background: 'var(--color-accent)',
-              color: '#fff',
-              fontSize: 12,
-              fontWeight: 700,
-              textDecoration: 'none',
-              transition: 'all var(--transition-fast) ease',
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = 'var(--color-accent-light)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = 'var(--color-accent)';
-            }}
-          >
-            <ShoppingBag size={14} />
-            Acheter
-          </a>
-        </div>
-      </div>
-    </button>
   );
 }

@@ -1,5 +1,3 @@
-import { LyricsDisplay } from '@/components/LyricsDisplay';
-import { PrimaryButton } from '@/components/PrimaryButton';
 import { Screen } from '@/components/Screen';
 import { getPurchaseAlbumUrl } from '@/config/urls';
 import { useCachedImage } from '@/hooks/useCachedImage';
@@ -10,9 +8,19 @@ import { downloadAlbumWithStreaming, getDownloadProgress, isAlbumReadyOffline, s
 import { resolveOfflinePlayback } from '@/services/offlineAccess';
 import type { PublicAlbumDetails, PublicTrack } from '@/types/backend';
 import { useAlbumColors } from '@/hooks/useAlbumColors';
-import { CheckCircle, ChevronLeft, Download, Lock, Pause, Play, ShieldCheck } from 'lucide-react';
+import {
+  ChevronLeft, Crown, Download, Lock, Pause, Play,
+  ShieldCheck, ShoppingBag, Sparkles, Clock,
+} from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+
+function formatDuration(seconds: number | null | undefined): string {
+  if (!seconds || isNaN(seconds)) return '--:--';
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
 
 export function AlbumDetailScreen() {
   const { id } = useParams<{ id: string }>();
@@ -82,6 +90,13 @@ export function AlbumDetailScreen() {
   const sortedTracks = [...(album.tracks || [])].sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
   const artistName = album.artist_name || album.artist?.name || 'Artiste inconnu';
 
+  const priceDisplay = album.price_ariary > 0
+    ? `${album.price_ariary.toLocaleString()} Ar`
+    : null;
+
+  const totalDuration = sortedTracks.reduce((acc, t) => acc + (t.duration || 0), 0);
+  const totalDurationLabel = formatDuration(totalDuration);
+
   async function handlePressTrack(track: PublicTrack, index: number) {
     if (!canPlay || !album) return;
     setActionError(null);
@@ -115,8 +130,8 @@ export function AlbumDetailScreen() {
   return (
     <Screen padded={false}>
       <div style={{ maxWidth: 900, margin: '0 auto', width: '100%' }}>
-        {/* Hero Section — Spotify-style with dynamic color */}
-        <div
+        {/* ========== HERO — Album Header ========== */}
+        <div className="album-hero"
           style={{
             position: 'relative',
             padding: '48px 32px 32px',
@@ -128,7 +143,7 @@ export function AlbumDetailScreen() {
           }}
         >
           {/* Back button */}
-          <button
+          <button className="album-back"
             onClick={() => navigate(-1)}
             style={{
               position: 'absolute',
@@ -155,7 +170,7 @@ export function AlbumDetailScreen() {
           </button>
 
           {/* Album Cover */}
-          <div
+          <div className="album-cover"
             style={{
               width: 200,
               height: 200,
@@ -179,11 +194,47 @@ export function AlbumDetailScreen() {
             )}
           </div>
 
-          {/* Album Info */}
-          <div style={{ flex: 1, paddingBottom: 8 }}>
-            <p style={{ color: 'var(--color-text-secondary)', fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px', marginBottom: 8 }}>
-              {album.type === 'single' ? 'Single' : 'Album'}
-            </p>
+          {/* Album Info + CTA */}
+          <div className="album-info" style={{ flex: 1, paddingBottom: 8 }}>
+            {/* Type badge + premium/free */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+              <span style={{ color: 'var(--color-text-secondary)', fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px' }}>
+                {album.type === 'single' ? 'Single' : 'Album'}
+              </span>
+              {!isFreeRelease && (
+                <div style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  padding: '2px 10px',
+                  borderRadius: 'var(--radius-full)',
+                  background: 'rgba(255,215,0,0.12)',
+                  border: '1px solid rgba(255,215,0,0.2)',
+                }}>
+                  <Crown size={10} color="#FFD700" />
+                  <span style={{ color: '#FFD700', fontSize: 10, fontWeight: 700, letterSpacing: '0.3px', textTransform: 'uppercase' }}>
+                    Premium
+                  </span>
+                </div>
+              )}
+              {isFreeRelease && (
+                <div style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  padding: '2px 10px',
+                  borderRadius: 'var(--radius-full)',
+                  background: 'rgba(29, 185, 84, 0.1)',
+                  border: '1px solid rgba(29, 185, 84, 0.2)',
+                }}>
+                  <Sparkles size={10} color="#1DB954" />
+                  <span style={{ color: '#1DB954', fontSize: 10, fontWeight: 700, letterSpacing: '0.3px', textTransform: 'uppercase' }}>
+                    Gratuit
+                  </span>
+                </div>
+              )}
+            </div>
+
             <h1 style={{
               color: 'var(--color-text-primary)',
               fontSize: 'clamp(28px, 4vw, 48px)',
@@ -194,7 +245,9 @@ export function AlbumDetailScreen() {
             }}>
               {album.title}
             </h1>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+
+            {/* Artist + metadata */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
               <span style={{ color: 'var(--color-text-primary)', fontSize: 14, fontWeight: 600, whiteSpace: 'nowrap' }}>
                 {artistName}
               </span>
@@ -202,11 +255,19 @@ export function AlbumDetailScreen() {
               <span style={{ color: 'var(--color-text-secondary)', fontSize: 14, fontWeight: 500 }}>
                 {album.tracks?.length ?? 0} titres
               </span>
+              {totalDuration > 0 && (
+                <>
+                  <span style={{ color: 'var(--color-text-muted)', fontSize: 12 }}>·</span>
+                  <span style={{ color: 'var(--color-text-secondary)', fontSize: 13, fontWeight: 500, fontVariantNumeric: 'tabular-nums' }}>
+                    {totalDurationLabel}
+                  </span>
+                </>
+              )}
             </div>
 
             {/* Status badges */}
-            <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
-              {isOwned && (
+            <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+              {isOwned && !isFreeRelease && (
                 <div style={{
                   display: 'flex', alignItems: 'center', gap: 6,
                   padding: '4px 12px',
@@ -220,87 +281,156 @@ export function AlbumDetailScreen() {
                   </span>
                 </div>
               )}
-              {isFreeRelease && (
+              {isOfflineReady && (
                 <div style={{
                   display: 'flex', alignItems: 'center', gap: 6,
                   padding: '4px 12px',
                   borderRadius: 'var(--radius-full)',
-                  background: 'var(--color-surface-elevated)',
+                  background: 'rgba(29, 185, 84, 0.1)',
+                  border: '1px solid rgba(29, 185, 84, 0.2)',
                 }}>
-                  <span style={{ color: 'var(--color-text-secondary)', fontSize: 12, fontWeight: 600 }}>
-                    Gratuit
+                  <Download size={12} color="var(--color-success)" />
+                  <span style={{ color: 'var(--color-success)', fontSize: 12, fontWeight: 600 }}>
+                    Hors-ligne
                   </span>
                 </div>
               )}
             </div>
+
+            {/* CTA Buttons — directement dans le hero */}
+            <div className="album-cta-row" style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+              {/* Play all */}
+              {canPlay && sortedTracks.length > 0 && (
+                <button
+                  onClick={() => void handlePressTrack(sortedTracks[0], 0)}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    padding: '12px 24px',
+                    borderRadius: 'var(--radius-full)',
+                    background: 'var(--color-accent)',
+                    border: 'none',
+                    cursor: 'pointer',
+                    color: '#fff',
+                    fontSize: 14,
+                    fontWeight: 700,
+                    transition: 'all var(--transition-fast) ease',
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.04)'; e.currentTarget.style.background = 'var(--color-accent-light)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.background = 'var(--color-accent)'; }}
+                >
+                  <Play size={18} fill="#fff" />
+                  Tout écouter
+                </button>
+              )}
+
+              {/* Buy button — for paid & not owned */}
+              {isPaidNotOwned && priceDisplay && (
+                <a
+                  href={getPurchaseAlbumUrl(album.id)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    padding: '12px 24px',
+                    borderRadius: 'var(--radius-full)',
+                    background: 'linear-gradient(135deg, #FFD700, #FFA500)',
+                    border: 'none',
+                    cursor: 'pointer',
+                    color: '#000',
+                    fontSize: 14,
+                    fontWeight: 800,
+                    textDecoration: 'none',
+                    transition: 'all var(--transition-fast) ease',
+                    boxShadow: '0 4px 16px rgba(255,215,0,0.25)',
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.04)'; e.currentTarget.style.boxShadow = '0 6px 24px rgba(255,215,0,0.35)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.boxShadow = '0 4px 16px rgba(255,215,0,0.25)'; }}
+                >
+                  <ShoppingBag size={18} />
+                  Acheter — {priceDisplay}
+                </a>
+              )}
+
+              {/* Already have a PassCode */}
+              {isPaidNotOwned && (
+                <button
+                  onClick={() => navigate('/activate')}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    padding: '10px 20px',
+                    borderRadius: 'var(--radius-full)',
+                    background: 'rgba(255,255,255,0.06)',
+                    border: '1px solid rgba(255,255,255,0.1)',
+                    cursor: 'pointer',
+                    color: 'var(--color-text-secondary)',
+                    fontSize: 13,
+                    fontWeight: 600,
+                    transition: 'all var(--transition-fast) ease',
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; e.currentTarget.style.color = 'var(--color-text-primary)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; e.currentTarget.style.color = 'var(--color-text-secondary)'; }}
+                >
+                  <Lock size={14} />
+                  J'ai un PassCode
+                </button>
+              )}
+
+              {/* Download button — for owned but not offline */}
+              {isOwned && !isOfflineReady && downloadProgress?.status !== 'downloading' && (
+                <button
+                  onClick={handleDownload}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    padding: '12px 24px',
+                    borderRadius: 'var(--radius-full)',
+                    background: 'var(--color-surface-elevated)',
+                    border: '1px solid var(--color-border-subtle)',
+                    cursor: 'pointer',
+                    color: 'var(--color-text-primary)',
+                    fontSize: 14,
+                    fontWeight: 600,
+                    transition: 'all var(--transition-fast) ease',
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-surface-hover)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--color-surface-elevated)'; }}
+                >
+                  <Download size={18} />
+                  Télécharger
+                </button>
+              )}
+            </div>
+
           </div>
         </div>
 
-        {/* Purchase section */}
-        {isPaidNotOwned && (
-          <div style={{
-            margin: '24px 32px',
-            padding: 24,
-            background: 'var(--color-surface-elevated)',
-            borderRadius: 'var(--radius-md)',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 16,
-            alignItems: 'center',
-          }}>
-            <div style={{ textAlign: 'center' }}>
-              <p style={{ color: 'var(--color-text-muted)', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, margin: '0 0 4px' }}>
-                Prix
-              </p>
-              <p style={{ color: 'var(--color-text-primary)', fontSize: 32, fontWeight: 800, margin: 0 }}>
-                {album.price_ariary > 0 ? `${album.price_ariary.toLocaleString()} Ar` : 'Gratuit'}
-              </p>
+        {/* ========== TRACKLIST ========== */}
+        <div className="album-tracklist" style={{ padding: '24px 32px 32px' }}>
+          {/* Track list header */}
+          {sortedTracks.length > 0 && (
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 12,
+              padding: '0 12px 10px',
+              borderBottom: '1px solid var(--color-border-subtle)',
+              marginBottom: 4,
+            }}>
+              <span style={{ width: 24, color: 'var(--color-text-muted)', fontSize: 11, fontWeight: 600, textAlign: 'center' }}>#</span>
+              <span style={{ flex: 1, color: 'var(--color-text-muted)', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                Titre
+              </span>
+              <span style={{ width: 40, color: 'var(--color-text-muted)', fontSize: 11, fontWeight: 600, textAlign: 'right', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                <Clock size={13} />
+              </span>
             </div>
-            <a href={getPurchaseAlbumUrl(id!)} target="_blank" rel="noopener noreferrer" style={{ width: '100%', maxWidth: 300 }}>
-              <PrimaryButton label="Acheter sur le Web" />
-            </a>
-            <button
-              onClick={() => navigate('/activate')}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 6,
-                background: 'none', border: 'none', cursor: 'pointer', padding: 6,
-                color: 'var(--color-text-secondary)',
-                fontSize: 13,
-                fontWeight: 600,
-                transition: 'color var(--transition-fast) ease',
-              }}
-              onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--color-text-primary)'; }}
-              onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--color-text-secondary)'; }}
-            >
-              <Lock size={14} />
-              J'ai déjà un PassCode
-            </button>
-          </div>
-        )}
-
-        {/* Track list */}
-        <div style={{ padding: '8px 32px 32px' }}>
-          {/* Play all button */}
-          {canPlay && sortedTracks.length > 0 && (
-            <button
-              onClick={() => void handlePressTrack(sortedTracks[0], 0)}
-              style={{
-                width: 48, height: 48,
-                borderRadius: 'var(--radius-full)',
-                background: 'var(--color-accent)',
-                border: 'none',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                cursor: 'pointer',
-                marginBottom: 20,
-                transition: 'all var(--transition-fast) ease',
-              }}
-              onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.06)'; e.currentTarget.style.background = 'var(--color-accent-light)'; }}
-              onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.background = 'var(--color-accent)'; }}
-            >
-              <Play size={24} color="#fff" style={{ marginLeft: 2 }} />
-            </button>
           )}
 
           {/* Track rows */}
@@ -308,26 +438,30 @@ export function AlbumDetailScreen() {
             const isCurrent = audio.currentTrack?.id === track.id;
             const isThisPlaying = isCurrent && audio.isPlaying;
             return (
-              <button
+              <button className="album-track"
                 key={track.id}
                 onClick={() => void handlePressTrack(track, index)}
                 disabled={!canPlay && !isPaidNotOwned}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
-                  gap: 14,
+                  gap: 12,
                   padding: '8px 12px',
                   width: '100%',
-                  background: 'transparent',
+                  background: isCurrent ? 'var(--color-accent-soft)' : 'transparent',
                   border: 'none',
                   borderRadius: 'var(--radius-sm)',
-                  cursor: canPlay ? 'pointer' : 'default',
+                  cursor: canPlay || isPaidNotOwned ? 'pointer' : 'default',
                   textAlign: 'left',
                   opacity: !canPlay && !isPaidNotOwned ? 0.5 : 1,
                   transition: 'background-color var(--transition-fast) ease',
                 }}
-                onMouseEnter={(e) => { if (canPlay && !isCurrent) e.currentTarget.style.background = 'var(--color-surface-hover)'; }}
-                onMouseLeave={(e) => { if (canPlay && !isCurrent) e.currentTarget.style.background = 'transparent'; }}
+                onMouseEnter={(e) => {
+                  if (!isCurrent && (canPlay || isPaidNotOwned)) e.currentTarget.style.background = 'var(--color-surface-hover)';
+                }}
+                onMouseLeave={(e) => {
+                  if (!isCurrent) e.currentTarget.style.background = 'transparent';
+                }}
               >
                 {/* Track number or play icon */}
                 <div style={{ width: 24, textAlign: 'center', flexShrink: 0 }}>
@@ -341,7 +475,12 @@ export function AlbumDetailScreen() {
                   ) : isCurrent ? (
                     <Play size={14} color="var(--color-accent)" />
                   ) : (
-                    <span style={{ color: 'var(--color-text-muted)', fontSize: 14, fontWeight: 500 }}>
+                    <span style={{
+                      color: 'var(--color-text-muted)',
+                      fontSize: 13,
+                      fontWeight: 500,
+                      fontVariantNumeric: 'tabular-nums',
+                    }}>
                       {index + 1}
                     </span>
                   )}
@@ -363,9 +502,9 @@ export function AlbumDetailScreen() {
                   </p>
                   <p style={{
                     color: isCurrent ? 'var(--color-text-secondary)' : 'var(--color-text-muted)',
-                    fontSize: 13,
-                    lineHeight: '18px',
-                    margin: '2px 0 0',
+                    fontSize: 12,
+                    lineHeight: '16px',
+                    margin: '1px 0 0',
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
                     whiteSpace: 'nowrap',
@@ -374,72 +513,60 @@ export function AlbumDetailScreen() {
                   </p>
                 </div>
 
-                {/* Action icon */}
-                {isPaidNotOwned ? (
-                  <Lock size={14} color="var(--color-text-muted)" />
-                ) : isThisPlaying ? (
-                  <Pause size={16} color="var(--color-accent)" />
-                ) : isCurrent ? (
-                  <Play size={16} color="var(--color-accent)" />
-                ) : null}
+                {/* Duration + status */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                  {isPaidNotOwned ? (
+                    <Lock size={13} color="var(--color-text-muted)" style={{ opacity: 0.5 }} />
+                  ) : isThisPlaying ? (
+                    <Pause size={14} color="var(--color-accent)" />
+                  ) : isCurrent ? (
+                    <Play size={14} color="var(--color-accent)" />
+                  ) : null}
+                  {track.duration != null && track.duration > 0 && (
+                    <span style={{
+                      color: 'var(--color-text-muted)',
+                      fontSize: 12,
+                      fontWeight: 500,
+                      fontVariantNumeric: 'tabular-nums',
+                      minWidth: 36,
+                      textAlign: 'right',
+                    }}>
+                      {formatDuration(track.duration)}
+                    </span>
+                  )}
+                </div>
               </button>
             );
           })}
         </div>
 
-        {/* Download section */}
-        {isOwned && !isOfflineReady && (
-          <div style={{ margin: '0 32px 24px' }}>
-            {downloadProgress?.status === 'downloading' ? (
-              <div style={{
-                padding: 16,
-                background: 'var(--color-surface-elevated)',
-                borderRadius: 'var(--radius-sm)',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 8,
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Download size={16} color="var(--color-text-muted)" />
-                  <span style={{ color: 'var(--color-text-secondary)', fontSize: 13, fontWeight: 600 }}>
-                    Téléchargement... {Math.round(downloadProgress.progress)}%
-                  </span>
-                </div>
-                <div className="progress-bar">
-                  <div className="progress-fill accent" style={{ width: `${downloadProgress.progress}%` }} />
-                </div>
+        {/* ========== DOWNLOAD SECTION ========== */}
+        {isOwned && !isOfflineReady && downloadProgress?.status === 'downloading' && (
+          <div className="album-section" style={{ margin: '0 32px 24px' }}>
+            <div style={{
+              padding: 16,
+              background: 'var(--color-surface-elevated)',
+              borderRadius: 'var(--radius-sm)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 8,
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Download size={16} color="var(--color-text-muted)" />
+                <span style={{ color: 'var(--color-text-secondary)', fontSize: 13, fontWeight: 600 }}>
+                  Téléchargement... {Math.round(downloadProgress.progress)}%
+                </span>
               </div>
-            ) : (
-              <button
-                onClick={handleDownload}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: 8,
-                  padding: '12px 20px',
-                  borderRadius: 'var(--radius-full)',
-                  background: 'var(--color-surface-elevated)',
-                  border: '1px solid var(--color-border-subtle)',
-                  cursor: 'pointer',
-                  width: 'auto',
-                  color: 'var(--color-text-primary)',
-                  fontSize: 14,
-                  fontWeight: 600,
-                  transition: 'all var(--transition-fast) ease',
-                }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-surface-hover)'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--color-surface-elevated)'; }}
-              >
-                <Download size={18} />
-                Télécharger hors-ligne
-              </button>
-            )}
+              <div className="progress-bar">
+                <div className="progress-fill accent" style={{ width: `${downloadProgress.progress}%` }} />
+              </div>
+            </div>
           </div>
         )}
 
+        {/* ========== ERROR ========== */}
         {actionError && (
-          <div style={{ margin: '0 32px 24px', padding: 12, borderRadius: 'var(--radius-sm)', background: 'rgba(233, 20, 41, 0.1)', border: '1px solid rgba(233, 20, 41, 0.2)' }}>
+          <div className="album-section" style={{ margin: '0 32px 24px', padding: 12, borderRadius: 'var(--radius-sm)', background: 'rgba(233, 20, 41, 0.1)', border: '1px solid rgba(233, 20, 41, 0.2)' }}>
             <p style={{ color: 'var(--color-error)', fontSize: 13, lineHeight: '18px', margin: 0 }}>{actionError}</p>
           </div>
         )}

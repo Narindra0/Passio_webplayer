@@ -639,7 +639,112 @@ img { max-width: 100%; height: auto; }
     border-left: none !important;
     border-radius: 0 !important;
   }
-}
+
+  /* Reduce section spacing on mobile */
+  .discover-content {
+    gap: 24px !important;
+  }
+
+  /* Titres gratuits: 2 columns → 1 column on mobile */
+  .tracks-grid-2col {
+    grid-template-columns: 1fr !important;
+    gap: 2px !important;
+  }
+
+  /* Premium card: smaller height on mobile */
+  .premium-card {
+    min-height: 220px !important;
+  }
+
+  /* Collections grid: tighter gap on mobile */
+  .collections-grid {
+    gap: 14px !important;
+  }
+
+  /* Albums grid: tighter gap on mobile */
+  .albums-grid {
+    gap: 12px !important;
+  }
+
+  /* ========== Album Detail Responsive ========== */
+  .album-hero {
+    flex-direction: column !important;
+    align-items: center !important;
+    padding: 36px 16px 24px !important;
+    gap: 16px !important;
+  }
+  .album-cover {
+    width: 140px !important;
+    height: 140px !important;
+    min-width: 140px !important;
+    margin-top: 24px !important;
+  }
+  .album-info {
+    text-align: center !important;
+  }
+  .album-info > div {
+    justify-content: center !important;
+  }
+  .album-info .album-cta-row {
+    justify-content: center !important;
+  }
+  .album-back {
+    top: 12px !important;
+    left: 12px !important;
+    width: 32px !important;
+    height: 32px !important;
+  }
+  .album-tracklist {
+    padding: 16px 14px 24px !important;
+  }
+  .album-track {
+    padding: 6px 8px !important;
+    gap: 8px !important;
+  }
+  .album-section {
+    margin-left: 14px !important;
+    margin-right: 14px !important;
+  }
+
+  /* ========== Artist Detail Responsive ========== */
+  .artist-hero {
+    padding: 36px 16px 24px !important;
+  }
+  .artist-info-row {
+    flex-direction: column !important;
+    align-items: center !important;
+    text-align: center !important;
+  }
+  .artist-avatar {
+    width: 120px !important;
+    height: 120px !important;
+    min-width: 120px !important;
+  }
+  .artist-info {
+    text-align: center !important;
+  }
+  .artist-info .artist-cta-row {
+    justify-content: center !important;
+  }
+  .artist-back {
+    top: 12px !important;
+    left: 12px !important;
+    width: 32px !important;
+    height: 32px !important;
+  }
+  .artist-content {
+    --page-padding: 20px 14px 24px !important;
+  }
+  .artist-track-header {
+    padding: 0 8px 8px !important;
+  }
+  .artist-track {
+    padding: 6px 8px !important;
+    gap: 8px !important;
+  }
+  .artist-discography-grid {
+    gap: 12px !important;
+  }
 
 /* Group hover — for AlbumCard play button overlay */
 .group:hover .group-hover\:opacity-100 {
@@ -668,7 +773,6 @@ img { max-width: 100%; height: auto; }
 /* Mobile-only timer — hidden on desktop */
 .bottom-player-timer-mobile { display: none !important; }
 
-/* Desktop-only */
 @media (max-width: 768px) {
   .desktop-only {
     display: none !important;
