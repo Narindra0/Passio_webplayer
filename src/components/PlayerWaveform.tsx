@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useMemo, useRef } from 'react';
 
 const BAR_COUNT = 52;
 const BAR_WIDTH = 3;
@@ -44,7 +44,6 @@ export function PlayerWaveform({
   unplayedColor = 'rgba(255,255,255,0.22)',
 }: PlayerWaveformProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [layoutWidth, setLayoutWidth] = useState(0);
   const clampedProgress = Math.max(0, Math.min(1, progress));
 
   const barHeights = useMemo(() => generateBarHeights(trackKey, BAR_COUNT), [trackKey]);
@@ -68,11 +67,7 @@ export function PlayerWaveform({
         position: 'relative',
         width: '100%',
       }}
-      onMouseMove={(e) => {
-        if (!containerRef.current) return;
-        const rect = containerRef.current.getBoundingClientRect();
-        setLayoutWidth(rect.width);
-      }}
+
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: BAR_GAP, width: '100%', height: 44, justifyContent: 'center' }}>
         {barHeights.map((ratio, index) => {
@@ -93,22 +88,6 @@ export function PlayerWaveform({
           );
         })}
       </div>
-      {layoutWidth > 0 && (
-        <div
-          style={{
-            position: 'absolute',
-            top: '50%',
-            left: `${clampedProgress * 100}%`,
-            width: 10,
-            height: 10,
-            borderRadius: '50%',
-            backgroundColor: playedColor,
-            transform: 'translate(-50%, -50%)',
-            pointerEvents: 'none',
-            boxShadow: '0 0 6px rgba(120,0,0,0.35)',
-          }}
-        />
-      )}
     </div>
   );
 }

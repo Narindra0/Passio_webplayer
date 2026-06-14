@@ -1,7 +1,9 @@
 import { Play, Pause, CloudCheck } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useCachedImage } from '@/hooks/useCachedImage';
 import { isTrackInDB } from '../services/indexedDB';
+import { FeatArtistLinks } from './FeatArtistLinks';
+import { hasFeatArtists, parseFeatArtists } from '@/utils/featArtists';
 
 export interface TrackWithAlbum {
   id: string;
@@ -33,6 +35,30 @@ export function TrackListItem({ track, onPress, isPlaying = false }: TrackListIt
   useEffect(() => {
     isTrackInDB(track.id).then(setIsOfflineAvailable);
   }, [track.id]);
+
+  // Analyser le titre pour extraire les artistes feat
+  const { cleanTitle, featNames } = useMemo(() => {
+    if (hasFeatArtists(track.title)) {
+      return parseFeatArtists(track.title);
+    }
+    return { cleanTitle: track.title, featNames: [] };
+  }, [track.title]);
+
+  // Vérifier si le nom de l'artiste principal contient aussi des feats
+  const { featNames: artistFeatNames } = useMemo(() => {
+    if (hasFeatArtists(track.artist_name)) {
+      return parseFeatArtists(track.artist_name);
+    }
+    return { cleanTitle: track.artist_name, featNames: [] };
+  }, [track.artist_name]);
+
+  const allFeatNames = useMemo(() => {
+    const combined = [...featNames];
+    for (const n of artistFeatNames) {
+      if (!combined.includes(n)) combined.push(n);
+    }
+    return combined;
+  }, [featNames, artistFeatNames]);
 
   return (
     <button
@@ -104,8 +130,9 @@ export function TrackListItem({ track, onPress, isPlaying = false }: TrackListIt
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
           }}
+          title={track.title}
         >
-          {track.title}
+          {cleanTitle}
         </div>
         <div
           style={{
@@ -119,6 +146,9 @@ export function TrackListItem({ track, onPress, isPlaying = false }: TrackListIt
           }}
         >
           {track.artist_name}
+          {allFeatNames.length > 0 && (
+            <FeatArtistLinks featNames={allFeatNames} style={{ fontSize: 12 }} />
+          )}
         </div>
       </div>
 

@@ -21,7 +21,10 @@ import {
     playRemoteTrack,
     playWebOptimizedTrack,
     playStream,
+    prefetchTrackBlob,
     setTrackEndHandler,
+    setVolume as setAudioVolume,
+    setMuted as setAudioMuted,
     stopCurrentTrack,
     togglePlayPause as toggleAudioPlayPause
 } from '@/services/audio';
@@ -88,9 +91,15 @@ export interface AudioActions {
   seekTo: (position: number) => void;
   playDeviceTrackAtIndex: (tracks: DeviceTrack[], index: number) => Promise<void>;
   clearPlaybackError: () => void;
+  volume: number;
+  setVolume: (v: number) => void;
+  toggleMute: () => void;
+  isMuted: boolean;
 }
 
 interface AudioPlaybackContextValue extends AudioPlaybackState, AudioActions {}
+
+const DEFAULT_VOLUME = 1;
 
 const AudioPlaybackContext = createContext<AudioPlaybackContextValue | null>(null);
 const AudioProgressContext = createContext<AudioProgressState | null>(null);
@@ -120,6 +129,8 @@ export function AudioProvider({ children }: { children: ReactNode }) {
   const [deviceCurrentIndex, setDeviceCurrentIndex] = useState(-1);
   const [queueAlbums, setQueueAlbums] = useState<PublicAlbumDetails[]>([]);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
+  const [volume, setVolumeState] = useState(DEFAULT_VOLUME);
+  const [isMuted, setIsMuted] = useState(false);
 
   const currentIndexRef = useRef(-1);
   const deviceQueueRef = useRef<DeviceTrack[]>([]);
@@ -145,6 +156,7 @@ export function AudioProvider({ children }: { children: ReactNode }) {
   const progressThrottleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastProgressRef = useRef(0);
   const lastDurationRef = useRef(0);
+  const prefetchTriggeredRef = useRef(false);
 
   const currentTrack =
     currentIndex >= 0 && currentIndex < queue.length ? queue[currentIndex] : null;
@@ -317,6 +329,7 @@ export function AudioProvider({ children }: { children: ReactNode }) {
       retryCount
     });
     
+    prefetchTriggeredRef.current = false;
     if (retryCount === 0) setPlaybackError(null);
     setIsLoading(true);
     setIsPlaying(false);
@@ -349,6 +362,35 @@ export function AudioProvider({ children }: { children: ReactNode }) {
         // L'avancement automatique est déclenché uniquement par l'événement 'ended' du HTMLAudioElement
         // (via currentTrackEndHandler → advanceToNextTrack). Cela évite les doubles appels
         // et le bug où une pause près de la fin avançait la piste.
+        
+        // Préchargement de la piste suivante quand il reste ≤ 10 secondes
+        if (
+          dur > 0 &&
+          currentTime > 0 &&
+          dur - currentTime <= 10 &&
+          !prefetchTriggeredRef.current &&
+          repeatModeRef.current !== 'one'
+        ) {
+          prefetchTriggeredRef.current = true;
+          const currentIdx = currentIndexRef.current;
+          const q = queueRef.current;
+          let nextIdx = currentIdx + 1;
+
+          // Gérer le repeat 'all' : reboucler à la première piste
+          if (nextIdx >= q.length && repeatModeRef.current === 'all' && q.length > 0) {
+            nextIdx = 0;
+          }
+
+          if (nextIdx >= 0 && nextIdx < q.length) {
+            const nextTrack = q[nextIdx];
+            if (nextTrack) {
+              const proxyUrl = `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(nextTrack.id)}/audio`;
+              console.log('[AudioContext] Préchargement de la piste suivante:', nextTrack.title);
+              prefetchTrackBlob(proxyUrl, nextTrack.id);
+            }
+          }
+        }
+
         if (status.playing !== undefined) {
           setIsPlaying(Boolean(status.playing));
           isPlayingRef.current = Boolean(status.playing);
@@ -649,10 +691,12 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     await stopCurrentTrack();
     setIsPlaying(false);
     setProgress(0);
+    setDuration(0);
     currentIndexRef.current = -1;
     setCurrentIndex(-1);
     isPlayingRef.current = false;
     setPlayMode(null);
+    prefetchTriggeredRef.current = false;
   }, []);
 
   const toggleQueueMode = useCallback(() => {
@@ -690,12 +734,34 @@ export function AudioProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const seekTo = useCallback((position: number) => {
+    prefetchTriggeredRef.current = false; // Permet de re-déclencher le préchargement si on seek vers la fin
     const success = audioSeekTo(position);
     if (success) {
       lastProgressRef.current = position;
       setProgress(position);
     }
   }, []);
+
+  const setVolume = useCallback((v: number) => {
+    const clamped = Math.max(0, Math.min(1, v));
+    setVolumeState(clamped);
+    setAudioVolume(clamped);
+    if (clamped > 0 && isMuted) {
+      setIsMuted(false);
+      setAudioMuted(false);
+    }
+  }, [isMuted]);
+
+  const toggleMute = useCallback(() => {
+    if (isMuted) {
+      setIsMuted(false);
+      setAudioMuted(false);
+      setAudioVolume(volume);
+    } else {
+      setIsMuted(true);
+      setAudioMuted(true);
+    }
+  }, [isMuted, volume]);
 
   const playDeviceTrackAtIndex = useCallback(async (tracks: DeviceTrack[], index: number) => {
     if (tracks.length === 0) return;
@@ -723,12 +789,14 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     loadAlbum, playFromTrackList, playTrackAtIndex, togglePlayPause, next, previous, stop,
     setFullPlayerVisible, toggleQueueMode, toggleRepeat, loadLibrary, seekTo,
     playDeviceTrackAtIndex, clearPlaybackError,
+    volume, setVolume, toggleMute, isMuted,
   }), [album, queue, currentIndex, currentTrack, isPlaying, isLoading, playMode,
     decryptionKey, isFullPlayerVisible, queueMode, repeatMode, library, libraryIndex,
     isLibraryLoaded, queueScope, deviceQueue, deviceCurrentIndex, deviceCurrentTrack,
     queueAlbums, playbackError, loadAlbum, playFromTrackList, playTrackAtIndex,
     togglePlayPause, next, previous, stop, toggleQueueMode, toggleRepeat, loadLibrary,
-    seekTo, playDeviceTrackAtIndex, clearPlaybackError]);
+    seekTo, playDeviceTrackAtIndex, clearPlaybackError,
+    volume, setVolume, toggleMute, isMuted]);
 
   const progressValue = useMemo<AudioProgressState>(() => ({ progress, duration }), [progress, duration]);
 

@@ -6,6 +6,7 @@ import { Sidebar } from './components/Sidebar';
 import { MobileNav } from './components/MobileNav';
 import { BottomPlayer } from './components/BottomPlayer';
 import { FullPlayer } from './components/FullPlayer';
+import { ArtistLookupProvider } from './contexts/ArtistLookupContext';
 
 // Lazy-loaded pages
 const LoadingScreen = React.lazy(() => import('./pages/Loading').then(m => ({ default: m.LoadingScreen })));
@@ -33,6 +34,7 @@ export function App() {
 
   return (
     <AppErrorBoundary>
+      <ArtistLookupProvider>
       <div
         style={{
           display: 'flex',
@@ -96,6 +98,7 @@ export function App() {
         {/* Bottom Player Bar */}
         <BottomPlayer />
       </div>
+      </ArtistLookupProvider>
     </AppErrorBoundary>
   );
 }

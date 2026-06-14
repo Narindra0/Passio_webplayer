@@ -11,12 +11,17 @@ import {
     Play,
     Repeat, Repeat1,
     Shuffle, SkipBack, SkipForward,
-    TextQuote, Volume2, X,
+    Share2, TextQuote, Volume2, Volume1, Volume, VolumeX, X,
 } from 'lucide-react';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FullPlayerLyrics } from './FullPlayerLyrics';
 import { PlayerWaveform } from './PlayerWaveform';
+import { ShareCard } from './ShareCard';
+import { hasFeatArtists, parseFeatArtists } from '@/utils/featArtists';
+import { FeatArtistLinks } from './FeatArtistLinks';
+import { listAlbums } from '@/services/api';
+import { useMediaQuery } from '@/hooks/useMediaQuery';
 
 function formatAlbumArtist(albumData: PublicAlbumDetails | null | undefined): string {
   if (!albumData) return 'Artiste inconnu';
@@ -34,27 +39,70 @@ export function FullPlayer() {
     currentIndex, queue, seekTo, queueMode, toggleQueueMode,
     repeatMode, toggleRepeat, playTrackAtIndex,
     deviceQueue, deviceCurrentIndex, playDeviceTrackAtIndex, queueAlbums,
+    volume, setVolume, toggleMute, isMuted,
   } = useAudioPlayback();
   const { progress, duration } = useAudioProgress();
-  const [lyricsMode, setLyricsMode] = useState<'hidden' | 'compact' | 'fullscreen'>('hidden');
+  const [lyricsModalVisible, setLyricsModalVisible] = useState(false);
   const [queueModalVisible, setQueueModalVisible] = useState(false);
+  const [shareModalVisible, setShareModalVisible] = useState(false);
   const queueRef = useRef<HTMLDivElement>(null);
+  // État pour stocker le dictionnaire enrichi nom→ID depuis TOUS les albums (API)
+  const [globalArtistIdMap, setGlobalArtistIdMap] = useState<Record<string, string> | null>(null);
 
   useEffect(() => {
-    setLyricsMode('hidden');
+    setLyricsModalVisible(false);
   }, [currentTrack?.id, deviceCurrentTrack?.id]);
+
+  // Charger TOUS les albums pour construire un dictionnaire nom→ID
+  // (artist_id est REQUIS dans l'API, mais artist_name et artist.id sont optionnels !)
+  // On fait une union des sources : nom = artist_name || artist?.name, id = artist_id || artist?.id
+  useEffect(() => {
+    let cancelled = false;
+    async function loadAllAlbums() {
+      try {
+        const albums = await listAlbums();
+        if (cancelled) return;
+        const map: Record<string, string> = {};
+        for (const a of albums) {
+          // Combiner les sources: nom = artist_name (plat) OU artist.name (imbriqué)
+          //               id  = artist_id (REQUIRED) OU artist.id (imbriqué)
+          const name = a.artist_name || a.artist?.name;
+          const id = a.artist_id || a.artist?.id;
+          if (name && id) {
+            map[name.trim().toLowerCase()] = id;
+          }
+          // Tableau artists[] (feat artists déjà côté serveur)
+          if (a.artists) {
+            for (const art of a.artists) {
+              if (art.id && art.name) {
+                map[art.name.trim().toLowerCase()] = art.id;
+              }
+            }
+          }
+        }
+        console.log('[FullPlayer] Global artist map:', Object.keys(map).length, 'artists. Balz →', map['balz'], '| Keys:', Object.keys(map).sort().join(', '));
+        if (!cancelled) setGlobalArtistIdMap(map);
+      } catch (err) {
+        console.warn('[FullPlayer] listAlbums failed:', err);
+      }
+    }
+    void loadAllAlbums();
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        if (queueModalVisible) setQueueModalVisible(false);
+        if (lyricsModalVisible) setLyricsModalVisible(false);
+        else if (queueModalVisible) setQueueModalVisible(false);
         else setFullPlayerVisible(false);
       }
     };
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [queueModalVisible, setFullPlayerVisible]);
+  }, [lyricsModalVisible, queueModalVisible, setFullPlayerVisible]);
 
+  const isMobile = useMediaQuery('(max-width: 768px)');
   const isDeviceMode = playMode === 'device' && deviceCurrentTrack;
   if (!isDeviceMode && (!album || !currentTrack)) return null;
   if (isDeviceMode && !deviceCurrentTrack) return null;
@@ -67,7 +115,10 @@ export function FullPlayer() {
   const hasPrev = isDeviceMode
     ? deviceCurrentIndex > 0 || repeatMode === 'all'
     : currentIndex > 0 || repeatMode === 'all';
-  const trackTitle = isDeviceMode ? deviceCurrentTrack!.title : currentTrack!.title;
+  const rawTitle = isDeviceMode ? deviceCurrentTrack!.title : currentTrack!.title;
+  const { cleanTitle: trackTitle, featNames } = hasFeatArtists(rawTitle)
+    ? parseFeatArtists(rawTitle)
+    : { cleanTitle: rawTitle, featNames: [] };
   const artistName = isDeviceMode
     ? deviceCurrentTrack!.artist
     : (album!.artist_name ?? album!.artist?.name ?? 'Artiste');
@@ -86,6 +137,56 @@ export function FullPlayer() {
   const repeatColor = repeatMode === 'off' ? 'var(--color-text-muted)' : 'var(--color-accent)';
   const shuffleColor = queueMode === 'shuffle' ? 'var(--color-accent)' : 'var(--color-text-muted)';
   const trackKey = isDeviceMode ? deviceCurrentTrack!.id : currentTrack!.id;
+  // Construire un dictionnaire nom→ID fusionné :
+  // - Données de l'album courant (déjà chargées)
+  // - Données globales chargées depuis listAlbums() (comble les trous)
+  const localArtistIdMap = useMemo(() => {
+    const map: Record<string, string> = {};
+
+    // 1. Album courant : combiner name (artist_name || artist?.name) + id (artist_id || artist?.id)
+    if (album) {
+      const name = album.artist_name || album.artist?.name;
+      const id = album.artist_id || album.artist?.id;
+      if (name && id) {
+        map[name.trim().toLowerCase()] = id;
+      }
+      // Tableau artists[] (inclut les feat artists du serveur)
+      if (album.artists) {
+        for (const a of album.artists) {
+          if (a.name && a.id) {
+            map[a.name.trim().toLowerCase()] = a.id;
+          }
+        }
+      }
+    }
+
+    // 2. Fusionner avec les données globales (comble les artistes manquants)
+    if (globalArtistIdMap) {
+      for (const [name, id] of Object.entries(globalArtistIdMap)) {
+        if (!map[name]) {
+          map[name] = id;
+        }
+      }
+    }
+
+    return map;
+  }, [album, globalArtistIdMap]);
+
+  // Filtrer les feat artists qui existent dans la plateforme (artiste connu avec ID)
+  const knownFeatArtists = useMemo(() => {
+    return featNames
+      .map((n: string) => ({ name: n, artistId: localArtistIdMap[n.trim().toLowerCase()] ?? null }))
+      .filter((item): item is { name: string; artistId: string } => item.artistId !== null);
+  }, [featNames, localArtistIdMap]);
+
+  // Tous les feat artists (même sans ID connu) — pour l'affichage dans la section Artistes
+  const allFeatArtists = useMemo(() => {
+    return featNames.map((n: string) => ({
+      name: n,
+      artistId: localArtistIdMap[n.trim().toLowerCase()] ?? null,
+    }));
+  }, [featNames, localArtistIdMap]);
+
   const coverColors = useAlbumColors(coverUri);
   const cachedCover = useCachedImage(coverUri);
   const cachedArtistPic = useCachedImage(album?.artist?.profile_picture_url || album?.artist_pdp || null);
@@ -160,6 +261,27 @@ export function FullPlayer() {
           En cours
         </span>
         <button
+          onClick={(e) => { e.stopPropagation(); setShareModalVisible(true); }}
+          style={{
+            width: 32,
+            height: 32,
+            borderRadius: 'var(--radius-full)',
+            border: 'none',
+            background: 'transparent',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: 'var(--color-text-secondary)',
+            transition: 'all var(--transition-fast) ease',
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-surface-hover)'; e.currentTarget.style.color = 'var(--color-text-primary)'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--color-text-secondary)'; }}
+          title="Partager"
+        >
+          <Share2 size={18} />
+        </button>
+        <button
           onClick={() => setQueueModalVisible(true)}
           style={{
             width: 32,
@@ -219,31 +341,73 @@ export function FullPlayer() {
         <div style={{ marginBottom: 16 }}>
           <div
             style={{
-              color: 'var(--color-text-primary)',
-              fontSize: 20,
-              fontWeight: 700,
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-              lineHeight: '26px',
+              display: 'flex',
+              alignItems: 'flex-start',
+              justifyContent: 'space-between',
+              gap: 12,
             }}
           >
-            {trackTitle}
-          </div>
-          <div
-            style={{
-              color: 'var(--color-text-secondary)',
-              fontSize: 14,
-              fontWeight: 500,
-              marginTop: 4,
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {artistName}
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div
+                style={{
+                  color: 'var(--color-text-primary)',
+                  fontSize: 20,
+                  fontWeight: 700,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  lineHeight: '26px',
+                }}
+                title={rawTitle}
+              >
+                {trackTitle}
+              </div>
+              <div
+                style={{
+                  color: 'var(--color-text-secondary)',
+                  fontSize: 14,
+                  fontWeight: 500,
+                  marginTop: 4,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {artistName}
+                {featNames.length > 0 && (
+                  <FeatArtistLinks featNames={featNames} artistIdMap={localArtistIdMap} />
+                )}
+              </div>
+            </div>
+            {showLyricsControls && (
+              <button
+                onClick={() => setLyricsModalVisible(true)}
+                style={{
+                  width: 36,
+                  height: 36,
+                  borderRadius: 'var(--radius-full)',
+                  border: '1px solid var(--color-border-subtle)',
+                  background: 'var(--color-surface-elevated)',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: 'var(--color-accent)',
+                  flexShrink: 0,
+                  marginTop: 2,
+                  transition: 'all var(--transition-fast) ease',
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-accent-soft)'; e.currentTarget.style.borderColor = 'var(--color-accent)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--color-surface-elevated)'; e.currentTarget.style.borderColor = 'var(--color-border-subtle)'; }}
+                title="Afficher les paroles"
+              >
+                <TextQuote size={16} />
+              </button>
+            )}
           </div>
         </div>
+
+
 
         {/* Waveform / Progress */}
         <div style={{ marginBottom: 16 }}>
@@ -388,54 +552,87 @@ export function FullPlayer() {
           </button>
         </div>
 
-        {/* Lyrics toggle */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
-          {showLyricsControls && (
+        {/* Volume slider — desktop only */}
+        {!isMobile && (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              marginBottom: 16,
+              padding: '8px 12px',
+              borderRadius: 'var(--radius-md)',
+              background: 'var(--color-surface-elevated)',
+            }}
+          >
             <button
-              onClick={() => setLyricsMode((p) => (p === 'hidden' ? 'compact' : 'hidden'))}
+              onClick={toggleMute}
               style={{
                 display: 'flex',
                 alignItems: 'center',
-                gap: 6,
-                padding: '8px 16px',
-                borderRadius: 'var(--radius-full)',
+                justifyContent: 'center',
+                background: 'none',
                 border: 'none',
-                background: lyricsMode !== 'hidden' ? 'var(--color-surface-elevated)' : 'transparent',
                 cursor: 'pointer',
-                color: lyricsMode !== 'hidden' ? 'var(--color-accent)' : 'var(--color-text-muted)',
-                fontSize: 13,
-                fontWeight: 600,
-                transition: 'all var(--transition-fast) ease',
+                padding: 4,
+                color: isMuted ? 'var(--color-text-muted)' : 'var(--color-text-secondary)',
+                transition: 'color var(--transition-fast) ease',
+                flexShrink: 0,
               }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-surface-elevated)'; e.currentTarget.style.color = lyricsMode !== 'hidden' ? 'var(--color-accent)' : 'var(--color-text-secondary)'; }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = lyricsMode !== 'hidden' ? 'var(--color-surface-elevated)' : 'transparent'; e.currentTarget.style.color = lyricsMode !== 'hidden' ? 'var(--color-accent)' : 'var(--color-text-muted)'; }}
+              title={isMuted ? 'Activer le son' : 'Couper le son'}
             >
-              <TextQuote size={16} />
-              <span>Paroles</span>
+              {isMuted || volume === 0 ? (
+                <VolumeX size={16} />
+              ) : volume < 0.5 ? (
+                <Volume size={16} />
+              ) : volume < 0.8 ? (
+                <Volume1 size={16} />
+              ) : (
+                <Volume2 size={16} />
+              )}
             </button>
-          )}
-        </div>
-
-        {/* Lyrics content */}
-        {lyricsMode !== 'hidden' && showLyricsControls && currentTrack && (
-          <div
-            style={{
-              backgroundColor: 'var(--color-surface-elevated)',
-              borderRadius: 'var(--radius-sm)',
-              overflow: 'hidden',
-              marginBottom: 16,
-              minHeight: 80,
-            }}
-          >
-            <FullPlayerLyrics
-              lyricsUrl={currentTrack.lyrics_url || null}
-              trackId={currentTrack.id}
-              currentTime={progress * duration}
-              isPlaying={isPlaying}
-              compact
-            />
+            <div
+              style={{
+                flex: 1,
+                height: 6,
+                borderRadius: 3,
+                background: 'var(--color-border-subtle)',
+                cursor: 'pointer',
+                position: 'relative',
+              }}
+              onClick={(e) => {
+                const rect = e.currentTarget.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                setVolume(x / rect.width);
+              }}
+            >
+              <div
+                style={{
+                  height: '100%',
+                  width: `${(isMuted ? 0 : volume) * 100}%`,
+                  background: 'var(--color-accent)',
+                  borderRadius: 3,
+                  transition: 'width 0.08s linear',
+                }}
+              />
+            </div>
+            <span
+              style={{
+                color: 'var(--color-text-muted)',
+                fontSize: 11,
+                fontWeight: 600,
+                fontVariantNumeric: 'tabular-nums',
+                minWidth: 32,
+                textAlign: 'right',
+                flexShrink: 0,
+              }}
+            >
+              {isMuted ? '0%' : `${Math.round(volume * 100)}%`}
+            </span>
           </div>
         )}
+
+
 
         {/* About artist */}
         {effectiveMode === 'online' && !isDeviceMode && album && (
@@ -450,8 +647,9 @@ export function FullPlayer() {
                 margin: '0 0 12px',
               }}
             >
-              À propos de l'artiste
+              Artistes
             </h3>
+            {/* Artiste principal */}
             <button
               onClick={() => {
                 if (album.artist_id) {
@@ -494,10 +692,93 @@ export function FullPlayer() {
                   {artistName}
                 </p>
                 <p style={{ color: 'var(--color-text-muted)', fontSize: 12, fontWeight: 500, margin: '2px 0 0' }}>
-                  Artiste
+                  Artiste principal
                 </p>
               </div>
             </button>
+
+            {/* Artistes feat — toujours affichés, avec lien si trouvé dans la plateforme */}
+            {allFeatArtists.length > 0 && (
+              <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {allFeatArtists.map(({ name, artistId }: { name: string; artistId: string | null }) => (
+                  <button
+                    key={name}
+                    onClick={() => {
+                      if (artistId) {
+                        navigate(`/artist/${artistId}`);
+                        setFullPlayerVisible(false);
+                      }
+                    }}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 12,
+                      backgroundColor: 'transparent',
+                      borderRadius: 'var(--radius-sm)',
+                      padding: '8px 8px 8px 12px',
+                      border: 'none',
+                      cursor: artistId ? 'pointer' : 'default',
+                      width: '100%',
+                      textAlign: 'left',
+                      transition: 'background-color var(--transition-fast) ease',
+                      opacity: artistId ? 1 : 0.6,
+                    }}
+                    onMouseEnter={(e) => {
+                      if (artistId) e.currentTarget.style.backgroundColor = 'var(--color-surface-hover)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.backgroundColor = 'transparent';
+                    }}
+                  >
+                    {/* Avatar par défaut pour feat */}
+                    <div
+                      style={{
+                        width: 44,
+                        height: 44,
+                        borderRadius: 'var(--radius-full)',
+                        backgroundColor: 'var(--color-surface-elevated)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        flexShrink: 0,
+                      }}
+                    >
+                      <Volume2 size={18} color={artistId ? 'var(--color-text-muted)' : 'var(--color-text-muted)'} />
+                    </div>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <p style={{
+                        color: artistId ? 'var(--color-accent)' : 'var(--color-text-primary)',
+                        fontSize: 14,
+                        fontWeight: 600,
+                        margin: 0,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}>
+                        {name}
+                      </p>
+                    </div>
+                    {/* Badge feat — toujours affiché */}
+                    <span
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 700,
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.5px',
+                        color: 'var(--color-accent)',
+                        padding: '2px 8px',
+                        borderRadius: 'var(--radius-full)',
+                        background: 'var(--color-accent-soft)',
+                        border: '1px solid var(--color-accent)',
+                        flexShrink: 0,
+                      }}
+                    >
+                      Feat.
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
@@ -676,6 +957,103 @@ export function FullPlayer() {
                 );
               })
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Share Modal */}
+      <ShareCard
+        visible={shareModalVisible}
+        onClose={() => setShareModalVisible(false)}
+        trackTitle={trackTitle}
+        artistName={artistName}
+        albumTitle={isDeviceMode ? undefined : album?.title}
+        coverUri={coverUri}
+        albumId={isDeviceMode ? undefined : album?.id}
+      />
+
+      {/* Lyrics Modal — Spotify-style overlay */}
+      {showLyricsControls && lyricsModalVisible && (
+        <div
+          onClick={() => setLyricsModalVisible(false)}
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0,0,0,0.85)',
+            zIndex: 10001,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            backdropFilter: 'blur(12px)',
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: '100%',
+              height: '100%',
+              display: 'flex',
+              flexDirection: 'column',
+              backgroundColor: 'transparent',
+              position: 'relative',
+            }}
+          >
+            {/* Modal header */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '16px 24px',
+                flexShrink: 0,
+              }}
+            >
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <p style={{ color: '#fff', fontSize: 16, fontWeight: 700, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {trackTitle}
+                </p>
+                <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: 13, fontWeight: 500, margin: '2px 0 0' }}>
+                  {artistName}
+                </p>
+              </div>
+              <button
+                onClick={() => setLyricsModalVisible(false)}
+                style={{
+                  width: 36,
+                  height: 36,
+                  borderRadius: 'var(--radius-full)',
+                  border: 'none',
+                  background: 'rgba(255,255,255,0.1)',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: '#fff',
+                  flexShrink: 0,
+                  transition: 'all 0.2s ease',
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.2)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; }}
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Lyrics content — scrollable, centered */}
+            <div style={{ flex: 1, overflow: 'hidden', display: 'flex', justifyContent: 'center' }}>
+              <div style={{ width: '100%', maxWidth: 700, height: '100%' }}>
+                <FullPlayerLyrics
+                  lyricsUrl={currentTrack?.lyrics_url || null}
+                  trackId={currentTrack?.id || null}
+                  currentTime={progress * duration}
+                  isPlaying={isPlaying}
+                  compact={false}
+                />
+              </div>
+            </div>
           </div>
         </div>
       )}

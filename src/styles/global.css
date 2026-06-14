@@ -610,25 +610,8 @@ img { max-width: 100%; height: auto; }
   }
 
   .bottom-player {
-    height: 60px !important;
-    padding: 0 10px !important;
-    min-height: 60px;
+    height: auto !important;
   }
-  .bottom-player.has-error {
-    height: 120px !important;
-  }
-  .bottom-player-left { width: auto !important; flex: 0 1 auto !important; min-width: 0 !important; gap: 10px !important; max-width: 50% !important; }
-  .bottom-player-cover { width: 42px !important; height: 42px !important; }
-  .bottom-player-left > div:last-child > div:first-child { font-size: 13px !important; }
-  .bottom-player-left > div:last-child > div:last-child { font-size: 11px !important; }
-  .bottom-player-center > div:last-child { display: none !important; }
-  .bottom-player-center { flex: 0 1 auto !important; width: auto !important; }
-  .bottom-player-center > div:first-child { gap: 6px !important; }
-  .bottom-player-center button:first-child,
-  .bottom-player-center button:last-child { display: none !important; }
-  .bottom-player-playbtn { width: 36px !important; height: 36px !important; }
-  .bottom-player-right { display: none !important; }
-  .bottom-player-timer-mobile { display: flex !important; }
 
   .fullplayer {
     position: fixed !important;
@@ -766,9 +749,24 @@ img { max-width: 100%; height: auto; }
   opacity: 1;
 }
 
-/* Safe area */
+/* ============================================================
+   Safe Area — mobile bottom browser nav bars
+   ============================================================ */
 .safe-top { padding-top: env(safe-area-inset-top, 0px); }
 .safe-bottom { padding-bottom: env(safe-area-inset-bottom, 0px); }
+
+/* Fallback: CSS-only safe area for mobile nav & player
+   When JS hook is not yet ready, these ensure content isn't hidden
+   behind system home indicator or browser chrome.
+   No !important — the JS hook's inline style takes precedence when active. */
+@media (max-width: 768px) {
+  .mobile-nav {
+    padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  }
+  .bottom-player {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+}
 
 /* Mobile-only timer — hidden on desktop */
 .bottom-player-timer-mobile { display: none !important; }

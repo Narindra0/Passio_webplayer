@@ -78,10 +78,18 @@ export function FullPlayerLyrics({ lyricsUrl, trackId, currentTime, isPlaying, c
   const currentLine = activeIndex >= 0 ? lyrics[activeIndex] : null;
 
   useEffect(() => {
-    if (!isPlaying || lyrics.length === 0 || activeIndex < 0) return;
+    if (lyrics.length === 0 || activeIndex < 0) return;
     if (scrollRef.current) {
-      const lineHeight = compact ? 52 : 78;
-      scrollRef.current.scrollTo({ top: Math.max(0, activeIndex * lineHeight - 150), behavior: 'smooth' });
+      if (compact) {
+        if (!isPlaying) return;
+        const lineHeight = 52;
+        scrollRef.current.scrollTo({ top: Math.max(0, activeIndex * lineHeight - 150), behavior: 'smooth' });
+      } else {
+        const activeEl = scrollRef.current.querySelector(`[data-lyric-index="${activeIndex}"]`) as HTMLElement | null;
+        if (activeEl) {
+          activeEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }
     }
   }, [currentTime, isPlaying, activeIndex, lyrics.length, compact]);
 
@@ -106,6 +114,7 @@ export function FullPlayerLyrics({ lyricsUrl, trackId, currentTime, isPlaying, c
         return (
           <div
             key={index}
+            data-lyric-index={index}
             style={{
               padding: '8px 0 8px 18px',
               borderLeft: `3px solid ${isActive ? 'var(--color-accent)' : 'transparent'}`,

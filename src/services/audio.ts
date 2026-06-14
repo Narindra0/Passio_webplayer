@@ -23,10 +23,69 @@ let prefetchAbortController: AbortController | null = null;
 let isSecureAudio: boolean = false;
 let currentBlobUrl: string | null = null;
 
+// Cache de préchargement pour transition fluide entre pistes
+interface PrefetchEntry {
+  trackId: string;
+  objectUrl: string;
+}
+let prefetchEntry: PrefetchEntry | null = null;
+
 export function cancelCurrentPrefetch() {
   if (prefetchAbortController) {
     prefetchAbortController.abort();
     prefetchAbortController = null;
+  }
+}
+
+/**
+ * Préchage le blob audio de la piste suivante pour une transition sans attente.
+ */
+export async function prefetchTrackBlob(url: string, trackId: string): Promise<boolean> {
+  cancelCurrentPrefetch();
+
+  if (prefetchEntry?.trackId === trackId) return true;
+
+  clearPrefetchCache();
+
+  const controller = new AbortController();
+  prefetchAbortController = controller;
+
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    if (!response.ok) return false;
+    const blob = await response.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    prefetchEntry = { trackId, objectUrl };
+    console.log('[Audio] Prefetched blob for track:', trackId);
+    return true;
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') return false;
+    console.warn('[Audio] Prefetch failed for track:', trackId, err);
+    return false;
+  } finally {
+    if (prefetchAbortController === controller) {
+      prefetchAbortController = null;
+    }
+  }
+}
+
+/**
+ * Consomme le blob préchargé pour une piste donnée.
+ * Retourne l'objectUrl ou null si pas de cache correspondant.
+ */
+export function consumePrefetchedTrack(trackId: string): string | null {
+  if (prefetchEntry?.trackId === trackId) {
+    const url = prefetchEntry.objectUrl;
+    prefetchEntry = null;
+    return url;
+  }
+  return null;
+}
+
+export function clearPrefetchCache() {
+  if (prefetchEntry) {
+    URL.revokeObjectURL(prefetchEntry.objectUrl);
+    prefetchEntry = null;
   }
 }
 
@@ -83,9 +142,6 @@ export async function stopCurrentTrack(): Promise<void> {
     currentAudio.src = '';
     currentAudio.load();
     currentAudio = null;
-  }
-  if (currentTrackEndHandler) {
-    currentTrackEndHandler = null;
   }
   currentStatusCallback = null;
   stopProgressInterval();
@@ -357,6 +413,12 @@ export async function playWebOptimizedTrack(
   isPremium: boolean,
   onStatusUpdate?: StatusCallback
 ): Promise<HTMLAudioElement | any> {
+  // Vérifier le cache de préchargement AVANT d'annuler quoi que ce soit
+  const cachedUrl = consumePrefetchedTrack(trackId);
+  if (!cachedUrl) {
+    clearPrefetchCache();
+  }
+
   cancelCurrentPrefetch();
   await stopCurrentTrack();
 
@@ -398,11 +460,20 @@ export async function playWebOptimizedTrack(
   };
 
   try {
+    // Utiliser le blob préchargé si disponible (transition sans attente)
+    if (cachedUrl) {
+      console.log('[WebAudio] Utilisation du blob préchargé pour la piste:', trackId);
+      currentBlobUrl = cachedUrl;
+      const audio = await playWithHtmlAudio(cachedUrl);
+      // Nettoyer le blob quand la piste se termine naturellement
+      audio.addEventListener('ended', () => {
+        URL.revokeObjectURL(cachedUrl);
+        if (currentBlobUrl === cachedUrl) currentBlobUrl = null;
+      }, { once: true });
+      return audio;
+    }
+
     // Lecture via le proxy backend uniquement.
-    // Note: la lecture directe depuis B2 est désactivée car Backblaze B2
-    // n'autorise pas les requêtes CORS depuis le navigateur.
-    // Le proxy télécharge le fichier et le convertit en Blob URL,
-    // ce qui permet au navigateur de faire des Range Requests locaux.
     console.log('[WebAudio] Utilisation du proxy backend :', proxyUrl);
     
     const response = await fetch(proxyUrl);
@@ -624,4 +695,27 @@ export async function playStream(
 
 export function setTrackEndHandler(handler: () => void) {
   currentTrackEndHandler = handler;
+}
+
+export function setVolume(volume: number) {
+  const clamped = Math.max(0, Math.min(1, volume));
+  if (currentAudio) {
+    currentAudio.volume = clamped;
+  }
+}
+
+export function getVolume(): number {
+  if (currentAudio) return currentAudio.volume;
+  return 1;
+}
+
+export function isMuted(): boolean {
+  if (currentAudio) return currentAudio.muted;
+  return false;
+}
+
+export function setMuted(muted: boolean) {
+  if (currentAudio) {
+    currentAudio.muted = muted;
+  }
 }

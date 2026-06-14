@@ -2,13 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowUpDown, ChevronLeft, ChevronRight, ListMusic, Search, ArrowLeft } from 'lucide-react';
 import { Screen } from '@/components/Screen';
+import { TrackListItem, type TrackWithAlbum } from '@/components/TrackListItem';
 import { getAlbum, listAlbums, unwrapAlbumDetails } from '@/services/api';
 import { freeCatalogDetailsMap, readFreeCatalogCache, writeFreeCatalogCache, staleWhileRevalidate } from '@/services/freeCatalogCache';
 import { mapTracksFromAlbum } from '@/services/freeCatalogSearch';
 import { resolveOfflinePlayback } from '@/services/offlineAccess';
 import { useAudioPlayback } from '@/contexts/AudioContext';
 import type { PublicAlbumDetails, PublicAlbumSummary } from '@/types/backend';
-import type { TrackWithAlbum } from '@/components/TrackListItem';
 
 const TRACKS_PER_PAGE = 20;
 const SORT_OPTIONS = ['Plus récent', 'Plus ancien', 'A-Z', 'Z-A'] as const;
@@ -235,107 +235,22 @@ export function TracksScreen() {
         </div>
       ) : (
         <>
-          {/* Track list header */}
+          {/* Grille 2 colonnes de titres */}
           <div style={{
-            display: 'flex', alignItems: 'center', gap: 10,
-            padding: '0 12px 10px',
-            borderBottom: '1px solid var(--color-border-subtle)',
-            marginBottom: 4,
+            display: 'grid',
+            gridTemplateColumns: 'repeat(2, 1fr)',
+            gap: '4px 24px',
           }}>
-            <span style={{ width: 36, color: 'var(--color-text-muted)', fontSize: 11, fontWeight: 600, textAlign: 'center' }}>#</span>
-            <span style={{ width: 40, flexShrink: 0 }} />
-            <span style={{ flex: 1, color: 'var(--color-text-muted)', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Titre</span>
-            <span style={{ width: 160, display: 'none', color: 'var(--color-text-muted)', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }} className="desktop-only">Album</span>
-            <span style={{ width: 50, color: 'var(--color-text-muted)', fontSize: 11, fontWeight: 600, textAlign: 'right', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Durée</span>
-          </div>
-
-          {/* Track rows */}
-          <div style={{ display: 'flex', flexDirection: 'column' }}>
-            {paginatedTracks.map((track, index) => {
-              const trackGlobalIndex = safePage * TRACKS_PER_PAGE + index;
+            {paginatedTracks.map((track) => {
               const isThisCurrent = currentTrack?.id === track.id;
-              const isThisPlaying = isThisCurrent && isPlaying;
               return (
-                <button
-                  key={track.id}
-                  onClick={() => handleTrackPress(track)}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 10,
-                    padding: '6px 12px', borderRadius: 'var(--radius-sm)',
-                    background: isThisCurrent ? 'var(--color-accent-soft)' : 'transparent',
-                    border: 'none', cursor: 'pointer', textAlign: 'left',
-                    width: '100%',
-                    transition: 'background var(--transition-fast) ease',
-                  }}
-                  onMouseEnter={(e) => { if (!isThisCurrent) e.currentTarget.style.background = 'var(--color-surface-hover)'; }}
-                  onMouseLeave={(e) => { if (!isThisCurrent) e.currentTarget.style.background = 'transparent'; }}
-                >
-                  {/* Track number */}
-                  <span style={{
-                    width: 36, textAlign: 'center', flexShrink: 0,
-                    color: isThisCurrent ? 'var(--color-accent)' : 'var(--color-text-muted)',
-                    fontSize: 13, fontWeight: 500, fontVariantNumeric: 'tabular-nums',
-                  }}>
-                    {trackGlobalIndex + 1}
-                  </span>
-
-                  {/* Cover */}
-                  <div style={{
-                    width: 40, height: 40, borderRadius: 'var(--radius-sm)',
-                    overflow: 'hidden', flexShrink: 0,
-                    backgroundColor: 'var(--color-surface-elevated)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  }}>
-                    {track.cover_url ? (
-                      <img
-                        src={track.cover_url}
-                        alt=""
-                        loading="lazy"
-                        decoding="async"
-                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                      />
-                    ) : (
-                      <span style={{ color: 'var(--color-text-muted)', fontSize: 16 }}>♪</span>
-                    )}
-                  </div>
-
-                  {/* Title + Artist */}
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <span style={{
-                      color: isThisCurrent ? 'var(--color-accent)' : 'var(--color-text-primary)',
-                      fontSize: 14, fontWeight: 600,
-                      display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                    }}>
-                      {isThisPlaying ? '♫ ' : ''}{track.title}
-                    </span>
-                    <span style={{
-                      color: 'var(--color-text-muted)', fontSize: 12,
-                      display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                    }}>
-                      {track.artist_name}
-                    </span>
-                  </div>
-
-                  {/* Album name (desktop only) */}
-                  <span className="desktop-only" style={{
-                    width: 160, flexShrink: 0,
-                    color: 'var(--color-text-muted)', fontSize: 13,
-                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                  }}>
-                    {track.album_title}
-                  </span>
-
-                  {/* Duration */}
-                  {track.duration != null && track.duration > 0 && (
-                    <span style={{
-                      width: 50, textAlign: 'right', flexShrink: 0,
-                      color: 'var(--color-text-muted)', fontSize: 12, fontWeight: 500,
-                      fontVariantNumeric: 'tabular-nums',
-                    }}>
-                      {Math.floor(track.duration / 60)}:{String(Math.floor(track.duration % 60)).padStart(2, '0')}
-                    </span>
-                  )}
-                </button>
+                <div key={track.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <TrackListItem
+                    track={track}
+                    isPlaying={isThisCurrent && isPlaying}
+                    onPress={() => handleTrackPress(track)}
+                  />
+                </div>
               );
             })}
           </div>

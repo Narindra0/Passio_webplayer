@@ -1,6 +1,7 @@
 import { Compass, KeyRound, Library, Search, Sparkles } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useLibraryMode } from '../contexts/LibraryModeContext';
+import { useBottomInset } from '@/hooks/useBottomInset';
 
 interface NavItem {
   path: string;
@@ -13,6 +14,8 @@ export function MobileNav() {
   const navigate = useNavigate();
   const { effectiveMode } = useLibraryMode();
   const currentPath = location.pathname;
+
+  const bottomInset = useBottomInset();
 
   const navItems: NavItem[] = effectiveMode === 'online' ? [
     { path: '/discover', label: 'Découvertes', icon: Sparkles },
@@ -34,6 +37,7 @@ export function MobileNav() {
       display: 'flex',
       justifyContent: 'center',
       padding: '8px 12px 12px',
+      paddingBottom: bottomInset > 0 ? `${12 + bottomInset}px` : '12px',
       flexShrink: 0,
       position: 'relative',
       zIndex: 50,

@@ -9,11 +9,14 @@ import { resolveOfflinePlayback } from '@/services/offlineAccess';
 import type { PublicAlbumDetails, PublicTrack } from '@/types/backend';
 import { useAlbumColors } from '@/hooks/useAlbumColors';
 import {
-  ChevronLeft, Crown, Download, Lock, Pause, Play,
+  ChevronLeft, Crown, Download, Lock, Pause, Play, Share2,
   ShieldCheck, ShoppingBag, Sparkles, Clock,
 } from 'lucide-react';
+import { ShareCard } from '@/components/ShareCard';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { hasFeatArtists, parseFeatArtists } from '@/utils/featArtists';
+import { FeatArtistLinks } from '@/components/FeatArtistLinks';
 
 function formatDuration(seconds: number | null | undefined): string {
   if (!seconds || isNaN(seconds)) return '--:--';
@@ -36,6 +39,7 @@ export function AlbumDetailScreen() {
   const [downloadProgress, setDownloadProgress] = useState<DownloadProgress | null>(null);
   const [isOfflineReady, setIsOfflineReady] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [shareModalVisible, setShareModalVisible] = useState(false);
   const unsubscribeRef = useRef<(() => void) | null>(null);
 
   // Call all hooks BEFORE any early returns
@@ -406,6 +410,30 @@ export function AlbumDetailScreen() {
                   Télécharger
                 </button>
               )}
+
+              {/* Share button */}
+              <button
+                onClick={() => setShareModalVisible(true)}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '12px 24px',
+                  borderRadius: 'var(--radius-full)',
+                  background: 'var(--color-surface-elevated)',
+                  border: '1px solid var(--color-border-subtle)',
+                  cursor: 'pointer',
+                  color: 'var(--color-text-secondary)',
+                  fontSize: 14,
+                  fontWeight: 600,
+                  transition: 'all var(--transition-fast) ease',
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-surface-hover)'; e.currentTarget.style.color = 'var(--color-text-primary)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--color-surface-elevated)'; e.currentTarget.style.color = 'var(--color-text-secondary)'; }}
+              >
+                <Share2 size={18} />
+                Partager
+              </button>
             </div>
 
           </div>
@@ -437,6 +465,7 @@ export function AlbumDetailScreen() {
           {sortedTracks.map((track, index) => {
             const isCurrent = audio.currentTrack?.id === track.id;
             const isThisPlaying = isCurrent && audio.isPlaying;
+            const featResult = hasFeatArtists(track.title) ? parseFeatArtists(track.title) : null;
             return (
               <button className="album-track"
                 key={track.id}
@@ -497,8 +526,10 @@ export function AlbumDetailScreen() {
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
                     whiteSpace: 'nowrap',
-                  }}>
-                    {track.title}
+                  }}
+                    title={track.title}
+                  >
+                    {featResult ? featResult.cleanTitle : track.title}
                   </p>
                   <p style={{
                     color: isCurrent ? 'var(--color-text-secondary)' : 'var(--color-text-muted)',
@@ -510,6 +541,9 @@ export function AlbumDetailScreen() {
                     whiteSpace: 'nowrap',
                   }}>
                     {artistName}
+                    {featResult && (
+                      <FeatArtistLinks featNames={featResult.featNames} style={{ fontSize: 11 }} />
+                    )}
                   </p>
                 </div>
 
@@ -571,6 +605,16 @@ export function AlbumDetailScreen() {
           </div>
         )}
       </div>
+
+      {/* Share Modal */}
+      <ShareCard
+        visible={shareModalVisible}
+        onClose={() => setShareModalVisible(false)}
+        trackTitle={album.title}
+        artistName={artistName}
+        coverUri={album.cover_url}
+        albumId={album.id}
+      />
     </Screen>
   );
 }
