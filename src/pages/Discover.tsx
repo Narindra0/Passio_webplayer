@@ -10,9 +10,8 @@ import { PremiumAlbumCard } from '@/components/PremiumAlbumCard';
 import { ArtistCard } from '@/components/ArtistCard';
 import { TrackListItem, type TrackWithAlbum } from '@/components/TrackListItem';
 import { Screen } from '@/components/Screen';
-import { getAlbum, listAlbums, unwrapAlbumDetails } from '@/services/api';
+import { getAlbum, listAlbums, listOwnedAlbums, unwrapAlbumDetails } from '@/services/api';
 import { isAlbumReadyOffline } from '@/services/downloadManager';
-import { isAlbumOwnedByDevice } from '@/services/albumOwnership';
 import { freeCatalogDetailsMap, readFreeCatalogCache, writeFreeCatalogCache, staleWhileRevalidate } from '@/services/freeCatalogCache';
 import { buildArtistsFromAlbums, mapTracksFromAlbum } from '@/services/freeCatalogSearch';
 import { resolveOfflinePlayback } from '@/services/offlineAccess';
@@ -75,13 +74,18 @@ export function DiscoverScreen() {
 
   const loadOwnershipStatus = useCallback(async (albums: PublicAlbumSummary[]) => {
     const paid = albums.filter((a) => !a.is_free && a.status === 'published');
-    const results = await Promise.allSettled(
-      paid.map(async (a) => ({ id: a.id, owned: await isAlbumOwnedByDevice(a.id) })),
-    );
     const map = new Map<string, boolean>();
-    results.forEach((r) => {
-      if (r.status === 'fulfilled') map.set(r.value.id, r.value.owned);
-    });
+    try {
+      // 🎯 Un SEUL appel API au lieu de N appels individuels
+      //    listOwnedAlbums() est déjà caché 60s dans isAlbumOwnedByDevice
+      const ownedAlbums = await listOwnedAlbums();
+      const ownedIds = new Set(ownedAlbums.map((a) => a.id));
+      paid.forEach((a) => map.set(a.id, ownedIds.has(a.id)));
+    } catch {
+      // Si listOwnedAlbums échoue, tout est considéré non possédé
+      // (aucun 403 en cascade)
+      paid.forEach((a) => map.set(a.id, false));
+    }
     setOwnedMap(map);
   }, []);
 

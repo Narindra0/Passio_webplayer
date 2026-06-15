@@ -50,11 +50,47 @@ export async function resolveAlbumDecryptionKey(albumId: string, hint?: string |
   return null;
 }
 
+let ownedAlbumsListCache: { albums: { id: string }[]; timestamp: number } | null = null;
+const OWNED_CACHE_TTL_MS = 60_000; // 1 minute
+
+/**
+ * Vérifie si l'appareil possède un album.
+ *
+ * ⚡ Optimisé pour éviter les 403 en cascade :
+ * 1. Vérifie le stockage local (instantané)
+ * 2. Appelle listOwnedAlbums() UNE SEULE FOIS (avec cache de 1 min)
+ * 3. En dernier recours, tente getAlbumDecryptionKey (pour confirmer les cas limites)
+ *
+ * Avant : N appels à /api/albums/:id/key → N erreurs 403 pour les albums non possédés
+ * Après : 1 appel à /api/albums/owned → 0 erreur 403
+ */
 export async function isAlbumOwnedByDevice(albumId: string): Promise<boolean> {
+  // 1. Vérification locale (instantanée, zéro réseau)
   const localKey = await readEncryptedValue(`passio_key_${albumId}`);
   if (localKey) return true;
-  try { await getAlbumDecryptionKey(albumId); return true; } catch { /* ignore */ }
-  try { const owned = await listOwnedAlbums(); return owned.some((a) => a.id === albumId); } catch { return false; }
+
+  // 2. Cache des albums possédés (un seul appel réseau, avec cache)
+  //    Si listOwnedAlbums réussit, on SE FIE à son résultat (pas de 403 supplémentaire)
+  try {
+    if (!ownedAlbumsListCache || Date.now() - ownedAlbumsListCache.timestamp > OWNED_CACHE_TTL_MS) {
+      const albums = await listOwnedAlbums();
+      ownedAlbumsListCache = { albums, timestamp: Date.now() };
+    }
+    return ownedAlbumsListCache.albums.some((a) => a.id === albumId);
+  } catch { /* cache failed, fallthrough */ }
+
+  // ❌ Plus de fallback vers getAlbumDecryptionKey ici — cela provoquait
+  //    systématiquement un 403 pour les albums que le device ne possède PAS.
+  //    Si listOwnedAlbums a échoué, on considère que l'album n'est pas possédé
+  //    (la lecture échouera avec un message clair le moment venu).
+  return false;
+}
+
+/**
+ * Vide le cache des albums possédés (à appeler après activation/désactivation).
+ */
+export function clearOwnedAlbumsCache() {
+  ownedAlbumsListCache = null;
 }
 
 export async function loadOwnedAlbumForPlayback(albumId: string): Promise<{

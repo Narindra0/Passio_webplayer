@@ -4,6 +4,7 @@
 
 import Hls from 'hls.js';
 import { getApiBaseUrl } from './api';
+import { getOrCreateDeviceId } from './device';
 import { secureAudioPlayer } from './secureAudioPlayer';
 import { mseSecurePlayer, MSESecurePlayer } from './mseSecurePlayer';
 
@@ -39,52 +40,45 @@ let securePrefetchTrackId: string | null = null;
 let securePrefetchController: AbortController | null = null;
 let securePrefetchPromise: Promise<boolean> | null = null;
 
+// ── Authentification appareil pour le streaming ──
+let streamDeviceId: string | null = null;
+let deviceIdInitPromise: Promise<string | null> | null = null;
+
+/**
+ * Initialise l'ID appareil pour les requêtes de streaming.
+ * Appelé automatiquement avant la première lecture.
+ */
+async function ensureStreamDeviceId(): Promise<string | null> {
+  if (streamDeviceId) return streamDeviceId;
+  if (deviceIdInitPromise) return deviceIdInitPromise;
+  deviceIdInitPromise = getOrCreateDeviceId().then(id => {
+    streamDeviceId = id;
+    // Propager aux deux lecteurs audio
+    mseSecurePlayer.setDeviceId(id);
+    secureAudioPlayer.setDeviceId(id);
+    console.log('[Audio] 🆔 Device ID initialisé pour le streaming:', id.slice(0, 8) + '…');
+    return id;
+  }).catch(err => {
+    console.warn('[Audio] Impossible de récupérer deviceId:', err);
+    return null;
+  });
+  return deviceIdInitPromise;
+}
+
+/**
+ * Reset l'ID appareil (utile si l'ID change).
+ */
+export function resetStreamDeviceId() {
+  streamDeviceId = null;
+  deviceIdInitPromise = null;
+}
+
 export function cancelCurrentPrefetch(skipTrackId?: string) {
   if (prefetchAbortController) {
     if (skipTrackId && prefetchingTrackId === skipTrackId) return;
     prefetchAbortController.abort();
     prefetchAbortController = null;
   }
-}
-
-/**
- * Préchage le blob audio de la piste suivante pour une transition sans attente.
- */
-export async function prefetchTrackBlob(url: string, trackId: string): Promise<boolean> {
-  cancelCurrentPrefetch();
-
-  if (prefetchEntry?.trackId === trackId) return true;
-
-  clearPrefetchCache();
-
-  const controller = new AbortController();
-  prefetchAbortController = controller;
-  prefetchingTrackId = trackId;
-
-  const promise = (async () => {
-    try {
-      const response = await fetch(url, { signal: controller.signal });
-      if (!response.ok) return false;
-      const blob = await response.blob();
-      const objectUrl = URL.createObjectURL(blob);
-      prefetchEntry = { trackId, objectUrl };
-      console.log('[Audio] Prefetched blob for track:', trackId);
-      return true;
-    } catch (err) {
-      if (err instanceof DOMException && err.name === 'AbortError') return false;
-      console.warn('[Audio] Prefetch failed for track:', trackId, err);
-      return false;
-    } finally {
-      if (prefetchAbortController === controller) {
-        prefetchAbortController = null;
-      }
-      prefetchingTrackId = null;
-      prefetchTrackPromise = null;
-    }
-  })();
-
-  prefetchTrackPromise = promise;
-  return promise;
 }
 
 /**
@@ -137,6 +131,28 @@ export async function prefetchSecureTrack(url: string, trackId: string): Promise
 
   clearSecurePrefetch();
 
+  // S'assurer que le device ID est initialisé avant le préchargement
+  await ensureStreamDeviceId();
+
+  // Probe préalable : vérifier que le endpoint répond avant de lancer le téléchargement
+  // (identique au probe que fait mseSecurePlayer.loadAndPlay pour la lecture normale)
+  try {
+    const probeHeaders: Record<string, string> = { 'X-Passio-Stream': 'secure' };
+    if (streamDeviceId) probeHeaders['x-passio-device-id'] = streamDeviceId;
+    const probeResp = await fetch(url, {
+      method: 'HEAD',
+      headers: probeHeaders,
+      credentials: 'include',
+    });
+    if (!probeResp.ok) {
+      console.warn('[Audio] ⚠️ Prefetch probe failed for', trackId, ':', probeResp.status, probeResp.statusText);
+      return false;
+    }
+  } catch (probeErr) {
+    console.warn('[Audio] ⚠️ Prefetch probe error for', trackId, ':', probeErr);
+    return false;
+  }
+
   const controller = new AbortController();
   securePrefetchController = controller;
 
@@ -151,7 +167,8 @@ export async function prefetchSecureTrack(url: string, trackId: string): Promise
       return true;
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return false;
-      console.warn('[Audio] Secure prefetch failed:', trackId, err);
+      // Log détaillé pour diagnostiquer les erreurs 404/403
+      console.warn('[Audio] ❌ Secure prefetch failed:', trackId, err);
       return false;
     } finally {
       if (securePrefetchController === controller) {
@@ -344,11 +361,42 @@ function setupAudioEvents(audio: HTMLAudioElement, onStatus: StatusCallback) {
   });
 }
 
+/**
+ * Tente de résoudre une URL de streaming avec keepalive: true.
+ * Vérifie la connectivité avant de lancer le streaming complet.
+ */
 function resolvePlaybackUrl(url: string): string {
   if (!url) return url;
   if (/^https?:\/\//i.test(url)) return url;
   return new URL(url, getApiBaseUrl()).toString();
 }
+
+/**
+ * Vérifie qu'une URL de streaming est accessible avant de lancer la lecture.
+ * Lance une erreur descriptive si le endpoint retourne 403 (clé invalide).
+ * Utilise keepalive: true pour éviter la renégociation HTTP/3 ↔ HTTP/2.
+ */
+export async function probeStreamUrl(url: string): Promise<void> {
+  const deviceId = await ensureStreamDeviceId();
+  const headers: Record<string, string> = { 'X-Passio-Stream': 'secure' };
+  if (deviceId) headers['x-passio-device-id'] = deviceId;
+  const resp = await fetch(url, {
+    method: 'HEAD',
+    headers,
+    keepalive: true,
+  });
+  if (resp.status === 403) {
+    throw new Error(
+      'Accès refusé (403) — la clé de streaming a expiré ou est invalide. ' +
+      "Rechargez l'album pour obtenir une nouvelle clé."
+    );
+  }
+  if (!resp.ok) {
+    throw new Error(`Stream inaccessible: HTTP ${resp.status}`);
+  }
+}
+
+
 
 export async function playTrack(
   trackId: string,
@@ -367,6 +415,46 @@ export async function playTrack(
     console.error('[Audio] Failed to play track:', err);
     return null;
   }
+}
+
+/**
+ * Télécharge un blob avec keepalive et retry pour le préchargement.
+ */
+export async function prefetchTrackBlob(url: string, trackId: string): Promise<boolean> {
+  cancelCurrentPrefetch();
+
+  if (prefetchEntry?.trackId === trackId) return true;
+
+  clearPrefetchCache();
+
+  const controller = new AbortController();
+  prefetchAbortController = controller;
+  prefetchingTrackId = trackId;
+
+  const promise = (async () => {
+    try {
+      const response = await fetch(url, { signal: controller.signal, keepalive: true });
+      if (!response.ok) return false;
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      prefetchEntry = { trackId, objectUrl };
+      console.log('[Audio] Prefetched blob for track:', trackId);
+      return true;
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return false;
+      console.warn('[Audio] Prefetch failed for track:', trackId, err);
+      return false;
+    } finally {
+      if (prefetchAbortController === controller) {
+        prefetchAbortController = null;
+      }
+      prefetchingTrackId = null;
+      prefetchTrackPromise = null;
+    }
+  })();
+
+  prefetchTrackPromise = promise;
+  return promise;
 }
 
 export async function playRemoteTrack(
@@ -488,6 +576,7 @@ export async function playSecureTrackMSE(
   proxyUrl: string,
   onStatusUpdate?: StatusCallback
 ): Promise<boolean> {
+  await ensureStreamDeviceId();
   await stopCurrentTrack();
   currentStatusCallback = onStatusUpdate || null;
 
@@ -561,6 +650,7 @@ export async function playSecureTrack(
   proxyUrl: string,
   onStatusUpdate?: StatusCallback
 ): Promise<boolean> {
+  await ensureStreamDeviceId();
   await stopCurrentTrack();
   currentStatusCallback = onStatusUpdate || null;
 
@@ -673,7 +763,7 @@ export async function prefetchRemoteTrack(
   // Web: just fetch and cache in memory/browser cache
   try {
     const resolved = resolvePlaybackUrl(url);
-    const resp = await fetch(resolved, { method: 'HEAD' });
+    const resp = await fetch(resolved, { method: 'HEAD', keepalive: true });
     return resp.ok;
   } catch {
     return false;

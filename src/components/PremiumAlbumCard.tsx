@@ -31,11 +31,27 @@ export function PremiumAlbumCard({ album, isOwned = false, onPress }: PremiumAlb
     window.open(getPurchaseAlbumUrl(album.id), '_blank', 'noopener,noreferrer');
   };
 
+  const handleCardClick = () => {
+    if (onPress) onPress();
+    else navigate(`/album/${album.id}`);
+  };
+
+  const handleCardKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      handleCardClick();
+    }
+  };
+
   return (
-    <button
-      onClick={onPress || (() => navigate(`/album/${album.id}`))}
+    <div
+      onClick={handleCardClick}
+      onKeyDown={handleCardKeyDown}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
+      role="button"
+      tabIndex={0}
+      aria-label={`${albumType} ${album.title} par ${artistName}${priceDisplay ? ` — ${priceDisplay}` : ''}`}
       className="premium-card group"
       style={{
         position: 'relative',
@@ -268,6 +284,6 @@ export function PremiumAlbumCard({ album, isOwned = false, onPress }: PremiumAlb
           )}
         </div>
       </div>
-    </button>
+    </div>
   );
 }

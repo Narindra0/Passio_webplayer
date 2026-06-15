@@ -10,10 +10,17 @@
  * Sécurité :
  * - Header X-Passio-Stream: secure sur chaque requête
  * - src du <audio> = blob URL (MediaSource), pas d'URL réseau exposée
+ *
+ * Résilience réseau :
+ * - keepalive: true via fetchWithRetry → évite la renégociation HTTP/3 ↔ HTTP/2
+ * - Exponential backoff sur les erreurs réseau (QUIC/HTTP3 timeouts)
  */
+
+import { fetchWithRetry } from './networkUtils';
 
 const STREAM_HEADER = 'X-Passio-Stream';
 const STREAM_HEADER_VALUE = 'secure';
+const DEVICE_HEADER = 'x-passio-device-id';
 const CHUNK_SIZE = 512 * 1024; // 512 KB
 const INITIAL_BATCH = 3;        // 3 chunks au départ (~1.5 Mo)
 const REFILL_BATCH = 2;         // 2 chunks quand le buffer est bas
@@ -34,8 +41,14 @@ export class MSESecurePlayer {
   private totalSize = 0;
   private nextOffset = 0;
   private downloadInProgress = false;
+  /** ID appareil pour l'authentification des requêtes de streaming */
+  public deviceId: string | null = null;
 
   public onEnded: (() => void) | null = null;
+
+  /** Promesse résolue après le premier batch initial (permet de détecter les erreurs QUIC) */
+  private resolveInitialBatch: (() => void) | null = null;
+  private rejectInitialBatch: ((err: Error) => void) | null = null;
 
   getAudioElement(): HTMLAudioElement | null {
     return this.audio;
@@ -46,8 +59,31 @@ export class MSESecurePlayer {
   }
 
   /**
+   * Configure l'ID appareil pour l'authentification.
+   */
+  setDeviceId(id: string | null) {
+    this.deviceId = id;
+  }
+
+  /**
+   * Retourne les en-têtes d'authentification pour les requêtes de streaming.
+   */
+  private getAuthHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {
+      [STREAM_HEADER]: STREAM_HEADER_VALUE,
+    };
+    if (this.deviceId) {
+      headers[DEVICE_HEADER] = this.deviceId;
+    }
+    return headers;
+  }
+
+  /**
    * Lance le streaming adaptatif MSE.
    * Retourne l'élément <audio> dès que le premier batch est chargé.
+   * 
+   * ⚡ Rejette la promesse si le téléchargement initial échoue (ex: erreur QUIC)
+   * → le fallback SecureAudioPlayer (téléchargement complet) sera déclenché.
    */
   async loadAndPlay(url: string): Promise<HTMLAudioElement> {
     this.stop();
@@ -60,10 +96,10 @@ export class MSESecurePlayer {
     this.abortController = controller;
 
     // ── 1. Probe : Content-Type + taille totale ──
-    const probeResponse = await fetch(url, {
+    const probeResponse = await fetchWithRetry(url, {
       headers: {
         'Range': 'bytes=0-1',
-        [STREAM_HEADER]: STREAM_HEADER_VALUE,
+        ...this.getAuthHeaders(),
       },
       signal: controller.signal,
     });
@@ -84,9 +120,9 @@ export class MSESecurePlayer {
     }
     if (!this.totalSize) {
       try {
-        const headResp = await fetch(url, {
+        const headResp = await fetchWithRetry(url, {
           method: 'HEAD',
-          headers: { [STREAM_HEADER]: STREAM_HEADER_VALUE },
+          headers: { ...this.getAuthHeaders() },
           signal: controller.signal,
         });
         this.totalSize = parseInt(headResp.headers.get('Content-Length') || '0', 10);
@@ -112,14 +148,45 @@ export class MSESecurePlayer {
     // ── 4. Créer le SourceBuffer ──
     this.sourceBuffer = this.mediaSource.addSourceBuffer(this.mimeType);
 
-    // ── 5. Lancer le streaming adaptatif en arrière-plan ──
+    // ── 5. Créer la promesse du batch initial ──
+    const initialBatchPromise = new Promise<void>((resolve, reject) => {
+      this.resolveInitialBatch = resolve;
+      this.rejectInitialBatch = reject;
+    });
+    // Timeout de sécurité : si le batch initial prend plus de 30s, on considère l'échec
+    const timeoutId = setTimeout(() => {
+      if (this.rejectInitialBatch) {
+        this.rejectInitialBatch(new Error('Timeout batch initial MSE (30s)'));
+      }
+    }, 30000);
+
+    // ── 6. Lancer le streaming adaptatif en arrière-plan ──
     this.streaming = true;
     this.startAdaptiveStreaming(url, controller).catch((err) => {
       if (err instanceof DOMException && err.name === 'AbortError') return;
       console.error('[MSESecurePlayer] Streaming error:', err);
     });
 
-    // ── 6. Brancher l'événement ended ──
+    // ⚡ Attendre UNIQUEMENT le premier batch, pas tout le streaming
+    // → si le batch initial échoue (QUIC, 403, réseau), la promesse loadAndPlay
+    //   est rejetée et le fallback SecureAudioPlayer peut être déclenché.
+    // → si le batch initial réussit, on retourne l'audio immédiatement
+    //   (le streaming continue en arrière-plan via startAdaptiveStreaming)
+    try {
+      await initialBatchPromise;
+      clearTimeout(timeoutId);
+    } catch (err) {
+      clearTimeout(timeoutId);
+      const error = err instanceof Error ? err : new Error(String(err));
+      console.warn('[MSE] ❌ Échec batch initial, déclenchement fallback:', error.message);
+      this.stop();
+      throw error;
+    } finally {
+      this.resolveInitialBatch = null;
+      this.rejectInitialBatch = null;
+    }
+
+    // ── 7. Brancher l'événement ended ──
     this.audio.addEventListener('ended', () => {
       if (this.onEnded) this.onEnded();
     }, { once: true });
@@ -134,6 +201,15 @@ export class MSESecurePlayer {
     try {
       // ── Phase 1 : Batch initial (3 chunks) pour démarrer la lecture ──
       await this.downloadBatch(url, INITIAL_BATCH, controller);
+
+      // ✅ Le batch initial a réussi → résoudre la promesse pour que loadAndPlay
+      // retourne l'audio. Le streaming continue en arrière-plan Phase 2.
+      // Si le batch a échoué (QUIC, 403), startAdaptiveStreaming est déjà dans le catch.
+      if (this.resolveInitialBatch) {
+        this.resolveInitialBatch();
+        this.resolveInitialBatch = null;
+        this.rejectInitialBatch = null;
+      }
 
       // ── Phase 2 : Monitoring adaptatif ──
       while (this.streaming && !controller.signal.aborted) {
@@ -161,7 +237,18 @@ export class MSESecurePlayer {
         }
       }
     } catch (err) {
-      if (err instanceof DOMException && err.name === 'AbortError') return;
+      // ⚡ AbortError = arrêt demandé (ex: changement de piste)
+      // Il faut impérativement résoudre/rejeter la promesse du batch initial
+      // pour que loadAndPlay ne reste pas bloqué indéfiniment.
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        if (this.rejectInitialBatch) {
+          this.rejectInitialBatch(new Error('Lecture annulée (changement de piste)'));
+        }
+        return;
+      }
+      if (this.rejectInitialBatch) {
+        this.rejectInitialBatch(err instanceof Error ? err : new Error(String(err)));
+      }
       console.error('[MSESecurePlayer] Adaptive streaming error:', err);
     }
 
@@ -174,6 +261,7 @@ export class MSESecurePlayer {
 
   /**
    * Télécharge `count` chunks séquentiellement.
+   * Avec retry automatique via fetchWithRetry pour les erreurs QUIC/HTTP3.
    */
   private async downloadBatch(url: string, count: number, controller: AbortController) {
     if (this.downloadInProgress) return;
@@ -185,12 +273,13 @@ export class MSESecurePlayer {
 
         const end = Math.min(this.nextOffset + CHUNK_SIZE - 1, this.totalSize - 1);
 
-        const response = await fetch(url, {
+        const response = await fetchWithRetry(url, {
           headers: {
             'Range': `bytes=${this.nextOffset}-${end}`,
-            [STREAM_HEADER]: STREAM_HEADER_VALUE,
+            ...this.getAuthHeaders(),
           },
           signal: controller.signal,
+          retries: 3,
         });
 
         if (!response.ok && response.status !== 206) {

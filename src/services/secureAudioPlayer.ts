@@ -1,4 +1,5 @@
 import { getTrackFromDB } from './indexedDB';
+import { fetchWithRetry, getRetryDelay } from './networkUtils';
 
 export class SecureAudioPlayer {
   private audioContext: AudioContext | null = null;
@@ -15,13 +16,36 @@ export class SecureAudioPlayer {
   private CHUNK_SIZE = 512 * 1024;
   private abortController: AbortController | null = null;
 
-  // En-tête anti-IDM pour les requêtes de streaming
+  // En-têtes pour les requêtes de streaming
   private readonly STREAM_HEADER = 'X-Passio-Stream';
   private readonly STREAM_HEADER_VALUE = 'secure';
+  private readonly DEVICE_HEADER = 'x-passio-device-id';
+  /** ID appareil pour l'authentification des requêtes de streaming */
+  public deviceId: string | null = null;
 
   constructor() {
     // We don't initialize AudioContext here to respect Safari's policies
     // AudioContext must be created/resumed after a user interaction
+  }
+
+  /**
+   * Configure l'ID appareil pour l'authentification.
+   */
+  setDeviceId(id: string | null) {
+    this.deviceId = id;
+  }
+
+  /**
+   * Retourne les en-têtes d'authentification pour les requêtes de streaming.
+   */
+  private getAuthHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {
+      [this.STREAM_HEADER]: this.STREAM_HEADER_VALUE,
+    };
+    if (this.deviceId) {
+      headers[this.DEVICE_HEADER] = this.deviceId;
+    }
+    return headers;
   }
 
   /**
@@ -41,12 +65,15 @@ export class SecureAudioPlayer {
    * Downloads the file in chunks using Range requests to evade IDM.
    * Si maxBytes est défini (ex: 1 Mo), on s'arrête après cette limite.
    * Utile pour le prefetch « 2 chunks » qui économise la bande passante.
+   *
+   * Utilise fetchWithRetry pour gérer les erreurs QUIC/HTTP3 avec
+   * keepalive: true et exponential backoff.
    */
   public async downloadInChunks(url: string, onProgress?: (progress: number) => void, maxBytes?: number): Promise<Uint8Array> {
     this.abortController = new AbortController();
     const signal = this.abortController.signal;
 
-    const MAX_RETRIES = 2;
+    const MAX_RETRIES = 3;
     let totalLength = 0;
     
     let currentByte = 0;
@@ -70,11 +97,14 @@ export class SecureAudioPlayer {
 
       while (retries <= MAX_RETRIES && !response) {
         try {
-          const headers: Record<string, string> = {
-            'Range': `bytes=${start}-${end}`,
-            [this.STREAM_HEADER]: this.STREAM_HEADER_VALUE,
-          };
-          const resp = await fetch(url, { headers, signal });
+          const resp = await fetchWithRetry(url, {
+            headers: {
+              'Range': `bytes=${start}-${end}`,
+              ...this.getAuthHeaders(),
+            },
+            signal,
+            retries: 0, // fetchWithRetry = keepalive uniquement, la boucle while gère les retries
+          });
 
           if (resp.ok || resp.status === 206) {
             response = resp;
@@ -97,7 +127,11 @@ export class SecureAudioPlayer {
               usedFullDownload = true;
               const fullResp = await fetch(url, {
                 signal,
-                headers: { [this.STREAM_HEADER]: this.STREAM_HEADER_VALUE },
+                headers: {
+                  [this.STREAM_HEADER]: this.STREAM_HEADER_VALUE,
+                  ...(this.deviceId ? { [this.DEVICE_HEADER]: this.deviceId } : {}),
+                },
+                keepalive: true,
               });
               if (!fullResp.ok) throw new Error(`HTTP ${fullResp.status}`);
               const fullBuffer = await fullResp.arrayBuffer();
@@ -106,8 +140,9 @@ export class SecureAudioPlayer {
             }
             throw err;
           }
-          // Attendre un peu avant de réessayer
-          await new Promise(r => setTimeout(r, 500 * retries));
+          // Attendre un peu avant de réessayer (exponential backoff)
+          const delay = getRetryDelay(retries - 1);
+          await new Promise(r => setTimeout(r, delay));
         }
       }
 
@@ -170,9 +205,14 @@ export class SecureAudioPlayer {
       uint8Array.byteLength + uint8Array.byteOffset
     ) as ArrayBuffer;
 
-    this.audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer);
+    // ⚡ Cloner l'ArrayBuffer AVANT decodeAudioData, car selon l'implémentation
+    //    du navigateur, decodeAudioData peut DÉTACHER (transférer) le buffer
+    //    → new Uint8Array(arrayBuffer) après decodeAudioData crashe avec
+    //      "Cannot perform Construct on a detached ArrayBuffer"
+    const safeClone = arrayBuffer.slice(0);
+    this.audioBuffer = await this.audioContext.decodeAudioData(safeClone);
 
-    // Nettoyer le buffer brut de la RAM
+    // Nettoyer le buffer brut de la RAM (le clone est détaché, le original est intact)
     uint8Array.fill(0);
     const clearView = new Uint8Array(arrayBuffer);
     clearView.fill(0);
@@ -219,7 +259,12 @@ export class SecureAudioPlayer {
       if (!this.audioContext) {
         throw new Error('SecureAudioPlayer: AudioContext not available');
       }
-      this.audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer);
+      // ⚡ Cloner l'ArrayBuffer AVANT decodeAudioData, car selon l'implémentation
+      //    du navigateur, decodeAudioData peut DÉTACHER (transférer) le buffer
+      //    → new Uint8Array(arrayBuffer) après decodeAudioData crashe avec
+      //      "Cannot perform Construct on a detached ArrayBuffer"
+      const safeClone = arrayBuffer.slice(0);
+      this.audioBuffer = await this.audioContext.decodeAudioData(safeClone);
 
       // === VIDER LA RAM : efface le fichier MP3 brut (ArrayBuffer) après décodage ===
       // Empêche l'extraction du MP3 par dump mémoire
@@ -228,7 +273,7 @@ export class SecureAudioPlayer {
       }
       fileData = undefined;
 
-      // Zéro-fill du ArrayBuffer passé à decodeAudioData
+      // Zéro-fill du ArrayBuffer original (le clone est détaché par decodeAudioData)
       const clearView = new Uint8Array(arrayBuffer);
       clearView.fill(0);
       arrayBuffer = null!;

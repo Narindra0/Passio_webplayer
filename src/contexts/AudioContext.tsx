@@ -174,9 +174,9 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     if (nextIdx >= 0 && nextIdx < q.length) {
       const nextTrack = q[nextIdx];
       if (nextTrack) {
-        const nextProxyUrl = `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(nextTrack.id)}/audio`;
+        const nextUrl = nextTrack.encrypted_audio_url ?? nextTrack.preview_url ?? `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(nextTrack.id)}/audio`;
         console.log('[AudioContext] ⚡ Préchargement sécurisé de la piste suivante:', nextTrack.title);
-        prefetchSecureTrack(nextProxyUrl, nextTrack.id);
+        prefetchSecureTrack(nextUrl, nextTrack.id);
       }
     }
   }
@@ -339,7 +339,7 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     index: number,
     albumData: PublicAlbumDetails,
     key: string | null,
-    retryCount: number = 0,
+    isRetry: boolean = false,
   ) {
     console.log('[AudioContext] startPlayback called with:', {
       trackId: track.id,
@@ -349,11 +349,11 @@ export function AudioProvider({ children }: { children: ReactNode }) {
       encryptedAudioUrl: track.encrypted_audio_url,
       albumId: albumData.id,
       albumTitle: albumData.title,
-      retryCount
+      isRetry
     });
     
     prefetchTriggeredRef.current = false;
-    if (retryCount === 0) setPlaybackError(null);
+    if (!isRetry) setPlaybackError(null);
     setIsLoading(true);
     setIsPlaying(false);
     pendingHlsSeekSecondsRef.current = null;
@@ -407,9 +407,9 @@ export function AudioProvider({ children }: { children: ReactNode }) {
           if (nextIdx >= 0 && nextIdx < q.length) {
             const nextTrack = q[nextIdx];
             if (nextTrack) {
-              const proxyUrl = `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(nextTrack.id)}/audio`;
+              const nextUrl = nextTrack.encrypted_audio_url ?? nextTrack.preview_url ?? `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(nextTrack.id)}/audio`;
               console.log('[AudioContext] Préchargement sécurisé (fin de piste):', nextTrack.title);
-              prefetchSecureTrack(proxyUrl, nextTrack.id);
+              prefetchSecureTrack(nextUrl, nextTrack.id);
             }
           }
         }
@@ -510,36 +510,45 @@ export function AudioProvider({ children }: { children: ReactNode }) {
       // depuis playRemoteTrack/playStream avec la bonne valeur (playing: true/false)
     } catch (err) {
       console.error('[AudioContext] Playback failed with error:', err);
-      // If playback fails and we haven't retried yet, refresh album data to get new signed URLs
-      if (retryCount < 1) {
+      // Une seule tentative de récupération : rafraîchir les données de l'album et réessayer
+      // Si isRetry est déjà true, on affiche directement l'erreur définitive
+      if (!isRetry) {
         try {
-          console.log('[AudioContext] Refreshing album data to get fresh signed URLs');
+          console.log('[AudioContext] 🔄 Rafraîchissement des données album pour nouvelles URLs signées');
           const freshAlbum = unwrapAlbumDetails(await getAlbum(albumData.id));
-          console.log('[AudioContext] Fresh album data received:', freshAlbum);
+          console.log('[AudioContext] Nouvelles données album recues:', freshAlbum);
           
-          // Update album and queue with fresh data
-          albumRef.current = freshAlbum;
-          setAlbum(freshAlbum);
+          // Find the same track in the refreshed data WITHOUT mutating current state
+          // → Si la piste n'est pas trouvée dans les données fraîches, on ne touche PAS
+          //   à l'album/queue actuel pour éviter de casser l'affichage du lecteur
           const sortedTracks = sortTracksByPosition(freshAlbum.tracks || []);
-          queueRef.current = sortedTracks;
-          setQueue(sortedTracks);
-          
-          // Find the same track in the refreshed data
           const freshTrack = sortedTracks.find(t => t.id === track.id);
-          console.log('[AudioContext] Fresh track found:', freshTrack);
+          console.log('[AudioContext] Piste fraiche trouvee:', freshTrack?.title);
           if (freshTrack) {
-            // Retry playback with fresh track data
-            await startPlayback(freshTrack, index, freshAlbum, key, retryCount + 1);
+            // Mettre à jour l'album et la queue SEULEMENT si on a trouvé la piste
+            albumRef.current = freshAlbum;
+            setAlbum(freshAlbum);
+            queueRef.current = sortedTracks;
+            setQueue(sortedTracks);
+            // Une seule tentative de rejeu, isRetry=true bloque toute récursion ultérieure
+            await startPlayback(freshTrack, index, freshAlbum, key, true);
             return;
+          } else {
+            // Piste introuvable dans les données rafraîchies → ne pas muter l'état
+            console.warn('[AudioContext] ⚠️ Piste non trouvée dans les données rafraîchies, skip retry');
           }
         } catch (refreshErr) {
-          console.error('[AudioContext] Failed to refresh album data:', refreshErr);
+          console.error('[AudioContext] Échec du rafraîchissement des données album:', refreshErr);
         }
       }
       
+      // Ne PAS réinitialiser l'état de la piste en cours :
+      // - currentIndex, album, queue restent intacts → le lecteur reste affiché
+      // - Seule l'erreur est transmise à l'UI pour affichage du message
       reportPlaybackError('AudioContext.playback', err);
-      setIsPlaying(false);
-      isPlayingRef.current = false;
+      // isPlaying est déjà false (set dans playAtIndex)
+      // Ne surtout PAS appeler setIsPlaying(false) ici — c'est redondant
+      // et ne surtout PAS réinitialiser currentIndex ou album
     } finally {
       setIsLoading(false);
     }
@@ -620,9 +629,9 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     // Solution C: Précharger la première piste dès le chargement de l'album
     if (sorted.length > 0) {
       const firstTrack = sorted[0];
-      const proxyUrl = `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(firstTrack.id)}/audio`;
+      const firstUrl = firstTrack.encrypted_audio_url ?? firstTrack.preview_url ?? `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(firstTrack.id)}/audio`;
       console.log('[AudioContext] Préchargement sécurisé de la première piste:', firstTrack.title);
-      prefetchSecureTrack(proxyUrl, firstTrack.id);
+      prefetchSecureTrack(firstUrl, firstTrack.id);
     }
 
     const libIdx = libraryRef.current.findIndex((a) => a.id === albumData.id);

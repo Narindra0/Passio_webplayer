@@ -25,6 +25,11 @@ async function request<T>(path: string, init: RequestInitWithJson = {}): Promise
     headers['Content-Type'] = 'application/json';
   }
 
+  // 🔒 Cloudflare reverse proxy : on utilise credentials: 'include' pour que le
+  //    navigateur envoie correctement les en-têtes personnalisés (x-passio-device-id)
+  //    en contexte cross-origin (pages.dev → api.passiio.shop)
+  //    On ne peut plus utiliser keepalive: true car il interfère avec les credentials
+  //    cross-origin sur les requêtes non-simples (en-tête personnalisé = OPTIONS preflight).
   const response = await fetch(`${API_URL}${path}`, {
     ...init,
     headers: {
@@ -32,14 +37,32 @@ async function request<T>(path: string, init: RequestInitWithJson = {}): Promise
       ...((init.headers as Record<string, string>) ?? {}),
     },
     body: typeof init.body === 'undefined' ? undefined : JSON.stringify(init.body),
+    credentials: 'include',
+    mode: 'cors',
   });
 
   const isJson = response.headers.get('Content-Type')?.includes('application/json');
   const data = isJson ? await response.json() : null;
 
   if (!response.ok) {
-    if (response.status === 403 && data && (data as any).album) {
-      return data as T;
+    // 🔍 Diagnostic 403 : album key rejeté
+    if (response.status === 403) {
+      const via = (response.headers.get('cf-ray') ? 'cloudflare' : 'direct');
+      console.warn('[API] 🔐 403 Forbidden:', {
+        path,
+        via,
+        deviceId: deviceId?.slice(0, 8) + '…',
+        statusCode: response.status,
+        statusText: response.statusText,
+        contentType: response.headers.get('Content-Type'),
+        albumData: data && typeof data === 'object' ? 'oui' : 'non',
+        hasAlbumKey: data && typeof data === 'object' && 'decryption_key' in (data as any),
+        responseBody: data && typeof data === 'object' ? JSON.stringify(data).slice(0, 300) : '(non-JSON)',
+      });
+      if (data && (data as any).album) {
+        return data as T;
+      }
+      throw new Error(`Accès refusé (403) — la clé de l'album semble invalide ou expirée. Path: ${path}`);
     }
     throw new Error(`Request failed with status ${response.status}`);
   }
