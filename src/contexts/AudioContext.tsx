@@ -174,9 +174,19 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     if (nextIdx >= 0 && nextIdx < q.length) {
       const nextTrack = q[nextIdx];
       if (nextTrack) {
+        // Check if we're in a free album!
+        const isFreeAlbum = albumRef.current?.is_free;
         const nextUrl = nextTrack.encrypted_audio_url ?? nextTrack.preview_url ?? `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(nextTrack.id)}/audio`;
-        console.log('[AudioContext] ⚡ Préchargement sécurisé de la piste suivante:', nextTrack.title);
-        prefetchSecureTrack(nextUrl, nextTrack.id);
+        
+        if (isFreeAlbum) {
+          // 🚀 For FREE tracks: just use a simple fetch to prime the browser cache
+          console.log('[AudioContext] ⚡ Préchargement simple pour piste gratuite suivante:', nextTrack.title);
+          fetch(nextUrl, { method: 'HEAD', mode: 'no-cors' }).catch(() => {});
+        } else {
+          // For premium tracks: use secure prefetch
+          console.log('[AudioContext] ⚡ Préchargement sécurisé pour piste premium suivante:', nextTrack.title);
+          prefetchSecureTrack(nextUrl, nextTrack.id);
+        }
       }
     }
   }
@@ -242,6 +252,12 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     const isFreeRelease = Boolean(albumData.is_free);
     const effectiveKey = await resolveKeyForAlbum(albumData, key);
     const ownedPaid = !isFreeRelease && (libraryRef.current.some((entry) => entry.id === albumData.id) || await isAlbumOwnedByDevice(albumData.id));
+
+    // 🚀 For FREE tracks: always use stream mode if we have a URL!
+    if (isFreeRelease) {
+      if (track.encrypted_audio_url || track.preview_url || track.stream_url) return 'stream';
+      if (albumData.stream_status === 'ready' && albumData.stream_url) return 'hls';
+    }
 
     if (!isFreeRelease && (effectiveKey || ownedPaid)) return 'remote';
     if (effectiveKey && (track.encrypted_audio_url || track.preview_url)) return 'remote';
@@ -407,9 +423,16 @@ export function AudioProvider({ children }: { children: ReactNode }) {
           if (nextIdx >= 0 && nextIdx < q.length) {
             const nextTrack = q[nextIdx];
             if (nextTrack) {
+              const isFreeAlbum = albumRef.current?.is_free;
               const nextUrl = nextTrack.encrypted_audio_url ?? nextTrack.preview_url ?? `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(nextTrack.id)}/audio`;
-              console.log('[AudioContext] Préchargement sécurisé (fin de piste):', nextTrack.title);
-              prefetchSecureTrack(nextUrl, nextTrack.id);
+              
+              if (isFreeAlbum) {
+                console.log('[AudioContext] Préchargement simple pour piste gratuite suivante (fin de piste):', nextTrack.title);
+                fetch(nextUrl, { method: 'HEAD', mode: 'no-cors' }).catch(() => {});
+              } else {
+                console.log('[AudioContext] Préchargement sécurisé pour piste premium suivante (fin de piste):', nextTrack.title);
+                prefetchSecureTrack(nextUrl, nextTrack.id);
+              }
             }
           }
         }
@@ -476,14 +499,14 @@ export function AudioProvider({ children }: { children: ReactNode }) {
           throw new Error('Impossible de lire ce titre.');
         }
       } else {
-        // For non-remote modes, try direct URLs first
-        const url = track.preview_url ?? track.stream_url ?? track.encrypted_audio_url;
-        console.log('[AudioContext] [1/2] Trying local mode URL:', url);
+        // For non-remote modes, try direct URLs first (prioritize encrypted_audio_url which is our Cloudflare CDN!)
+        const url = track.encrypted_audio_url ?? track.preview_url ?? track.stream_url;
+        console.log('[AudioContext] [1/2] Trying stream mode URL:', url);
         if (!url) throw new Error("L'aperçu de cette piste n'est pas disponible.");
         try {
           const streamPlayer = await playStream(url, handleStatus);
           if (streamPlayer) {
-            console.log('[AudioContext] ✅ Playback started with direct URL');
+            console.log('[AudioContext] ✅ Playback started with direct Cloudflare URL');
             currentIndexRef.current = index;
             setCurrentIndex(index);
             // Solution C: Préchargement immédiat de la piste suivante
@@ -491,7 +514,7 @@ export function AudioProvider({ children }: { children: ReactNode }) {
             return;
           }
         } catch (err) {
-          console.warn('[AudioContext] ❌ Direct URL failed for non-remote mode:', err);
+          console.warn('[AudioContext] ❌ Direct Cloudflare URL failed for stream mode:', err);
         }
         
         // Fallback to proxy if direct fails
@@ -630,8 +653,15 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     if (sorted.length > 0) {
       const firstTrack = sorted[0];
       const firstUrl = firstTrack.encrypted_audio_url ?? firstTrack.preview_url ?? `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(firstTrack.id)}/audio`;
-      console.log('[AudioContext] Préchargement sécurisé de la première piste:', firstTrack.title);
-      prefetchSecureTrack(firstUrl, firstTrack.id);
+      const isFreeAlbum = albumData.is_free;
+      
+      if (isFreeAlbum) {
+        console.log('[AudioContext] Préchargement simple pour première piste gratuite:', firstTrack.title);
+        fetch(firstUrl, { method: 'HEAD', mode: 'no-cors' }).catch(() => {});
+      } else {
+        console.log('[AudioContext] Préchargement sécurisé pour première piste premium:', firstTrack.title);
+        prefetchSecureTrack(firstUrl, firstTrack.id);
+      }
     }
 
     const libIdx = libraryRef.current.findIndex((a) => a.id === albumData.id);

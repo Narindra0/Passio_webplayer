@@ -46,11 +46,11 @@ if (import.meta.env.VITE_LOCAL !== 'active' && !import.meta.env.DEV) {
 }
 
 // Registre le Service Worker généré par vite-plugin-pwa
-if ('serviceWorker' in navigator) {
-  import('virtual:pwa-register').then(({ registerSW }) => {
-    registerSW({ immediate: true });
-  });
-}
+// if ('serviceWorker' in navigator) {
+//   import('virtual:pwa-register').then(({ registerSW }) => {
+//     registerSW({ immediate: true });
+//   });
+// }
 
 const queryClient = new QueryClient({
   defaultOptions: {
