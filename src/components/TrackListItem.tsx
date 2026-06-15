@@ -1,6 +1,8 @@
 import { Play, Pause, CloudCheck } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useCachedImage } from '@/hooks/useCachedImage';
+import { getApiBaseUrl } from '@/services/api';
+import { prefetchTrackBlob } from '@/services/audio';
 import { isTrackInDB } from '../services/indexedDB';
 import { FeatArtistLinks } from './FeatArtistLinks';
 import { hasFeatArtists, parseFeatArtists } from '@/utils/featArtists';
@@ -79,6 +81,9 @@ export function TrackListItem({ track, onPress, isPlaying = false }: TrackListIt
         color: 'inherit',
       }}
       onMouseEnter={(e) => {
+        // Solution C: Préchargement de la piste au survol pour une lecture instantanée
+        const proxyUrl = `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(track.id)}/audio`;
+        prefetchTrackBlob(proxyUrl, track.id);
         if (!isPlaying) e.currentTarget.style.background = 'var(--color-surface-hover)';
         else e.currentTarget.style.background = 'var(--color-accent-soft)';
       }}

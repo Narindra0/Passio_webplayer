@@ -5,6 +5,7 @@
 import Hls from 'hls.js';
 import { getApiBaseUrl } from './api';
 import { secureAudioPlayer } from './secureAudioPlayer';
+import { mseSecurePlayer, MSESecurePlayer } from './mseSecurePlayer';
 
 type StatusCallback = (status: {
   currentTime?: number;
@@ -29,9 +30,18 @@ interface PrefetchEntry {
   objectUrl: string;
 }
 let prefetchEntry: PrefetchEntry | null = null;
+let prefetchingTrackId: string | null = null;
+let prefetchTrackPromise: Promise<boolean> | null = null;
 
-export function cancelCurrentPrefetch() {
+// Cache de préchargement sécurisé (Uint8Array en RAM — pas de blob URL exposé)
+let securePrefetchBuffer: Uint8Array | null = null;
+let securePrefetchTrackId: string | null = null;
+let securePrefetchController: AbortController | null = null;
+let securePrefetchPromise: Promise<boolean> | null = null;
+
+export function cancelCurrentPrefetch(skipTrackId?: string) {
   if (prefetchAbortController) {
+    if (skipTrackId && prefetchingTrackId === skipTrackId) return;
     prefetchAbortController.abort();
     prefetchAbortController = null;
   }
@@ -49,24 +59,32 @@ export async function prefetchTrackBlob(url: string, trackId: string): Promise<b
 
   const controller = new AbortController();
   prefetchAbortController = controller;
+  prefetchingTrackId = trackId;
 
-  try {
-    const response = await fetch(url, { signal: controller.signal });
-    if (!response.ok) return false;
-    const blob = await response.blob();
-    const objectUrl = URL.createObjectURL(blob);
-    prefetchEntry = { trackId, objectUrl };
-    console.log('[Audio] Prefetched blob for track:', trackId);
-    return true;
-  } catch (err) {
-    if (err instanceof DOMException && err.name === 'AbortError') return false;
-    console.warn('[Audio] Prefetch failed for track:', trackId, err);
-    return false;
-  } finally {
-    if (prefetchAbortController === controller) {
-      prefetchAbortController = null;
+  const promise = (async () => {
+    try {
+      const response = await fetch(url, { signal: controller.signal });
+      if (!response.ok) return false;
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      prefetchEntry = { trackId, objectUrl };
+      console.log('[Audio] Prefetched blob for track:', trackId);
+      return true;
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return false;
+      console.warn('[Audio] Prefetch failed for track:', trackId, err);
+      return false;
+    } finally {
+      if (prefetchAbortController === controller) {
+        prefetchAbortController = null;
+      }
+      prefetchingTrackId = null;
+      prefetchTrackPromise = null;
     }
-  }
+  })();
+
+  prefetchTrackPromise = promise;
+  return promise;
 }
 
 /**
@@ -87,6 +105,78 @@ export function clearPrefetchCache() {
     URL.revokeObjectURL(prefetchEntry.objectUrl);
     prefetchEntry = null;
   }
+}
+
+// ── Secure prefetch (Uint8Array en RAM, pas de blob URL) ──
+
+/** Nettoyer le buffer de préchargement sécurisé en RAM. */
+export function clearSecurePrefetch() {
+  if (securePrefetchBuffer) {
+    securePrefetchBuffer.fill(0);
+    securePrefetchBuffer = null;
+  }
+  securePrefetchTrackId = null;
+}
+
+/** Limite du prefetch en octets (2 chunks × 512 Ko). */
+const PREFETCH_MAX_BYTES = 2 * 512 * 1024;
+
+/**
+ * Précharge seulement les 2 premiers chunks du fichier audio.
+ * Suffisant pour un démarrage instantané, sans gaspiller la bande passante.
+ * Économie : -80% vs téléchargement complet (1 Mo au lieu de 5 Mo).
+ */
+export async function prefetchSecureTrack(url: string, trackId: string): Promise<boolean> {
+  // Annuler un éventuel préchargement sécurisé en cours
+  if (securePrefetchController) {
+    securePrefetchController.abort();
+    securePrefetchController = null;
+  }
+
+  if (securePrefetchTrackId === trackId && securePrefetchBuffer) return true;
+
+  clearSecurePrefetch();
+
+  const controller = new AbortController();
+  securePrefetchController = controller;
+
+  const promise = (async () => {
+    try {
+      // ⚡ Limité à PREFETCH_MAX_BYTES (2 chunks) pour économiser la bande passante
+      const buffer = await secureAudioPlayer.downloadInChunks(url, undefined, PREFETCH_MAX_BYTES);
+      if (controller.signal.aborted) return false;
+      securePrefetchBuffer = buffer;
+      securePrefetchTrackId = trackId;
+      console.log('[Audio] ⚡ Secure prefetch (2 chunks) for track:', trackId, 'size:', buffer.length);
+      return true;
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return false;
+      console.warn('[Audio] Secure prefetch failed:', trackId, err);
+      return false;
+    } finally {
+      if (securePrefetchController === controller) {
+        securePrefetchController = null;
+      }
+      securePrefetchPromise = null;
+    }
+  })();
+
+  securePrefetchPromise = promise;
+  return promise;
+}
+
+/**
+ * Consomme le buffer préchargé pour une piste donnée.
+ * Nettoie la RAM après consommation.
+ */
+export function consumeSecurePrefetch(trackId: string): Uint8Array | null {
+  if (securePrefetchTrackId === trackId && securePrefetchBuffer) {
+    const buffer = securePrefetchBuffer;
+    securePrefetchBuffer = null;
+    securePrefetchTrackId = null;
+    return buffer;
+  }
+  return null;
 }
 
 function startProgressInterval(callback: StatusCallback) {
@@ -128,6 +218,10 @@ function cleanupCurrentBlobUrl() {
 
 export async function stopCurrentTrack(): Promise<void> {
   cleanupCurrentBlobUrl();
+  clearSecurePrefetch(); // Nettoyer le buffer RAM sécurisé
+
+  // Arrêter le MSE player si actif
+  mseSecurePlayer.stop();
 
   if (isSecureAudio) {
     secureAudioPlayer.stop();
@@ -297,27 +391,6 @@ export async function playRemoteTrack(
     
     console.log('[Audio] Loading audio from:', audioUrl);
     
-    // First, let's try to fetch the URL to check what we're getting
-    try {
-      console.log('[Audio] Testing URL with fetch:', audioUrl);
-      const testResponse = await fetch(audioUrl, { 
-        method: 'GET',
-        headers: {
-          'Range': 'bytes=0-100' // Just fetch the first 100 bytes to test
-        }
-      });
-      console.log('[Audio] Test response:', {
-        ok: testResponse.ok,
-        status: testResponse.status,
-        statusText: testResponse.statusText,
-        contentType: testResponse.headers.get('content-type'),
-        contentLength: testResponse.headers.get('content-length'),
-        acceptRanges: testResponse.headers.get('accept-ranges')
-      });
-    } catch (fetchErr) {
-      console.warn('[Audio] Test fetch failed:', fetchErr);
-    }
-    
     // Wait for canplay or error with timeout
     await new Promise<void>((resolve, reject) => {
       let timeoutId: number | null = null;
@@ -401,10 +474,165 @@ export async function playRemoteTrack(
 }
 
 /**
- * Nouvelle fonction optimisée pour le Web Player.
- * - Ne nécessite aucune modification du backend.
- * - Titres gratuits : lecture directe depuis B2 (HTTP 206 natif, pas de proxy).
- * - Titres premium : téléchargement complet via le proxy, puis création d'un Blob URL pour permettre au lecteur web de faire des "Range Requests" locaux et éviter l'erreur de format.
+ * Lecture via MSE (Media Source Extensions) — streaming progressif sécurisé.
+ *
+ * 1. Crée un MediaSource + <audio> avec blob URL (pas d'URL réseau exposée)
+ * 2. Télécharge les chunks en séquence via Range requests + header X-Passio-Stream
+ * 3. Les append au SourceBuffer au fur et à mesure
+ * 4. Le navigateur joue dès les premières secondes bufferisées (~1-2s)
+ *
+ * IDM ne peut pas intercepter : le src <audio> est un blob: URL (MediaSource),
+ * les données transitent en JS via appendBuffer().
+ */
+export async function playSecureTrackMSE(
+  proxyUrl: string,
+  onStatusUpdate?: StatusCallback
+): Promise<boolean> {
+  await stopCurrentTrack();
+  currentStatusCallback = onStatusUpdate || null;
+
+  try {
+    // 1. Lancer le streaming MSE (télécharge + append progressif)
+    console.log('[MSE] 🎯 Streaming MSE sécurisé:', proxyUrl);
+    const audio = await mseSecurePlayer.loadAndPlay(proxyUrl);
+
+    // 2. Définir currentAudio pour que togglePlayPause / seekTo / progress marchent
+    currentAudio = audio;
+    isSecureAudio = false;
+
+    // 3. Brancher les événements de progression / état
+    if (onStatusUpdate) {
+      setupAudioEvents(audio, onStatusUpdate);
+    }
+
+    // 4. Brancher la fin de piste (via ended sur <audio>)
+    // setupAudioEvents gère déjà 'ended' → currentTrackEndHandler
+
+    // 5. Brancher onEnded sur le player MSE pour les cas où l'ended du <audio> ne suffit pas
+    mseSecurePlayer.onEnded = () => {
+      if (currentTrackEndHandler) {
+        currentTrackEndHandler();
+      }
+    };
+
+    // 6. Démarrer la lecture dès que le premier chunk est bufferisé
+    // Le MediaSource commence à bufferiser, le navigateur joue dès que possible
+    try {
+      await audio.play();
+    } catch (playErr) {
+      // Si autoplay bloqué, on attend une interaction utilisateur
+      console.warn('[MSE] ⚠️ autoplay may be blocked, retrying...');
+      await audio.play();
+    }
+
+    // 7. Signaler que la lecture est lancée
+    if (onStatusUpdate) {
+      onStatusUpdate({ playing: true });
+    }
+    startProgressInterval(onStatusUpdate || (() => {}));
+
+    console.log('[MSE] ✅ Streaming MSE démarré !');
+    return true;
+
+  } catch (err) {
+    // Nettoyer le player MSE en cas d'échec
+    mseSecurePlayer.stop();
+    if (currentAudio) {
+      currentAudio.pause();
+      currentAudio.src = '';
+      currentAudio = null;
+    }
+    console.warn('[MSE] ❌ Échec, fallback nécessaire:', err);
+    throw err;
+  }
+}
+
+/**
+ * Lecture sécurisée via SecureAudioPlayer (Web Audio API).
+ * 
+ * 1. Télécharge le fichier en chunks (Range requests, header X-Passio-Stream)
+ * 2. Décode en mémoire via AudioContext.decodeAudioData()
+ * 3. Joue via AudioBufferSourceNode (aucun élément <audio> dans le DOM)
+ * 
+ * Protège contre : IDM, téléchargement direct, dump mémoire.
+ */
+export async function playSecureTrack(
+  trackId: string,
+  proxyUrl: string,
+  onStatusUpdate?: StatusCallback
+): Promise<boolean> {
+  await stopCurrentTrack();
+  currentStatusCallback = onStatusUpdate || null;
+
+  try {
+    // 1. Vérifier le secure prefetch
+    const prefetched = consumeSecurePrefetch(trackId);
+
+    if (prefetched) {
+      console.log('[SecureAudio] ⚡ Utilisation du buffer préchargé pour:', trackId);
+      try {
+        await secureAudioPlayer.loadFromBuffer(prefetched);
+      } catch {
+        // Buffer partiel (prefetch 2 chunks seulement) → full download
+        console.warn('[SecureAudio] ⚠️ Buffer partiel, fallback download complet');
+        await secureAudioPlayer.loadTrack(proxyUrl, (progress) => {
+          if (onStatusUpdate) {
+            onStatusUpdate({ playbackState: progress < 100 ? 'loading' : 'loaded' });
+          }
+        }, trackId);
+      }
+    } else {
+      // 2. Téléchargement chunké + décodage
+      console.log('[SecureAudio] 🔒 Téléchargement sécurisé (chunks + Range):', proxyUrl);
+      await secureAudioPlayer.loadTrack(proxyUrl, (progress) => {
+        if (onStatusUpdate) {
+          onStatusUpdate({ playbackState: progress < 100 ? 'loading' : 'loaded' });
+        }
+      }, trackId);
+    }
+
+    // 3. Signaler que le fichier est chargé
+    if (onStatusUpdate) {
+      onStatusUpdate({
+        isLoaded: true,
+        currentTime: 0,
+        duration: secureAudioPlayer.getDuration(),
+      });
+    }
+
+    // 4. Brancher l'événement de fin de piste
+    secureAudioPlayer.onEnded = () => {
+      if (currentTrackEndHandler) {
+        currentTrackEndHandler();
+      }
+    };
+
+    // 5. Démarrer la lecture
+    isSecureAudio = true;
+    const started = await secureAudioPlayer.play();
+
+    if (started) {
+      console.log('[SecureAudio] ✅ Lecture démarrée via Web Audio API');
+      if (onStatusUpdate) onStatusUpdate({ playing: true });
+      startProgressInterval(onStatusUpdate || (() => {}));
+      return true;
+    }
+
+    throw new Error('Échec du démarrage de la lecture AudioContext');
+  } catch (err) {
+    isSecureAudio = false;
+    console.error('[SecureAudio] ❌ Échec:', err);
+    throw err;
+  }
+}
+
+/**
+ * Point d'entrée principal pour la lecture des pistes premium.
+ * 
+ * Stratégie (par ordre de préférence) :
+ * 1. ⚡ Secure prefetch disponible → AudioContext direct (instantané)
+ * 2. 🎯 MSE supporté → streaming progressif (1-2s) sans exposer d'URL
+ * 3. 🔒 Web Audio API → téléchargement complet puis lecture (3-6s)
  */
 export async function playWebOptimizedTrack(
   trackId: string,
@@ -412,106 +640,29 @@ export async function playWebOptimizedTrack(
   proxyUrl: string,
   isPremium: boolean,
   onStatusUpdate?: StatusCallback
-): Promise<HTMLAudioElement | any> {
-  // Vérifier le cache de préchargement AVANT d'annuler quoi que ce soit
-  const cachedUrl = consumePrefetchedTrack(trackId);
-  if (!cachedUrl) {
-    clearPrefetchCache();
+): Promise<boolean> {
+  // ⏳ Si un secure prefetch est en cours pour cette même piste, on attend
+  if (securePrefetchTrackId === trackId && securePrefetchPromise) {
+    console.log('[WebAudio] ⏳ Attente du secure prefetch pour:', trackId);
+    await securePrefetchPromise;
   }
 
-  cancelCurrentPrefetch();
-  await stopCurrentTrack();
-
-  const playWithHtmlAudio = async (audioUrl: string) => {
-    const audio = new Audio();
-    currentAudio = audio;
-    isSecureAudio = false;
-    currentStatusCallback = onStatusUpdate || null;
-    if (onStatusUpdate) setupAudioEvents(audio, onStatusUpdate);
-    audio.crossOrigin = 'anonymous';
-    audio.preload = 'auto';
-    
-    return new Promise<HTMLAudioElement>((resolve, reject) => {
-      let timeoutId: number | null = null;
-      
-      const onCanPlay = () => {
-        if (timeoutId) clearTimeout(timeoutId);
-        resolve(audio);
-      };
-      
-      const onError = (e: Event) => {
-        if (timeoutId) clearTimeout(timeoutId);
-        reject(new Error(audio.error?.message || 'Erreur lors du chargement du fichier audio.'));
-      };
-      
-      timeoutId = setTimeout(() => {
-        audio.removeEventListener('canplay', onCanPlay);
-        audio.removeEventListener('error', onError);
-        reject(new Error('Audio load timeout'));
-      }, 30000);
-      
-      audio.addEventListener('canplay', onCanPlay, { once: true });
-      audio.addEventListener('error', onError, { once: true });
-      audio.src = audioUrl;
-    }).then(async (audio) => {
-      await audio.play();
-      return audio;
-    });
-  };
-
-  try {
-    // Utiliser le blob préchargé si disponible (transition sans attente)
-    if (cachedUrl) {
-      console.log('[WebAudio] Utilisation du blob préchargé pour la piste:', trackId);
-      currentBlobUrl = cachedUrl;
-      const audio = await playWithHtmlAudio(cachedUrl);
-      // Nettoyer le blob quand la piste se termine naturellement
-      audio.addEventListener('ended', () => {
-        URL.revokeObjectURL(cachedUrl);
-        if (currentBlobUrl === cachedUrl) currentBlobUrl = null;
-      }, { once: true });
-      return audio;
+  // 🎯 Essayer MSE (streaming progressif sécurisé) si supporté
+  // (playSecureTrack gère déjà le secure prefetch en interne, pas besoin de le vérifier ici)
+  if (MSESecurePlayer.isSupported()) {
+    try {
+      console.log('[WebAudio] 🎯 Tentative MSE streaming...');
+      return await playSecureTrackMSE(proxyUrl, onStatusUpdate);
+    } catch (mseErr) {
+      console.warn('[WebAudio] ❌ MSE échoué, fallback AudioContext:', mseErr);
+      // Nettoyer l'état après l'échec MSE
+      await stopCurrentTrack();
     }
-
-    // Lecture via le proxy backend uniquement.
-    console.log('[WebAudio] Utilisation du proxy backend :', proxyUrl);
-    
-    const response = await fetch(proxyUrl);
-    if (!response.ok) {
-      if (response.status === 404 || response.status === 500) {
-        throw new Error('Fichier audio introuvable sur le serveur (Erreur 404/500).');
-      }
-      throw new Error(`Erreur proxy: HTTP ${response.status}`);
-    }
-
-    // Vérifier que le Content-Type est bien un type audio
-    const contentType = response.headers.get('content-type') || '';
-    if (contentType && !contentType.startsWith('audio/') && !contentType.startsWith('application/octet-stream') && !contentType.includes('binary') && !contentType.includes('mp3')) {
-      console.warn('[WebAudio] Content-Type inattendu du proxy:', contentType);
-    }
-
-    const blob = await response.blob();
-    const objectUrl = URL.createObjectURL(blob);
-    currentBlobUrl = objectUrl;
-    console.log('[WebAudio] Blob URL créé avec succès, lancement de la lecture.');
-
-    const audio = await playWithHtmlAudio(objectUrl);
-
-    // On libère la mémoire quand la piste se termine naturellement
-    const cleanup = () => {
-      URL.revokeObjectURL(objectUrl);
-      if (currentBlobUrl === objectUrl) currentBlobUrl = null;
-    };
-    audio.addEventListener('ended', cleanup, { once: true });
-
-    return audio;
-
-  } catch (err) {
-    // Nettoyer le Blob URL en cas d'erreur (play échoué, fetch échoué, etc.)
-    cleanupCurrentBlobUrl();
-    console.error('[WebAudio] Echec total de lecture optimisée:', err);
-    throw err;
   }
+
+  // 🔒 Fallback : Web Audio API (téléchargement complet puis lecture)
+  console.log('[WebAudio] 🔒 Fallback: téléchargement complet via AudioContext');
+  return playSecureTrack(trackId, proxyUrl, onStatusUpdate);
 }
 
 export async function prefetchRemoteTrack(

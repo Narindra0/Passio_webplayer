@@ -23,11 +23,7 @@ export function PremiumAlbumCard({ album, isOwned = false, onPress }: PremiumAlb
 
   const priceDisplay = useMemo(() => {
     if (album.price_ariary <= 0) return null;
-    const value = album.price_ariary;
-    if (value >= 1000) {
-      return `${(value / 1000).toFixed(value % 1000 === 0 ? 0 : 1)} ${value >= 10000 ? 'K' : 'k'} Ar`;
-    }
-    return `${value.toLocaleString()} Ar`;
+    return `${album.price_ariary.toLocaleString()} Ar`;
   }, [album.price_ariary]);
 
   const handleBuy = (e: React.MouseEvent) => {
@@ -54,7 +50,8 @@ export function PremiumAlbumCard({ album, isOwned = false, onPress }: PremiumAlb
         transition: 'all var(--transition-normal) ease',
         transform: isHovered ? 'translateY(-4px)' : 'translateY(0)',
         boxShadow: isHovered ? 'var(--shadow-lg)' : 'var(--shadow-sm)',
-        minHeight: 280,
+        minHeight: 240,
+        padding: 0,
       }}
     >
       {/* Subtle gradient overlay — replaces old blurred image (saves bandwidth) */}
@@ -124,7 +121,7 @@ export function PremiumAlbumCard({ album, isOwned = false, onPress }: PremiumAlb
           display: 'flex',
           flexDirection: 'column',
           justifyContent: 'flex-end',
-          padding: 20,
+          padding: 14,
         }}
       >
         {/* Cover art thumbnail */}
@@ -132,15 +129,15 @@ export function PremiumAlbumCard({ album, isOwned = false, onPress }: PremiumAlb
           style={{
             width: '100%',
             aspectRatio: '1',
-            maxHeight: 160,
-            borderRadius: 'var(--radius-md)',
+            maxHeight: 150,
+            borderRadius: 'var(--radius-sm)',
             overflow: 'hidden',
-            boxShadow: 'var(--shadow-lg)',
-            marginBottom: 16,
+            boxShadow: isHovered ? '0 4px 16px rgba(0,0,0,0.4)' : 'var(--shadow-md)',
+            marginBottom: 10,
             alignSelf: 'center',
-            maxWidth: '70%',
-            transition: 'transform var(--transition-normal) ease',
-            transform: isHovered ? 'scale(1.03)' : 'scale(1)',
+            maxWidth: '80%',
+            transition: 'all var(--transition-fast) ease',
+            transform: isHovered ? 'scale(1.04)' : 'scale(1)',
           }}
         >
           {album.cover_url ? (
@@ -162,25 +159,13 @@ export function PremiumAlbumCard({ album, isOwned = false, onPress }: PremiumAlb
           )}
         </div>
 
-        {/* Type and album info */}
-        <div style={{ marginBottom: 8 }}>
-          <span style={{
-            color: 'rgba(255,255,255,0.5)',
-            fontSize: 10,
-            fontWeight: 700,
-            textTransform: 'uppercase',
-            letterSpacing: '1px',
-          }}>
-            {albumType}
-          </span>
-        </div>
-
+        {/* Album title */}
         <h3 style={{
           color: '#fff',
-          fontSize: 16,
+          fontSize: 14,
           fontWeight: 700,
-          lineHeight: '20px',
-          margin: '0 0 2px',
+          lineHeight: '18px',
+          margin: '0 0 1px',
           overflow: 'hidden',
           textOverflow: 'ellipsis',
           whiteSpace: 'nowrap',
@@ -188,17 +173,28 @@ export function PremiumAlbumCard({ album, isOwned = false, onPress }: PremiumAlb
           {album.title}
         </h3>
 
-        <p style={{
-          color: 'rgba(255,255,255,0.6)',
-          fontSize: 13,
-          fontWeight: 500,
-          margin: '0 0 14px',
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-        }}>
-          {artistName}
-        </p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 8 }}>
+          <span style={{
+            color: 'rgba(255,255,255,0.35)',
+            fontSize: 9,
+            fontWeight: 700,
+            textTransform: 'uppercase',
+            letterSpacing: '0.6px',
+          }}>
+            {albumType}
+          </span>
+          <span style={{ color: 'rgba(255,255,255,0.12)', fontSize: 9 }}>·</span>
+          <span style={{
+            color: 'rgba(255,255,255,0.5)',
+            fontSize: 11,
+            fontWeight: 500,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}>
+            {artistName}
+          </span>
+        </div>
 
         {/* Price and CTA */}
         <div style={{
@@ -206,6 +202,7 @@ export function PremiumAlbumCard({ album, isOwned = false, onPress }: PremiumAlb
           alignItems: 'center',
           justifyContent: 'space-between',
           gap: 8,
+          marginTop: 'auto',
         }}>
           {priceDisplay && (
             <div style={{
@@ -215,9 +212,9 @@ export function PremiumAlbumCard({ album, isOwned = false, onPress }: PremiumAlb
             }}>
               <span style={{
                 color: '#FFD700',
-                fontSize: 18,
-                fontWeight: 800,
-                letterSpacing: '-0.3px',
+                fontSize: 15,
+                fontWeight: 700,
+                letterSpacing: '-0.2px',
                 lineHeight: 1,
               }}>
                 {priceDisplay}
@@ -243,24 +240,22 @@ export function PremiumAlbumCard({ album, isOwned = false, onPress }: PremiumAlb
           ) : priceDisplay ? (
             <button
               onClick={handleBuy}
+              title="Acheter"
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
-                gap: 5,
-                padding: '7px 14px',
+                justifyContent: 'center',
+                width: 32,
+                height: 32,
                 borderRadius: 'var(--radius-full)',
-                background: isHovered ? 'var(--color-accent)' : 'rgba(255,255,255,0.1)',
-                border: `1px solid ${isHovered ? 'var(--color-accent)' : 'rgba(255,255,255,0.15)'}`,
+                background: isHovered ? 'var(--color-accent)' : 'rgba(255,255,255,0.08)',
+                border: `1px solid ${isHovered ? 'var(--color-accent)' : 'rgba(255,255,255,0.1)'}`,
                 cursor: 'pointer',
                 color: '#fff',
-                fontSize: 11,
-                fontWeight: 700,
                 transition: 'all var(--transition-fast) ease',
-                backdropFilter: 'blur(4px)',
               }}
             >
-              <ShoppingBag size={13} />
-              Acheter
+              <ShoppingBag size={14} />
             </button>
           ) : (
             <span style={{

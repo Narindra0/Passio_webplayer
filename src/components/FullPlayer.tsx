@@ -40,18 +40,38 @@ export function FullPlayer() {
     repeatMode, toggleRepeat, playTrackAtIndex,
     deviceQueue, deviceCurrentIndex, playDeviceTrackAtIndex, queueAlbums,
     volume, setVolume, toggleMute, isMuted,
+    lyricsAutoOpen, setLyricsAutoOpen,
   } = useAudioPlayback();
   const { progress, duration } = useAudioProgress();
   const [lyricsModalVisible, setLyricsModalVisible] = useState(false);
+  const [lyricsViewActive, setLyricsViewActive] = useState(false);
   const [queueModalVisible, setQueueModalVisible] = useState(false);
   const [shareModalVisible, setShareModalVisible] = useState(false);
   const queueRef = useRef<HTMLDivElement>(null);
   // État pour stocker le dictionnaire enrichi nom→ID depuis TOUS les albums (API)
   const [globalArtistIdMap, setGlobalArtistIdMap] = useState<Record<string, string> | null>(null);
 
+  // Variables dérivées — remontées avant les effets pour éviter les TDZ
+  const isDeviceMode = playMode === 'device' && deviceCurrentTrack;
+  const showLyricsControls = !isDeviceMode && Boolean(currentTrack?.lyrics_url || currentTrack?.has_lyrics);
+  const isMobile = useMediaQuery('(max-width: 768px)');
+
   useEffect(() => {
     setLyricsModalVisible(false);
+    setLyricsViewActive(false);
   }, [currentTrack?.id, deviceCurrentTrack?.id]);
+
+  // Auto-open lyrics when requested from BottomPlayer (desktop=inline, mobile=modal)
+  useEffect(() => {
+    if (lyricsAutoOpen && showLyricsControls) {
+      if (isMobile) {
+        setLyricsModalVisible(true);
+      } else {
+        setLyricsViewActive(true);
+      }
+      setLyricsAutoOpen(false);
+    }
+  }, [lyricsAutoOpen, showLyricsControls, isMobile, setLyricsAutoOpen]);
 
   // Charger TOUS les albums pour construire un dictionnaire nom→ID
   // (artist_id est REQUIS dans l'API, mais artist_name et artist.id sont optionnels !)
@@ -94,21 +114,17 @@ export function FullPlayer() {
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         if (lyricsModalVisible) setLyricsModalVisible(false);
+        else if (lyricsViewActive) setLyricsViewActive(false);
         else if (queueModalVisible) setQueueModalVisible(false);
         else setFullPlayerVisible(false);
       }
     };
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [lyricsModalVisible, queueModalVisible, setFullPlayerVisible]);
-
-  const isMobile = useMediaQuery('(max-width: 768px)');
-  const isDeviceMode = playMode === 'device' && deviceCurrentTrack;
+  }, [lyricsModalVisible, lyricsViewActive, queueModalVisible, setFullPlayerVisible]);
   if (!isDeviceMode && (!album || !currentTrack)) return null;
   if (isDeviceMode && !deviceCurrentTrack) return null;
   if (!isFullPlayerVisible) return null;
-
-  const showLyricsControls = !isDeviceMode && Boolean(currentTrack?.lyrics_url || currentTrack?.has_lyrics);
   const hasNext = isDeviceMode
     ? deviceCurrentIndex < deviceQueue.length - 1 || repeatMode === 'all'
     : currentIndex < queue.length - 1 || repeatMode === 'all';
@@ -257,9 +273,53 @@ export function FullPlayer() {
         >
           <ChevronLeft size={18} />
         </button>
-        <span style={{ color: 'var(--color-text-muted)', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px' }}>
-          En cours
-        </span>
+
+        {/* Tabs: Now Playing / Lyrics — desktop only */}
+        {!isMobile && showLyricsControls ? (
+          <div style={{ display: 'flex', gap: 2, background: 'var(--color-surface-elevated)', borderRadius: 'var(--radius-full)', padding: 2 }}>
+            <button
+              onClick={() => setLyricsViewActive(false)}
+              style={{
+                padding: '4px 12px',
+                borderRadius: 'var(--radius-full)',
+                border: 'none',
+                cursor: 'pointer',
+                fontSize: 11,
+                fontWeight: 700,
+                textTransform: 'uppercase',
+                letterSpacing: '0.5px',
+                background: !lyricsViewActive ? 'var(--color-text-primary)' : 'transparent',
+                color: !lyricsViewActive ? 'var(--color-bg-dark)' : 'var(--color-text-muted)',
+                transition: 'all var(--transition-fast) ease',
+              }}
+            >
+              En cours
+            </button>
+            <button
+              onClick={() => setLyricsViewActive(true)}
+              style={{
+                padding: '4px 12px',
+                borderRadius: 'var(--radius-full)',
+                border: 'none',
+                cursor: 'pointer',
+                fontSize: 11,
+                fontWeight: 700,
+                textTransform: 'uppercase',
+                letterSpacing: '0.5px',
+                background: lyricsViewActive ? 'var(--color-text-primary)' : 'transparent',
+                color: lyricsViewActive ? 'var(--color-bg-dark)' : 'var(--color-text-muted)',
+                transition: 'all var(--transition-fast) ease',
+              }}
+            >
+              Paroles
+            </button>
+          </div>
+        ) : (
+          <span style={{ color: 'var(--color-text-muted)', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px' }}>
+            {lyricsViewActive ? 'Paroles' : 'En cours'}
+          </span>
+        )}
+
         <button
           onClick={(e) => { e.stopPropagation(); setShareModalVisible(true); }}
           style={{
@@ -314,6 +374,17 @@ export function FullPlayer() {
           zIndex: 1,
         }}
       >
+        {/* Lyrics inline view — desktop (Spotify style) */}
+        {!isMobile && lyricsViewActive && showLyricsControls ? (
+          <FullPlayerLyrics
+            lyricsUrl={currentTrack?.lyrics_url || null}
+            trackId={currentTrack?.id || null}
+            currentTime={progress * duration}
+            isPlaying={isPlaying}
+            compact={false}
+          />
+        ) : (
+        <>
         {/* Cover art — centered */}
         <div
           style={{
@@ -381,25 +452,36 @@ export function FullPlayer() {
             </div>
             {showLyricsControls && (
               <button
-                onClick={() => setLyricsModalVisible(true)}
+                onClick={() => {
+                  if (isMobile) {
+                    setLyricsModalVisible(true);
+                  } else {
+                    setLyricsViewActive(!lyricsViewActive);
+                  }
+                }}
                 style={{
                   width: 36,
                   height: 36,
                   borderRadius: 'var(--radius-full)',
                   border: '1px solid var(--color-border-subtle)',
-                  background: 'var(--color-surface-elevated)',
+                  background: lyricsViewActive && !isMobile ? 'var(--color-accent-soft)' : 'var(--color-surface-elevated)',
                   cursor: 'pointer',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  color: 'var(--color-accent)',
+                  color: lyricsViewActive && !isMobile ? 'var(--color-accent)' : 'var(--color-accent)',
                   flexShrink: 0,
                   marginTop: 2,
                   transition: 'all var(--transition-fast) ease',
                 }}
                 onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-accent-soft)'; e.currentTarget.style.borderColor = 'var(--color-accent)'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--color-surface-elevated)'; e.currentTarget.style.borderColor = 'var(--color-border-subtle)'; }}
-                title="Afficher les paroles"
+                onMouseLeave={(e) => {
+                  if (!(lyricsViewActive && !isMobile)) {
+                    e.currentTarget.style.background = 'var(--color-surface-elevated)';
+                  }
+                  e.currentTarget.style.borderColor = 'var(--color-border-subtle)';
+                }}
+                title={isMobile ? 'Afficher les paroles' : (lyricsViewActive ? 'Afficher le lecteur' : 'Afficher les paroles')}
               >
                 <TextQuote size={16} />
               </button>
@@ -836,6 +918,8 @@ export function FullPlayer() {
               })}
             </div>
           </div>
+        )}
+        </>
         )}
       </div>
 

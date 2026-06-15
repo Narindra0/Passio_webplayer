@@ -18,10 +18,9 @@ import { getAlbum, getApiBaseUrl, listOwnedAlbums, unwrapAlbumDetails } from '@/
 import {
     seekTo as audioSeekTo,
     playDeviceFile,
-    playRemoteTrack,
     playWebOptimizedTrack,
     playStream,
-    prefetchTrackBlob,
+    prefetchSecureTrack,
     setTrackEndHandler,
     setVolume as setAudioVolume,
     setMuted as setAudioMuted,
@@ -65,6 +64,8 @@ export interface AudioPlaybackState {
   deviceCurrentTrack: DeviceTrack | null;
   queueAlbums: PublicAlbumDetails[];
   playbackError: string | null;
+  lyricsAutoOpen: boolean;
+  setLyricsAutoOpen: (v: boolean) => void;
 }
 
 export interface AudioProgressState {
@@ -131,6 +132,7 @@ export function AudioProvider({ children }: { children: ReactNode }) {
   const [playbackError, setPlaybackError] = useState<string | null>(null);
   const [volume, setVolumeState] = useState(DEFAULT_VOLUME);
   const [isMuted, setIsMuted] = useState(false);
+  const [lyricsAutoOpen, setLyricsAutoOpen] = useState(false);
 
   const currentIndexRef = useRef(-1);
   const deviceQueueRef = useRef<DeviceTrack[]>([]);
@@ -157,6 +159,27 @@ export function AudioProvider({ children }: { children: ReactNode }) {
   const lastProgressRef = useRef(0);
   const lastDurationRef = useRef(0);
   const prefetchTriggeredRef = useRef(false);
+
+  /**
+   * Solution C: Précharge immédiatement la piste suivante dans la file.
+   * Se déclenche dès qu'une piste commence à jouer, pour une transition
+   * sans aucune latence vers la piste suivante.
+   */
+  function triggerNextTrackPrefetch(currentIdx: number) {
+    const q = queueRef.current;
+    let nextIdx = currentIdx + 1;
+    if (nextIdx >= q.length && repeatModeRef.current === 'all' && q.length > 0) {
+      nextIdx = 0;
+    }
+    if (nextIdx >= 0 && nextIdx < q.length) {
+      const nextTrack = q[nextIdx];
+      if (nextTrack) {
+        const nextProxyUrl = `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(nextTrack.id)}/audio`;
+        console.log('[AudioContext] ⚡ Préchargement sécurisé de la piste suivante:', nextTrack.title);
+        prefetchSecureTrack(nextProxyUrl, nextTrack.id);
+      }
+    }
+  }
 
   const currentTrack =
     currentIndex >= 0 && currentIndex < queue.length ? queue[currentIndex] : null;
@@ -385,8 +408,8 @@ export function AudioProvider({ children }: { children: ReactNode }) {
             const nextTrack = q[nextIdx];
             if (nextTrack) {
               const proxyUrl = `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(nextTrack.id)}/audio`;
-              console.log('[AudioContext] Préchargement de la piste suivante:', nextTrack.title);
-              prefetchTrackBlob(proxyUrl, nextTrack.id);
+              console.log('[AudioContext] Préchargement sécurisé (fin de piste):', nextTrack.title);
+              prefetchSecureTrack(proxyUrl, nextTrack.id);
             }
           }
         }
@@ -444,6 +467,8 @@ export function AudioProvider({ children }: { children: ReactNode }) {
           if (player) {
             currentIndexRef.current = index;
             setCurrentIndex(index);
+            // Solution C: Préchargement immédiat de la piste suivante
+            triggerNextTrackPrefetch(index);
             return;
           }
         } catch (err) {
@@ -461,6 +486,8 @@ export function AudioProvider({ children }: { children: ReactNode }) {
             console.log('[AudioContext] ✅ Playback started with direct URL');
             currentIndexRef.current = index;
             setCurrentIndex(index);
+            // Solution C: Préchargement immédiat de la piste suivante
+            triggerNextTrackPrefetch(index);
             return;
           }
         } catch (err) {
@@ -473,6 +500,8 @@ export function AudioProvider({ children }: { children: ReactNode }) {
         const streamPlayer = await playStream(proxyUrl, handleStatus);
         if (!streamPlayer) throw new Error('Impossible de lire ce titre.');
         console.log('[AudioContext] ✅ Playback started with proxy URL');
+        // Solution C: Préchargement immédiat de la piste suivante (pour stream)
+        triggerNextTrackPrefetch(index);
       }
 
       currentIndexRef.current = index;
@@ -551,6 +580,22 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     const alb = albumRef.current;
     if (index < 0 || index >= q.length || !alb) return;
 
+    // Afficher le BottomPlayer IMMÉDIATEMENT avec l'état chargement
+    // pour que l'utilisateur ait un retour visuel instantané
+    currentIndexRef.current = index;
+    setCurrentIndex(index);
+    setIsLoading(true);
+    setIsPlaying(false);
+    setProgress(0);
+    setDuration(0);
+    lastProgressRef.current = 0;
+    lastDurationRef.current = 0;
+    setPlaybackError(null);
+    setPlayMode(null);
+    prefetchTriggeredRef.current = false;
+    pendingHlsSeekSecondsRef.current = null;
+    isDevicePlaybackRef.current = false;
+
     let key = decryptionKeyRef.current;
     if (!key) key = await resolveKeyForAlbum(alb, null);
     if (key) {
@@ -571,6 +616,14 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     albumRef.current = albumData;
     queueRef.current = sorted;
     decryptionKeyRef.current = key ?? null;
+
+    // Solution C: Précharger la première piste dès le chargement de l'album
+    if (sorted.length > 0) {
+      const firstTrack = sorted[0];
+      const proxyUrl = `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(firstTrack.id)}/audio`;
+      console.log('[AudioContext] Préchargement sécurisé de la première piste:', firstTrack.title);
+      prefetchSecureTrack(proxyUrl, firstTrack.id);
+    }
 
     const libIdx = libraryRef.current.findIndex((a) => a.id === albumData.id);
     if (libIdx >= 0) { libraryIndexRef.current = libIdx; setLibraryIndex(libIdx); }
@@ -785,16 +838,17 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     album, queue, currentIndex, currentTrack, isPlaying, isLoading, playMode,
     decryptionKey, isFullPlayerVisible, queueMode, repeatMode, library, libraryIndex,
     isLibraryLoaded, queueScope, deviceQueue, deviceCurrentIndex, deviceCurrentTrack,
-    queueAlbums, playbackError,
+    queueAlbums, playbackError, lyricsAutoOpen,
     loadAlbum, playFromTrackList, playTrackAtIndex, togglePlayPause, next, previous, stop,
-    setFullPlayerVisible, toggleQueueMode, toggleRepeat, loadLibrary, seekTo,
+    setFullPlayerVisible, setLyricsAutoOpen, toggleQueueMode, toggleRepeat, loadLibrary, seekTo,
     playDeviceTrackAtIndex, clearPlaybackError,
     volume, setVolume, toggleMute, isMuted,
   }), [album, queue, currentIndex, currentTrack, isPlaying, isLoading, playMode,
     decryptionKey, isFullPlayerVisible, queueMode, repeatMode, library, libraryIndex,
     isLibraryLoaded, queueScope, deviceQueue, deviceCurrentIndex, deviceCurrentTrack,
-    queueAlbums, playbackError, loadAlbum, playFromTrackList, playTrackAtIndex,
-    togglePlayPause, next, previous, stop, toggleQueueMode, toggleRepeat, loadLibrary,
+    queueAlbums, playbackError, lyricsAutoOpen, loadAlbum, playFromTrackList, playTrackAtIndex,
+    togglePlayPause, next, previous, stop, setFullPlayerVisible, setLyricsAutoOpen,
+    toggleQueueMode, toggleRepeat, loadLibrary,
     seekTo, playDeviceTrackAtIndex, clearPlaybackError,
     volume, setVolume, toggleMute, isMuted]);
 

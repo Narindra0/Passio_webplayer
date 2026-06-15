@@ -830,7 +830,7 @@ export function DiscoverScreen() {
               </div>
               <div style={{
                 display: 'grid',
-                gridTemplateColumns: showAllPremium ? 'repeat(auto-fill, minmax(240px, 1fr))' : 'repeat(4, 1fr)',
+                gridTemplateColumns: 'repeat(4, 1fr)',
                 gap: 20,
               }} className="collections-grid">
                 {(showAllPremium ? sortedPaidAlbums : sortedPaidAlbums.slice(0, 4)).map((album) => (

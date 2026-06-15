@@ -15,15 +15,19 @@ export class SecureAudioPlayer {
   private CHUNK_SIZE = 512 * 1024;
   private abortController: AbortController | null = null;
 
+  // En-tête anti-IDM pour les requêtes de streaming
+  private readonly STREAM_HEADER = 'X-Passio-Stream';
+  private readonly STREAM_HEADER_VALUE = 'secure';
+
   constructor() {
     // We don't initialize AudioContext here to respect Safari's policies
     // AudioContext must be created/resumed after a user interaction
   }
 
   /**
-   * Initializes the AudioContext. Must be called from a user interaction (e.g., click).
+   * Initialise l'AudioContext si pas déjà fait (compatible Safari).
    */
-  public initContext() {
+  public ensureContext() {
     if (!this.audioContext) {
       const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
       this.audioContext = new AudioContextClass();
@@ -35,9 +39,10 @@ export class SecureAudioPlayer {
 
   /**
    * Downloads the file in chunks using Range requests to evade IDM.
-   * Inclut une logique de retry et un fallback vers le téléchargement complet si le Range n'est pas supporté.
+   * Si maxBytes est défini (ex: 1 Mo), on s'arrête après cette limite.
+   * Utile pour le prefetch « 2 chunks » qui économise la bande passante.
    */
-  public async downloadInChunks(url: string, onProgress?: (progress: number) => void): Promise<Uint8Array> {
+  public async downloadInChunks(url: string, onProgress?: (progress: number) => void, maxBytes?: number): Promise<Uint8Array> {
     this.abortController = new AbortController();
     const signal = this.abortController.signal;
 
@@ -50,20 +55,26 @@ export class SecureAudioPlayer {
     let usedFullDownload = false;
 
     while (!isFinished) {
+      // Si maxBytes défini et atteint, on s'arrête immédiatement
+      if (maxBytes && currentByte >= maxBytes) {
+        isFinished = true;
+        break;
+      }
+      // Ne pas dépasser maxBytes
+      const chunkEnd = maxBytes ? Math.min(currentByte + this.CHUNK_SIZE, maxBytes) : currentByte + this.CHUNK_SIZE;
       const start = currentByte;
-      const end = currentByte + this.CHUNK_SIZE - 1;
+      const end = chunkEnd - 1;
       
       let response: Response | null = null;
       let retries = 0;
 
       while (retries <= MAX_RETRIES && !response) {
         try {
-          const resp = await fetch(url, {
-            headers: {
-              'Range': `bytes=${start}-${end}`
-            },
-            signal
-          });
+          const headers: Record<string, string> = {
+            'Range': `bytes=${start}-${end}`,
+            [this.STREAM_HEADER]: this.STREAM_HEADER_VALUE,
+          };
+          const resp = await fetch(url, { headers, signal });
 
           if (resp.ok || resp.status === 206) {
             response = resp;
@@ -84,7 +95,10 @@ export class SecureAudioPlayer {
             if (!usedFullDownload) {
               console.warn('SecureAudioPlayer: Range requests not supported, falling back to full download');
               usedFullDownload = true;
-              const fullResp = await fetch(url, { signal });
+              const fullResp = await fetch(url, {
+                signal,
+                headers: { [this.STREAM_HEADER]: this.STREAM_HEADER_VALUE },
+              });
               if (!fullResp.ok) throw new Error(`HTTP ${fullResp.status}`);
               const fullBuffer = await fullResp.arrayBuffer();
               if (onProgress) onProgress(100);
@@ -143,15 +157,35 @@ export class SecureAudioPlayer {
   }
 
   /**
+   * Loads and plays audio from a pre-downloaded buffer (prefetch),
+   * sans passer par le réseau.
+   */
+  public async loadFromBuffer(uint8Array: Uint8Array): Promise<void> {
+    this.stop();
+    this.ensureContext();
+    if (!this.audioContext) throw new Error('SecureAudioPlayer: AudioContext not available');
+
+    const arrayBuffer = uint8Array.buffer.slice(
+      uint8Array.byteOffset,
+      uint8Array.byteLength + uint8Array.byteOffset
+    ) as ArrayBuffer;
+
+    this.audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer);
+
+    // Nettoyer le buffer brut de la RAM
+    uint8Array.fill(0);
+    const clearView = new Uint8Array(arrayBuffer);
+    clearView.fill(0);
+  }
+
+  /**
    * Loads the audio from a URL using the chunking strategy and decodes it.
    * If trackId is provided or parsable from URL, it checks IndexedDB first.
    */
   public async loadTrack(url: string, onProgress?: (progress: number) => void, trackId?: string): Promise<void> {
     this.stop(); // Stop current playback if any
 
-    if (!this.audioContext) {
-      this.initContext();
-    }
+    this.ensureContext();
 
     try {
       // Extract trackId if not provided

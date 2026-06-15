@@ -17,6 +17,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { hasFeatArtists, parseFeatArtists } from '@/utils/featArtists';
 import { FeatArtistLinks } from '@/components/FeatArtistLinks';
+import { getApiBaseUrl } from '@/services/api';
+import { prefetchTrackBlob } from '@/services/audio';
 
 function formatDuration(seconds: number | null | undefined): string {
   if (!seconds || isNaN(seconds)) return '--:--';
@@ -466,6 +468,11 @@ export function AlbumDetailScreen() {
             const isCurrent = audio.currentTrack?.id === track.id;
             const isThisPlaying = isCurrent && audio.isPlaying;
             const featResult = hasFeatArtists(track.title) ? parseFeatArtists(track.title) : null;
+            // Solution C: Préchargement de la piste au survol pour une lecture instantanée
+            const prefetchOnHover = () => {
+              const trackProxyUrl = `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(track.id)}/audio`;
+              prefetchTrackBlob(trackProxyUrl, track.id);
+            };
             return (
               <button className="album-track"
                 key={track.id}
@@ -486,6 +493,7 @@ export function AlbumDetailScreen() {
                   transition: 'background-color var(--transition-fast) ease',
                 }}
                 onMouseEnter={(e) => {
+                  prefetchOnHover();
                   if (!isCurrent && (canPlay || isPaidNotOwned)) e.currentTarget.style.background = 'var(--color-surface-hover)';
                 }}
                 onMouseLeave={(e) => {

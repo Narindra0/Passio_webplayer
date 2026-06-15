@@ -229,9 +229,57 @@ img { max-width: 100%; height: auto; }
   50% { opacity: 0.6; }
 }
 
+@keyframes slideUpPlayer {
+  from {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes coverPulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(220, 20, 60, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(220, 20, 60, 0);
+  }
+}
+
+@keyframes skeletonPulse {
+  0%, 100% {
+    opacity: 0.6;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
 .fade-in { animation: fadeIn var(--transition-normal) ease; }
 .slide-up { animation: slideUp var(--transition-normal) ease; }
 .scale-in { animation: scaleIn var(--transition-normal) cubic-bezier(0.34, 1.56, 0.64, 1); }
+
+/* Bottom player entry animation */
+.player-enter {
+  animation: slideUpPlayer 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Loading skeleton pulse */
+.skeleton-pulse {
+  animation: skeletonPulse 1.5s ease-in-out infinite;
+}
+
+/* Cover loading ring */
+.cover-loading-ring {
+  position: relative;
+  animation: coverPulse 2s ease-in-out infinite;
+}
+
+/* Breathing progress bar for loading */
+
 
 /* ============================================================
    Loader

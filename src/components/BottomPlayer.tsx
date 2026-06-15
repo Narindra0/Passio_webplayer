@@ -2,7 +2,7 @@ import { useAudioPlayback, useAudioProgress } from '@/contexts/AudioContext';
 import { useAlbumColors } from '@/hooks/useAlbumColors';
 import { useCachedImage } from '@/hooks/useCachedImage';
 import { buildVibrantWithAlpha } from '@/services/colorExtractor';
-import { AlertCircle, Pause, Play, Share2, SkipBack, SkipForward, Volume2, Volume1, Volume, VolumeX, X } from 'lucide-react';
+import { AlertCircle, Pause, Play, Share2, SkipBack, SkipForward, TextQuote, Volume2, Volume1, Volume, VolumeX, X } from 'lucide-react';
 import { hasFeatArtists, parseFeatArtists } from '@/utils/featArtists';
 import { FeatArtistLinks } from './FeatArtistLinks';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
@@ -15,7 +15,7 @@ export function BottomPlayer() {
     album, currentTrack, deviceCurrentTrack, playMode,
     isPlaying, isLoading, next, previous, togglePlayPause,
     setFullPlayerVisible, isFullPlayerVisible, seekTo,
-    playbackError, clearPlaybackError,
+    playbackError, clearPlaybackError, setLyricsAutoOpen,
     volume, setVolume, toggleMute, isMuted
   } = useAudioPlayback();
   const { progress, duration } = useAudioProgress();
@@ -61,6 +61,9 @@ export function BottomPlayer() {
 
   if (!hasActiveTrack) return null;
 
+  // Animation class for entry
+  const entryClass = 'player-enter';
+
   const formatTime = (secs: number) => {
     if (!secs || isNaN(secs)) return '0:00';
     const m = Math.floor(secs / 60);
@@ -75,11 +78,19 @@ export function BottomPlayer() {
     setFullPlayerVisible(!isFullPlayerVisible);
   };
 
+  const showLyricsControls = !isDeviceMode && Boolean(currentTrack?.lyrics_url || currentTrack?.has_lyrics);
+
+  const handleOpenLyrics = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setLyricsAutoOpen(true);
+    setFullPlayerVisible(true);
+  };
+
   const VolIcon = isMuted || volume === 0 ? VolumeX : volume < 0.5 ? Volume : volume < 0.8 ? Volume1 : Volume2;
 
   return (
     <div
-      className={`bottom-player glass-panel${showError ? ' has-error' : ''}`}
+      className={`bottom-player glass-panel ${entryClass}${showError ? ' has-error' : ''}`}
       style={{
         height: showError ? (isMobile ? 100 : 120) : (isMobile ? 64 : 80),
         display: 'flex',
@@ -152,23 +163,26 @@ export function BottomPlayer() {
           <div
             style={{
               position: 'absolute',
-              top: 0, left: 0, right: 0, height: '100%',
-              background: 'var(--color-border-subtle)',
-              borderRadius: 2,
-              overflow: 'hidden',
-            }}
-          />
-          <div
-            style={{
-              position: 'absolute',
-              top: 0, left: 0, height: '100%',
-              background: `linear-gradient(90deg, ${coverColors.colors?.vibrant || 'var(--color-accent)'}, ${coverColors.colors?.muted || 'var(--color-accent-light)'})`,
-              width: `${Math.round(progress * 100)}%`,
-              borderRadius: 2,
-              transition: 'width 0.1s linear, background 0.6s ease',
-              boxShadow: `0 0 6px ${coverColors.colors?.vibrant || 'var(--color-accent-glow)'}`,
-            }}
-          />
+              top: 0, left: 0, right: 0, height: '100%',                  background: 'var(--color-border-subtle)',
+                  borderRadius: 2,
+                  overflow: 'hidden',
+                }}
+              />
+              <div
+                style={{
+                  position: 'absolute',
+                  top: 0, left: 0, height: '100%',
+                  background: isLoading
+                    ? `linear-gradient(90deg, ${coverColors.colors?.vibrant || 'var(--color-accent)'}, ${coverColors.colors?.muted || 'var(--color-accent-light)'}, ${coverColors.colors?.vibrant || 'var(--color-accent)'})`
+                    : `linear-gradient(90deg, ${coverColors.colors?.vibrant || 'var(--color-accent)'}, ${coverColors.colors?.muted || 'var(--color-accent-light)'})`,
+                  width: `${Math.round(progress * 100)}%`,
+                  borderRadius: 2,
+                  transition: 'width 0.1s linear, background 0.6s ease',
+                  boxShadow: `0 0 6px ${coverColors.colors?.vibrant || 'var(--color-accent-glow)'}`,
+                  backgroundSize: isLoading ? '200% 100%' : undefined,
+                  animation: isLoading ? 'shimmer 2s ease-in-out infinite' : undefined,
+                }}
+              />
         </div>
 
         {/* Left: Cover + Track Info */}
@@ -187,7 +201,7 @@ export function BottomPlayer() {
         >
           {/* Cover art */}
           <div
-            className="bottom-player-cover"
+            className={`bottom-player-cover${isLoading ? ' cover-loading-ring' : ''}`}
             style={{
               width: isMobile ? 42 : 52,
               height: isMobile ? 42 : 52,
@@ -195,53 +209,83 @@ export function BottomPlayer() {
               overflow: 'hidden',
               backgroundColor: 'var(--color-surface-elevated)',
               flexShrink: 0,
+              position: isLoading ? 'relative' : undefined,
             }}
           >
-            {coverUri ? (
-              <img src={cachedCover || coverUri} alt="" loading="lazy" decoding="async" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            {isLoading ? (
+              <>
+                <img src={(cachedCover || coverUri) ?? ''} alt="" loading="lazy" decoding="async" style={{ width: '100%', height: '100%', objectFit: 'cover', filter: 'saturate(0.6) brightness(0.8)', transition: 'filter 0.4s ease' }} />
+                <div style={{
+                  position: 'absolute', inset: 0,
+                  background: 'linear-gradient(135deg, transparent 40%, rgba(220,20,60,0.06) 70%, transparent 100%)',
+                  animation: 'shimmer 2s ease-in-out infinite',
+                  backgroundSize: '200% 100%',
+                  borderRadius: 'var(--radius-sm)',
+                  pointerEvents: 'none',
+                }} />
+              </>
             ) : (
-              <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <span style={{ color: 'var(--color-text-muted)', fontSize: 20 }}>♪</span>
-              </div>
+              <img src={(cachedCover ?? coverUri) ?? ''} alt="" loading="lazy" decoding="async" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
             )}
           </div>
 
           {/* Title & Artist + Timer mobile */}
           <div style={{ minWidth: 0, flex: 1 }}>
-            <div
-              style={{
-                color: 'var(--color-text-primary)',
-                fontSize: isMobile ? 13 : 14,
-                fontWeight: 600,
-                lineHeight: '18px',
-                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-              }}
-              title={rawTitle}
-            >
-              {trackTitle}
-            </div>
-            <div
-              style={{
-                color: 'var(--color-text-secondary)',
-                fontSize: isMobile ? 11 : 12,
-                lineHeight: '16px',
-                marginTop: 1,
-                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-              }}
-            >
-              {artistName}
-              {featNames.length > 0 && (
-                <FeatArtistLinks featNames={featNames} style={{ fontSize: isMobile ? 10 : 12 }} />
-              )}
-            </div>
+            {isLoading ? (
+              <div style={{ animation: 'fadeIn 0.3s ease' }}>
+                <div className="skeleton-pulse" style={{
+                  height: isMobile ? 15 : 16,
+                  width: '60%',
+                  borderRadius: 4,
+                  background: 'var(--color-surface-hover)',
+                  marginBottom: 5,
+                }} />
+                <div className="skeleton-pulse" style={{
+                  height: isMobile ? 11 : 12,
+                  width: '40%',
+                  borderRadius: 4,
+                  background: 'var(--color-surface-hover)',
+                }} />
+              </div>
+            ) : (
+              <div style={{ animation: 'fadeIn 0.25s ease' }}>
+                <div
+                  style={{
+                    color: 'var(--color-text-primary)',
+                    fontSize: isMobile ? 13 : 14,
+                    fontWeight: 600,
+                    lineHeight: '18px',
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  }}
+                  title={rawTitle}
+                >
+                  {trackTitle}
+                </div>
+                <div
+                  style={{
+                    color: 'var(--color-text-secondary)',
+                    fontSize: isMobile ? 11 : 12,
+                    lineHeight: '16px',
+                    marginTop: 1,
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  }}
+                >
+                  {artistName}
+                  {featNames.length > 0 && (
+                    <FeatArtistLinks featNames={featNames} style={{ fontSize: isMobile ? 10 : 12 }} />
+                  )}
+                </div>
+              </div>
+            )}
             {/* Timer mobile */}
-            {isMobile && (
+            {isMobile && !isLoading && (
               <div
                 style={{
                   display: 'flex',
                   alignItems: 'center',
                   gap: 3,
                   marginTop: 1,
+                  animation: 'fadeIn 0.3s ease',
                 }}
               >
                 <span style={{ color: 'var(--color-text-muted)', fontSize: 9, fontWeight: 500, fontVariantNumeric: 'tabular-nums' }}>
@@ -334,9 +378,29 @@ export function BottomPlayer() {
           </div>
         )}
 
-        {/* Mobile: Play/Pause button on the right */}
-        {isMobile && (
-          <div style={{ flexShrink: 0, marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4 }}>
+        {/* Mobile: Play/Pause button on the right */}          {isMobile && (
+          <div style={{ flexShrink: 0, marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 2 }}>
+            {showLyricsControls && (
+              <button
+                onClick={handleOpenLyrics}
+                style={{
+                  width: 36,
+                  height: 36,
+                  borderRadius: 'var(--radius-full)',
+                  border: 'none',
+                  background: 'transparent',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: 'var(--color-accent)',
+                  transition: 'all var(--transition-fast) ease',
+                }}
+                title="Paroles"
+              >
+                <TextQuote size={16} />
+              </button>
+            )}
             <button
               onClick={(e) => { e.stopPropagation(); setShareModalVisible(true); }}
               style={{
@@ -413,6 +477,30 @@ export function BottomPlayer() {
               <span style={{ color: 'var(--color-text-muted)', fontSize: 12, fontWeight: 500, fontVariantNumeric: 'tabular-nums', lineHeight: 1 }}>{totalTimeLabel}</span>
             </div>
 
+            {/* Lyrics button */}
+            {showLyricsControls && (
+              <button
+                onClick={handleOpenLyrics}
+                style={{
+                  width: 32,
+                  height: 32,
+                  borderRadius: 'var(--radius-full)',
+                  border: 'none',
+                  background: 'transparent',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: 'var(--color-accent)',
+                  transition: 'all var(--transition-fast) ease',
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-surface-hover)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                title="Paroles"
+              >
+                <TextQuote size={15} />
+              </button>
+            )}
             {/* Share button */}
             <button
               onClick={(e) => { e.stopPropagation(); setShareModalVisible(true); }}
