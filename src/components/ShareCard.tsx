@@ -1,4 +1,5 @@
-import { Copy, Download, Share2, X } from 'lucide-react';
+import html2canvas from 'html2canvas';
+import { Copy, Download, Share2, X, Check } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 
@@ -12,14 +13,25 @@ interface ShareCardProps {
   albumId?: string;
 }
 
-const CANVAS_W = 1080;
-const CANVAS_H = 1920;
-
 // ──────────────────────────────────────────────
 //  Color helpers
 // ──────────────────────────────────────────────
 
-function sampleDominantColor(img: HTMLImageElement): { r: number; g: number; b: number } | null {
+function clamp(v: number): number { return Math.max(0, Math.min(255, Math.round(v))); }
+
+function toHex(r: number, g: number, b: number): string {
+  return '#' + [r, g, b].map(x => clamp(x).toString(16).padStart(2, '0')).join('');
+}
+
+function adjustBrightness(r: number, g: number, b: number, factor: number) {
+  return { r: r * factor, g: g * factor, b: b * factor };
+}
+
+function luminance(r: number, g: number, b: number): number {
+  return (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+}
+
+export function sampleDominantColor(img: HTMLImageElement): { r: number; g: number; b: number } | null {
   const c = document.createElement('canvas');
   c.width = 64;
   c.height = 64;
@@ -37,88 +49,262 @@ function sampleDominantColor(img: HTMLImageElement): { r: number; g: number; b: 
   return { r: tr / n, g: tg / n, b: tb / n };
 }
 
-function clamp(v: number): number { return Math.max(0, Math.min(255, Math.round(v))); }
-
-function toHex(r: number, g: number, b: number): string {
-  return '#' + [r, g, b].map(x => clamp(x).toString(16).padStart(2, '0')).join('');
-}
-
-function toRgba(r: number, g: number, b: number, a: number): string {
-  return `rgba(${clamp(r)},${clamp(g)},${clamp(b)},${a})`;
-}
-
-function adjustBrightness(r: number, g: number, b: number, factor: number): { r: number; g: number; b: number } {
-  return { r: r * factor, g: g * factor, b: b * factor };
-}
-
-/** Perceived luminance 0-1 */
-function luminance(r: number, g: number, b: number): number {
-  return (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-}
-
-// ──────────────────────────────────────────────
-//  Drawing helpers
-// ──────────────────────────────────────────────
-
-function truncateText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string {
-  if (ctx.measureText(text).width <= maxWidth) return text;
-  let t = text;
-  while (t.length > 1) {
-    const ell = t + '…';
-    if (ctx.measureText(ell).width <= maxWidth) return ell;
-    t = t.slice(0, -1);
-  }
-  return '…';
-}
-
-function roundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
-  const radius = Math.min(r, w / 2, h / 2);
-  ctx.beginPath();
-  ctx.moveTo(x + radius, y);
-  ctx.lineTo(x + w - radius, y);
-  ctx.quadraticCurveTo(x + w, y, x + w, y + radius);
-  ctx.lineTo(x + w, y + h - radius);
-  ctx.quadraticCurveTo(x + w, y + h, x + w - radius, y + h);
-  ctx.lineTo(x + radius, y + h);
-  ctx.quadraticCurveTo(x, y + h, x, y + h - radius);
-  ctx.lineTo(x, y + radius);
-  ctx.quadraticCurveTo(x, y, x + radius, y);
-  ctx.closePath();
-}
-
-function drawHeart(ctx: CanvasRenderingContext2D, cx: number, cy: number, w: number, h: number) {
-  const bw = w / 2;
-  ctx.save();
-  ctx.beginPath();
-  ctx.moveTo(cx, cy + h * 0.25);
-  ctx.bezierCurveTo(cx - bw - bw * 0.4, cy - h * 0.3, cx - bw, cy - h * 0.6, cx, cy - h * 0.15);
-  ctx.bezierCurveTo(cx + bw, cy - h * 0.6, cx + bw + bw * 0.4, cy - h * 0.3, cx, cy + h * 0.25);
-  ctx.closePath();
-  ctx.fill();
-  ctx.restore();
-}
-
-/** Draw a polished music-note icon */
-function drawMusicNote(ctx: CanvasRenderingContext2D, cx: number, cy: number, size: number) {
-  const s = size / 14;
-  ctx.save();
-  // Note head (slanted ellipse)
-  ctx.beginPath();
-  ctx.ellipse(cx + 1.5 * s, cy + 4 * s, 4.5 * s, 3.2 * s, -0.35, 0, Math.PI * 2);
-  ctx.fill();
-  // Stem
-  ctx.fillRect(cx + 5.5 * s, cy - 7 * s, 1.8 * s, 12 * s);
-  // Flag (curved)
-  ctx.beginPath();
-  ctx.moveTo(cx + 7.3 * s, cy - 7 * s);
-  ctx.quadraticCurveTo(cx + 12 * s, cy - 3 * s, cx + 7.3 * s, cy + 1 * s);
-  ctx.quadraticCurveTo(cx + 9 * s, cy - 1 * s, cx + 7.3 * s, cy - 4 * s);
-  ctx.fill();
-  ctx.restore();
+function derivePalette(dc: { r: number; g: number; b: number }) {
+  const isDark = luminance(dc.r, dc.g, dc.b) < 0.5;
+  const vibrant = {
+    r: isDark ? dc.r : Math.min(255, dc.r * 1.4),
+    g: isDark ? Math.min(255, dc.g * 0.8) : Math.min(255, dc.g * 0.5),
+    b: isDark ? Math.min(255, dc.b * 0.9) : Math.min(255, dc.b * 0.4),
+  };
+  const muted = adjustBrightness(dc.r, dc.g, dc.b, 0.55);
+  const dark = adjustBrightness(dc.r, dc.g, dc.b, 0.12);
+  return {
+    accent: toHex(vibrant.r, vibrant.g, vibrant.b),
+    gradTop: toHex(Math.min(255, dc.r * 0.55), Math.min(255, dc.g * 0.2), Math.min(255, dc.b * 0.2)),
+    gradMid: toHex(muted.r * 0.4, muted.g * 0.4, muted.b * 0.4),
+    gradBot: toHex(dark.r, dark.g, dark.b),
+  };
 }
 
 // ──────────────────────────────────────────────
-//  Component
+//  Story Canvas — DOM template for html2canvas
+// ──────────────────────────────────────────────
+
+interface StoryCanvasProps {
+  trackTitle: string;
+  artistName: string;
+  albumTitle?: string;
+  coverUri: string | null | undefined;
+  palette: { accent: string; gradTop: string; gradMid: string; gradBot: string };
+}
+
+function StoryCanvas({ trackTitle, artistName, albumTitle, coverUri, palette }: StoryCanvasProps) {
+  const cover = coverUri || '';
+  const { accent, gradTop, gradMid, gradBot } = palette;
+
+  return (
+    <div
+      id="share-story-canvas"
+      style={{
+        position: 'relative',
+        width: 540,
+        height: 960,
+        overflow: 'hidden',
+        background: `linear-gradient(155deg, ${gradTop} 0%, ${gradMid} 50%, ${gradBot} 100%)`,
+        fontFamily: "'Plus Jakarta Sans', 'Hanken Grotesk', 'Inter', sans-serif",
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'space-between',
+        padding: '40px 32px',
+        boxSizing: 'border-box',
+        borderRadius: 0,
+      }}
+    >
+      {/* Blurred cover background */}
+      {cover && (
+        <img
+          src={cover}
+          crossOrigin="anonymous"
+          style={{
+            position: 'absolute',
+            inset: 0,
+            width: '100%',
+            height: '100%',
+            objectFit: 'cover',
+            opacity: 0.28,
+            filter: 'blur(36px)',
+            transform: 'scale(1.15)',
+            pointerEvents: 'none',
+          }}
+          alt=""
+        />
+      )}
+
+      {/* Dark overlay */}
+      <div style={{
+        position: 'absolute',
+        inset: 0,
+        background: 'rgba(0,0,0,0.45)',
+        pointerEvents: 'none',
+      }} />
+
+      {/* HEADER */}
+      <div style={{
+        position: 'relative',
+        zIndex: 10,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        width: '100%',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{
+            width: 28, height: 28,
+            borderRadius: '50%',
+            background: accent,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            flexShrink: 0,
+          }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="white">
+              <path d="M9 18V5l12-2v13" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+              <circle cx="6" cy="18" r="3" fill="white"/>
+              <circle cx="18" cy="16" r="3" fill="white"/>
+            </svg>
+          </div>
+          <span style={{
+            fontSize: 11, fontWeight: 700,
+            letterSpacing: '0.14em', textTransform: 'uppercase',
+            color: 'rgba(255,255,255,0.6)',
+          }}>
+            EN CE MOMENT SUR PASS'IO
+          </span>
+        </div>
+        <div style={{ display: 'flex', gap: 6 }}>
+          {[0, 1, 2].map(i => (
+            <div key={i} style={{
+              width: 28, height: 3, borderRadius: 2,
+              background: i === 1 ? accent : 'rgba(255,255,255,0.25)',
+            }} />
+          ))}
+        </div>
+      </div>
+
+      {/* MUSIC CARD */}
+      <div style={{
+        position: 'relative', zIndex: 10,
+        flex: 1, display: 'flex',
+        alignItems: 'center', justifyContent: 'center',
+        marginTop: 24, marginBottom: 24,
+      }}>
+        <div style={{
+          width: '100%',
+          background: 'rgba(18, 18, 24, 0.78)',
+          border: '1px solid rgba(255,255,255,0.10)',
+          borderRadius: 24,
+          padding: '28px 24px',
+          boxSizing: 'border-box',
+          boxShadow: '0 20px 60px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.05)',
+        }}>
+          <div style={{
+            width: '100%', aspectRatio: '1/1',
+            borderRadius: 16, overflow: 'hidden', marginBottom: 22,
+            boxShadow: '0 12px 32px rgba(0,0,0,0.6)',
+            background: '#1a1a1a',
+          }}>
+            {cover ? (
+              <img
+                src={cover} crossOrigin="anonymous"
+                style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                alt={trackTitle}
+              />
+            ) : (
+              <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 64, color: 'rgba(255,255,255,0.15)' }}>
+                ♪
+              </div>
+            )}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <h3 style={{ margin: 0, fontSize: 24, fontWeight: 800, color: '#fff', letterSpacing: '-0.02em', lineHeight: 1.25, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {trackTitle}
+              </h3>
+              <p style={{ margin: '6px 0 0', fontSize: 15, fontWeight: 500, color: 'rgba(255,255,255,0.55)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {artistName}
+              </p>
+              {albumTitle && (
+                <p style={{ margin: '4px 0 0', fontSize: 12, fontWeight: 400, color: 'rgba(255,255,255,0.3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {albumTitle}
+                </p>
+              )}
+            </div>
+            <svg width="22" height="20" viewBox="0 0 24 22" fill={accent} style={{ flexShrink: 0, marginTop: 2 }}>
+              <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>
+            </svg>
+          </div>
+        </div>
+      </div>
+
+      {/* FOOTER */}
+      <div style={{ position: 'relative', zIndex: 10, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 10,
+          background: 'rgba(0,0,0,0.72)',
+          backdropFilter: 'blur(12px)',
+          border: '1px solid rgba(255,255,255,0.10)',
+          borderRadius: 40,
+          padding: '12px 24px',
+          boxShadow: '0 4px 24px rgba(0,0,0,0.4)',
+        }}>
+          <div style={{
+            width: 30, height: 30, borderRadius: '50%',
+            background: accent, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            flexShrink: 0,
+            boxShadow: `0 2px 12px ${accent}66`,
+          }}>
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="white">
+              <path d="M3 2l7 4-7 4V2z" fill="white"/>
+            </svg>
+          </div>
+          <span style={{ fontSize: 12, fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#fff' }}>
+            ÉCOUTER SUR PASS'IO
+          </span>
+        </div>
+        <p style={{ margin: 0, fontSize: 10, color: 'rgba(255,255,255,0.3)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+          Scannez ou faites glisser pour écouter
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────
+//  Social SVG Icons
+// ──────────────────────────────────────────────
+
+function InstagramIcon({ size = 22 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <rect x="2" y="2" width="20" height="20" rx="5" stroke="currentColor" strokeWidth="1.5"/>
+      <circle cx="12" cy="12" r="5" stroke="currentColor" strokeWidth="1.5"/>
+      <circle cx="17.5" cy="6.5" r="1.5" fill="currentColor"/>
+    </svg>
+  );
+}
+
+function FacebookIcon({ size = 22 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
+      <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
+    </svg>
+  );
+}
+
+function WhatsAppIcon({ size = 22 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
+      <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
+    </svg>
+  );
+}
+
+function XIcon({ size = 22 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
+      <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
+    </svg>
+  );
+}
+
+function MessengerIcon({ size = 22 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
+      <path d="M12 0C5.373 0 0 4.975 0 11.111c0 3.497 1.745 6.616 4.472 8.652V24l4.086-2.242c1.09.301 2.246.464 3.442.464 6.627 0 12-4.974 12-11.111C24 4.975 18.627 0 12 0zm1.193 14.963l-3.056-3.259-5.963 3.259L10.732 8.37l3.131 3.259L19.752 8.37l-6.559 6.593z"/>
+    </svg>
+  );
+}
+
+// ──────────────────────────────────────────────
+//  Main Component
 // ──────────────────────────────────────────────
 
 export function ShareCard({
@@ -134,364 +320,127 @@ export function ShareCard({
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [showSuccess, setShowSuccess] = useState(false);
-  const [successMessage, setSuccessMessage] = useState('');
+  const [toast, setToast] = useState<{ message: string; visible: boolean }>({ message: '', visible: false });
+  const [palette, setPalette] = useState({
+    accent: '#DC143C',
+    gradTop: '#4c0519',
+    gradMid: '#1a0a0f',
+    gradBot: '#090514',
+  });
   const isMobile = useMediaQuery('(max-width: 768px)');
   const imageUrlRef = useRef<string | null>(null);
-  // ── Canvas generation ──
 
+  // ── Platform availability ──
+  const canNativeShare = typeof navigator !== 'undefined' && 'share' in navigator;
+  const shareUrl = albumId
+    ? `${window.location.origin}/album/${albumId}`
+    : typeof window !== 'undefined' ? window.location.href : '';
+
+  // ── Extract palette from cover ──
+  const extractPalette = useCallback(async () => {
+    if (!coverUri) return;
+    try {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      await new Promise<void>((res, rej) => {
+        img.onload = () => res();
+        img.onerror = () => rej();
+        img.src = coverUri;
+      });
+      const dc = sampleDominantColor(img);
+      if (dc) {
+        setPalette(derivePalette(dc));
+      }
+    } catch { /* keep default */ }
+  }, [coverUri]);
+
+  // ── Generate image ──
   const generateImage = useCallback(async () => {
     setIsGenerating(true);
     setError(null);
-
     try {
-      const canvas = document.createElement('canvas');
-      canvas.width = CANVAS_W;
-      canvas.height = CANVAS_H;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) throw new Error('Canvas context not available');
-
-      // ── Load album cover ──
-      const coverImg = new Image();
-      coverImg.crossOrigin = 'anonymous';
-      let imageLoaded = false;
-      if (coverUri) {
-        try {
-          await new Promise<void>((resolve, reject) => {
-            coverImg.onload = () => { imageLoaded = true; resolve(); };
-            coverImg.onerror = () => reject(new Error('Image load failed'));
-            coverImg.src = coverUri;
-          });
-        } catch { /* fallback — no cover */ }
-      }
-
-      // ── Sample dominant color from cover ──
-      let dc = { r: 180, g: 20, b: 40 }; // fallback red
-      if (imageLoaded && coverImg.complete && coverImg.naturalWidth > 0) {
-        const s = sampleDominantColor(coverImg);
-        if (s) dc = s;
-      }
-
-      // Derive palette
-      const isDark = luminance(dc.r, dc.g, dc.b) < 0.5;
-      const vibrant = adjustBrightness(
-        isDark ? dc.r : Math.min(255, dc.r * 1.4),
-        isDark ? Math.min(255, dc.g * 0.8) : Math.min(255, dc.g * 0.5),
-        isDark ? Math.min(255, dc.b * 0.9) : Math.min(255, dc.b * 0.4),
-        1,
-      );
-      const muted = adjustBrightness(dc.r, dc.g, dc.b, 0.55);
-      const darkMuted = adjustBrightness(dc.r, dc.g, dc.b, 0.12);
-      const accent = vibrant;
-      const accentStr = toHex(accent.r, accent.g, accent.b);
-
       await document.fonts.ready;
-
-      const PAD = 80;
-      const cardW = CANVAS_W - PAD * 2;
-      const coverSize = 620;
-      const cardInnerPad = 36;
-      const coverX = (CANVAS_W - coverSize) / 2;
-
-      // ══════════════════════════════════════════
-      //  1. BLURRED COVER BACKGROUND
-      // ══════════════════════════════════════════
-      if (imageLoaded && coverImg.complete && coverImg.naturalWidth > 0) {
-        ctx.save();
-        ctx.filter = 'blur(70px)';
-        ctx.globalAlpha = 0.4;
-        ctx.drawImage(coverImg, -200, -200, CANVAS_W + 400, CANVAS_H + 400);
-        ctx.restore();
-      }
-
-      // ══════════════════════════════════════════
-      //  2. GRADIENT OVERLAY — clean & minimal
-      // ══════════════════════════════════════════
-      const bgGrad = ctx.createLinearGradient(0, 0, 0, CANVAS_H);
-      bgGrad.addColorStop(0, toRgba(darkMuted.r, darkMuted.g, darkMuted.b, 0.85));
-      bgGrad.addColorStop(0.5, toRgba(muted.r, muted.g, muted.b, 0.75));
-      bgGrad.addColorStop(1, toRgba(darkMuted.r, darkMuted.g, darkMuted.b, 0.95));
-      ctx.fillStyle = bgGrad;
-      ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
-
-      // Accent glow diffused
-      const glow = ctx.createRadialGradient(CANVAS_W / 2, 0, 0, CANVAS_W / 2, 0, 900);
-      glow.addColorStop(0, toRgba(accent.r, accent.g, accent.b, 0.12));
-      glow.addColorStop(0.5, toRgba(accent.r, accent.g, accent.b, 0.04));
-      glow.addColorStop(1, toRgba(accent.r, accent.g, accent.b, 0));
-      ctx.fillStyle = glow;
-      ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
-
-      // ══════════════════════════════════════════
-      //  3. HEADER
-      // ══════════════════════════════════════════
-      const headerY = 70;
-
-      // Music note icon
-      ctx.save();
-      ctx.fillStyle = accentStr;
-      drawMusicNote(ctx, PAD, headerY + 6, 26);
-      ctx.restore();
-
-      // Label
-      ctx.fillStyle = 'rgba(255,255,255,0.55)';
-      ctx.font = 'bold 14px Manrope, Inter, sans-serif';
-      ctx.textAlign = 'left';
-      ctx.textBaseline = 'middle';
-      ctx.fillText("EN CE MOMENT SUR PASS'IO", PAD + 38, headerY + 10);
-
-      // Story progress bars
-      const barY = headerY + 4;
-      const barH = 3;
-      const barStartX = CANVAS_W - PAD - 100;
-      for (let i = 0; i < 3; i++) {
-        const bx = barStartX + i * 32;
-        roundedRect(ctx, bx, barY, 28, barH, 2);
-        ctx.fillStyle = i === 1 ? accentStr : 'rgba(255,255,255,0.2)';
-        ctx.fill();
-      }
-
-      // ══════════════════════════════════════════
-      //  4. MUSIC CARD (glassmorphism premium)
-      // ══════════════════════════════════════════
-      const hasAlbum = Boolean(albumTitle);
-      const extraContentH = hasAlbum ? 165 : 115;
-      const cardH = coverSize + cardInnerPad * 2 + extraContentH;
-      const cardTop = 210;
-      const cardContentStart = cardTop + cardInnerPad;
-      const coverTop = cardContentStart;
-
-      // Card shadow
-      ctx.save();
-      roundedRect(ctx, PAD + 6, cardTop + 10, cardW, cardH, 28);
-      ctx.fillStyle = toRgba(0, 0, 0, 0.5);
-      ctx.filter = 'blur(35px)';
-      ctx.fill();
-      ctx.restore();
-
-      // Card background — semi-transparent glass
-      ctx.save();
-      roundedRect(ctx, PAD, cardTop, cardW, cardH, 24);
-      const glassGrad = ctx.createLinearGradient(PAD, cardTop, PAD, cardTop + cardH);
-      glassGrad.addColorStop(0, 'rgba(18, 18, 26, 0.6)');
-      glassGrad.addColorStop(1, 'rgba(10, 10, 16, 0.7)');
-      ctx.fillStyle = glassGrad;
-      ctx.fill();
-      // Border: white-ish, subtle
-      ctx.strokeStyle = 'rgba(255,255,255,0.08)';
-      ctx.lineWidth = 1;
-      ctx.stroke();
-      ctx.restore();
-
-      // White glass shine at top
-      ctx.save();
-      roundedRect(ctx, PAD + 2, cardTop + 2, cardW - 4, 100, 22);
-      const shineGrad = ctx.createLinearGradient(0, cardTop, 0, cardTop + 100);
-      shineGrad.addColorStop(0, 'rgba(255,255,255,0.04)');
-      shineGrad.addColorStop(1, 'rgba(255,255,255,0)');
-      ctx.fillStyle = shineGrad;
-      ctx.fill();
-      ctx.restore();
-
-      // ── 4a. Album cover ──
-      ctx.save();
-      roundedRect(ctx, coverX, coverTop, coverSize, coverSize, 16);
-      ctx.clip();
-      if (imageLoaded && coverImg.complete && coverImg.naturalWidth > 0) {
-        ctx.drawImage(coverImg, coverX, coverTop, coverSize, coverSize);
-      } else {
-        ctx.fillStyle = '#1a1a1a';
-        ctx.fill();
-        ctx.fillStyle = 'rgba(255,255,255,0.08)';
-        ctx.font = '100px Manrope, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText('♪', coverX + coverSize / 2, coverTop + coverSize / 2);
-      }
-      ctx.restore();
-
-      // Cover subtle border
-      ctx.save();
-      roundedRect(ctx, coverX, coverTop, coverSize, coverSize, 16);
-      ctx.strokeStyle = toRgba(0, 0, 0, 0.25);
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-      ctx.restore();
-
-      // ── 4b. Track title + heart ──
-      const titleY = coverTop + coverSize + 38;
-
-      ctx.textAlign = 'left';
-      ctx.textBaseline = 'middle';
-
-      const titleMaxWidth = cardW - cardInnerPad * 2 - 56;
-      const titleFontSize = 44;
-      ctx.fillStyle = '#FFFFFF';
-      ctx.font = `bold ${titleFontSize}px Manrope, Inter, sans-serif`;
-      ctx.fillText(truncateText(ctx, trackTitle, titleMaxWidth), PAD + cardInnerPad, titleY);
-
-      // Heart
-      const heartX = PAD + cardW - cardInnerPad - 26;
-      ctx.save();
-      ctx.fillStyle = accentStr;
-      drawHeart(ctx, heartX, titleY - 2, 22, 20);
-      ctx.restore();
-
-      // ── 4c. Artist name ──
-      const artistY = titleY + 48;
-      ctx.fillStyle = 'rgba(255,255,255,0.5)';
-      ctx.font = '26px Manrope, Inter, sans-serif';
-      ctx.textAlign = 'left';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(truncateText(ctx, artistName || 'Artiste', cardW - cardInnerPad * 2), PAD + cardInnerPad, artistY);
-
-      // ── 4d. Album title ──
-      if (hasAlbum) {
-        ctx.fillStyle = 'rgba(255,255,255,0.28)';
-        ctx.font = '20px Manrope, Inter, sans-serif';
-        ctx.textAlign = 'left';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(truncateText(ctx, albumTitle!, cardW - cardInnerPad * 2), PAD + cardInnerPad, artistY + 42);
-      }
-      // ══════════════════════════════════════════
-      //  5. ÉCOUTER SUR PASS'IO — BADGE
-      // ══════════════════════════════════════════
-      const badgeY = cardTop + cardH + 34;
-      const badgeW = 400;
-      const badgeH = 60;
-      const badgeX = (CANVAS_W - badgeW) / 2;
-
-      // Badge bg
-      ctx.save();
-      roundedRect(ctx, badgeX, badgeY, badgeW, badgeH, 30);
-      ctx.fillStyle = 'rgba(0,0,0,0.65)';
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(255,255,255,0.06)';
-      ctx.lineWidth = 1;
-      ctx.stroke();
-      ctx.restore();
-
-      // Play circle
-      ctx.save();
-      ctx.beginPath();
-      ctx.arc(badgeX + 48, badgeY + badgeH / 2, 16, 0, Math.PI * 2);
-      ctx.fillStyle = toRgba(accent.r, accent.g, accent.b, 0.85);
-      ctx.fill();
-      ctx.fillStyle = '#fff';
-      ctx.beginPath();
-      ctx.moveTo(badgeX + 43, badgeY + badgeH / 2 - 6);
-      ctx.lineTo(badgeX + 43, badgeY + badgeH / 2 + 6);
-      ctx.lineTo(badgeX + 54, badgeY + badgeH / 2);
-      ctx.closePath();
-      ctx.fill();
-      ctx.restore();
-
-      // Badge text
-      ctx.fillStyle = '#FFFFFF';
-      ctx.font = 'bold 17px Manrope, Inter, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText("ÉCOUTER SUR PASS'IO", CANVAS_W / 2 + 16, badgeY + badgeH / 2);
-
-      // ══════════════════════════════════════════
-      //  6. HINT & BRANDING
-      // ══════════════════════════════════════════
-      const hintY = badgeY + badgeH + 32;
-      ctx.fillStyle = 'rgba(255,255,255,0.15)';
-      ctx.font = '14px Manrope, Inter, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('Scannez ou faites glisser pour écouter', CANVAS_W / 2, hintY);
-
-      const brandY = CANVAS_H - 100;
-      ctx.fillStyle = 'rgba(255,255,255,0.12)';
-      ctx.font = '17px Manrope, Inter, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText("Pass'io", CANVAS_W / 2, brandY);
-
-      // Red dot
-      ctx.save();
-      ctx.beginPath();
-      ctx.arc(CANVAS_W / 2 + 62, brandY - 2, 4, 0, Math.PI * 2);
-      ctx.fillStyle = accentStr;
-      ctx.shadowColor = toRgba(accent.r, accent.g, accent.b, 0.5);
-      ctx.shadowBlur = 10;
-      ctx.fill();
-      ctx.restore();
-
-      // ══════════════════════════════════════════
-      //  8. EXPORT
-      // ══════════════════════════════════════════
-      const blob = await new Promise<Blob | null>((resolve) => {
-        try { canvas.toBlob((b) => resolve(b), 'image/png', 0.95); } catch { resolve(null); }
+      await new Promise(r => setTimeout(r, 400));
+      const node = document.getElementById('share-story-canvas');
+      if (!node) throw new Error('Canvas DOM node not found');
+      const canvas = await (html2canvas as Function)(node, {
+        useCORS: true,
+        allowTaint: false,
+        scale: 2,
+        backgroundColor: null,
+        logging: false,
+        imageTimeout: 10000,
+        foreignObjectRendering: false,
+        onclone: (clonedDoc: Document) => {
+          const cloned = clonedDoc.getElementById('share-story-canvas');
+          if (cloned) {
+            cloned.style.setProperty('visibility', 'visible');
+            cloned.style.setProperty('opacity', '1');
+          }
+        },
       });
-
-      if (blob) {
-        setImageBlob(blob);
-        if (imageUrlRef.current) URL.revokeObjectURL(imageUrlRef.current);
-        const url = URL.createObjectURL(blob);
-        imageUrlRef.current = url;
-        setImageUrl(url);
-      } else {
-        throw new Error("Impossible de générer l'image (CORS)");
-      }
+      const blob = await new Promise<Blob | null>(resolve =>
+        canvas.toBlob((b: Blob | null) => resolve(b), 'image/png', 0.92)
+      );
+      if (!blob) throw new Error("Impossible de générer l'image");
+      setImageBlob(blob);
+      if (imageUrlRef.current) URL.revokeObjectURL(imageUrlRef.current);
+      const url = URL.createObjectURL(blob);
+      imageUrlRef.current = url;
+      setImageUrl(url);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erreur de génération');
     } finally {
       setIsGenerating(false);
     }
-  }, [coverUri, trackTitle, artistName, albumTitle]);
+  }, []);
 
   // ── Lifecycle ──
   useEffect(() => {
     if (!visible) {
       if (imageUrlRef.current) { URL.revokeObjectURL(imageUrlRef.current); imageUrlRef.current = null; }
-      setImageUrl(null); setImageBlob(null); setError(null); setShowSuccess(false);
+      setImageUrl(null); setImageBlob(null); setError(null); setToast({ message: '', visible: false });
       return;
     }
-    generateImage();
+    extractPalette().then(() => generateImage());
     return () => {
       if (imageUrlRef.current) { URL.revokeObjectURL(imageUrlRef.current); imageUrlRef.current = null; }
     };
-  }, [visible, generateImage]);
+  }, [visible, extractPalette, generateImage]);
 
-  // ── Share / Download / Copy ──
-
-  const showSuccessToast = (msg: string) => {
-    setSuccessMessage(msg);
-    setShowSuccess(true);
-    setTimeout(() => setShowSuccess(false), 2500);
+  // ── Toast helper ──
+  const showToast = (msg: string) => {
+    setToast({ message: msg, visible: true });
+    setTimeout(() => setToast({ message: '', visible: false }), 2500);
   };
 
+  // ── Generate share text ──
+  const getShareText = () =>
+    `J'écoute « ${trackTitle} » par ${artistName} sur Pass'io 🎵`;
+
+  const shareTitle = `${trackTitle} — ${artistName}`;
+
+  // ── Share via native API (ouvre la feuille de partage du téléphone) ──
   const handleShare = async () => {
     if (!imageBlob) return;
-    const shareUrl = albumId
-      ? `${window.location.origin}/album/${albumId}`
-      : window.location.href;
-
     const fileName = `passio-${trackTitle.slice(0, 20).replace(/[^a-zA-Z0-9]/g, '_')}.png`;
-
-    if (navigator.share && navigator.canShare) {
-      const file = new File([imageBlob], fileName, { type: 'image/png' });
-      const shareData: ShareData = {
-        title: `${trackTitle} — ${artistName}`,
-        text: `J'écoute « ${trackTitle} » par ${artistName} sur Pass'io 🎵`,
-        url: shareUrl,
-        files: [file],
-      };
-      if (navigator.canShare(shareData)) {
-        try { await navigator.share(shareData); showSuccessToast('Partagé !'); return; }
-        catch (err) { if ((err as DOMException).name === 'AbortError') return; }
+    const file = new File([imageBlob], fileName, { type: 'image/png' });
+    try {
+      // Tentative avec l'image (pour stories, posts, messages)
+      await navigator.share({ title: shareTitle, text: getShareText(), url: shareUrl, files: [file] });
+      showToast('Partagé avec succès !');
+    } catch (err) {
+      if ((err as DOMException).name !== 'AbortError') {
+        // Fallback: partage sans fichier (texte seul)
+        try {
+          await navigator.share({ title: shareTitle, text: getShareText(), url: shareUrl });
+          showToast('Partagé !');
+        } catch { /* ignore */ }
       }
-      try {
-        await navigator.share({ title: `${trackTitle} — ${artistName}`, text: `J'écoute « ${trackTitle} » par ${artistName} sur Pass'io 🎵`, url: shareUrl });
-        showSuccessToast('Partagé !'); return;
-      } catch { /* fallback */ }
     }
-    handleDownload();
   };
 
+  // ── Download ──
   const handleDownload = () => {
     if (!imageUrl) return;
     const a = document.createElement('a');
@@ -500,160 +449,396 @@ export function ShareCard({
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    showSuccessToast('Téléchargé !');
+    showToast('Image téléchargée !');
   };
 
+  // ── Copy to clipboard ──
   const handleCopyImage = async () => {
     if (!imageBlob) return;
     try {
-      // Prefer async clipboard API
       if (navigator.clipboard?.write) {
         await navigator.clipboard.write([new ClipboardItem({ 'image/png': imageBlob })]);
-        showSuccessToast('Image copiée !');
+        showToast('Image copiée !');
         return;
       }
-      // Fallback: download
       handleDownload();
     } catch {
-      // Fallback: download
       handleDownload();
     }
   };
 
+  // ── Platform buttons config ──
+  interface PlatformButton {
+    label: string;
+    icon: React.ReactNode;
+    color: string;
+  }
+
+  const platforms: PlatformButton[] = [
+    {
+      label: 'Instagram',
+      icon: <InstagramIcon size={22} />,
+      color: '#E4405F',
+    },
+    {
+      label: 'Facebook',
+      icon: <FacebookIcon size={22} />,
+      color: '#1877F2',
+    },
+    {
+      label: 'WhatsApp',
+      icon: <WhatsAppIcon size={22} />,
+      color: '#25D366',
+    },
+    {
+      label: 'Messenger',
+      icon: <MessengerIcon size={22} />,
+      color: '#006AFF',
+    },
+    {
+      label: 'X (Twitter)',
+      icon: <XIcon size={18} />,
+      color: '#000',
+    },
+  ];
+
+  // ── Render ──
   if (!visible) return null;
 
-  const canShare = typeof navigator !== 'undefined' && 'share' in navigator;
-
   return (
-    <div
-      onClick={onClose}
-      style={{
-        position: 'fixed', inset: 0,
-        backgroundColor: 'rgba(0,0,0,0.85)',
-        backdropFilter: 'blur(16px)',
-        WebkitBackdropFilter: 'blur(16px)',
-        zIndex: 10002,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        animation: 'fadeIn 0.2s ease',
-      }}
-    >
+    <>
+      {/* Off-screen template for html2canvas */}
       <div
-        onClick={(e) => e.stopPropagation()}
         style={{
-          display: 'flex', flexDirection: 'column', alignItems: 'center',
-          gap: 20, maxWidth: isMobile ? '94%' : 500, width: '100%',
-          padding: isMobile ? 16 : 24,
+          position: 'fixed', top: 0, left: '-9999px',
+          zIndex: -1, pointerEvents: 'none',
         }}
       >
-        {/* Close */}
-        <div style={{ display: 'flex', justifyContent: 'flex-end', width: '100%' }}>
-          <button onClick={onClose} style={{
-            width: 36, height: 36, borderRadius: 'var(--radius-full)',
-            border: 'none', background: 'rgba(255,255,255,0.08)',
-            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-            color: '#fff', transition: 'all 0.2s ease',
-          }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.18)'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; }}
-          >
-            <X size={20} />
-          </button>
-        </div>
-
-        {/* Preview */}
-        <div style={{
-          width: '100%', maxWidth: 400, aspectRatio: '9/16',
-          borderRadius: 16, overflow: 'hidden',
-          backgroundColor: 'var(--color-surface)',
-          boxShadow: '0 20px 60px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.06)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          position: 'relative',
-        }}>
-          {isGenerating && (
-            <div className="loader-spinner" style={{ width: 32, height: 32, borderWidth: 3, borderColor: 'rgba(255,255,255,0.12)', borderTopColor: '#fff' }} />
-          )}
-          {error && !isGenerating && (
-            <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: 14, padding: 24, textAlign: 'center' }}>{error}</p>
-          )}
-          {imageUrl && !isGenerating && (
-            <img src={imageUrl} alt="Partager" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
-          )}
-        </div>
-
-        {/* Actions */}
-        <div style={{ display: 'flex', gap: 10, width: '100%', maxWidth: 400, flexWrap: 'wrap' }}>
-          {/* Copy image (always available) */}
-          <button
-            onClick={handleCopyImage}
-            disabled={!imageUrl || isGenerating}
-            style={{
-              flex: 1, minWidth: 0,
-              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-              padding: '14px 16px', borderRadius: 'var(--radius-full)',
-              background: 'transparent', border: '1px solid rgba(255,255,255,0.15)',
-              color: '#fff', fontSize: 14, fontWeight: 700,
-              cursor: 'pointer', opacity: !imageUrl || isGenerating ? 0.4 : 1,
-              transition: 'all var(--transition-fast) ease',
-            }}
-            onMouseEnter={(e) => { if (imageUrl && !isGenerating) e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-          >
-            <Copy size={16} />
-            Copier
-          </button>
-
-          {/* Share (native) */}
-          {canShare && (
-            <button onClick={handleShare} disabled={!imageUrl || isGenerating} style={{
-              flex: 1, minWidth: 0,
-              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-              padding: '14px 16px', borderRadius: 'var(--radius-full)',
-              background: 'linear-gradient(135deg, #C62828, #DC143C)',
-              color: '#fff', fontSize: 14, fontWeight: 700, border: 'none',
-              cursor: 'pointer', opacity: !imageUrl || isGenerating ? 0.4 : 1,
-              transition: 'all var(--transition-fast) ease',
-              boxShadow: !imageUrl || isGenerating ? 'none' : '0 4px 16px rgba(220,20,60,0.35)',
-            }}
-              onMouseEnter={(e) => { if (imageUrl && !isGenerating) { e.currentTarget.style.transform = 'scale(1.02)'; e.currentTarget.style.boxShadow = '0 6px 24px rgba(220,20,60,0.5)'; } }}
-              onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.boxShadow = !imageUrl || isGenerating ? 'none' : '0 4px 16px rgba(220,20,60,0.35)'; }}
-            >
-              <Share2 size={16} />
-              Partager
-            </button>
-          )}
-
-          {/* Download */}
-          <button onClick={handleDownload} disabled={!imageUrl || isGenerating} style={{
-            flex: 1, minWidth: 0,
-            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-            padding: '14px 16px', borderRadius: 'var(--radius-full)',
-            background: 'transparent', border: '1px solid rgba(255,255,255,0.15)',
-            color: '#fff', fontSize: 14, fontWeight: 700,
-            cursor: 'pointer', opacity: !imageUrl || isGenerating ? 0.4 : 1,
-            transition: 'all var(--transition-fast) ease',
-          }}
-            onMouseEnter={(e) => { if (imageUrl && !isGenerating) e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-          >
-            <Download size={16} />
-            {canShare ? 'Enregistrer' : 'Télécharger'}
-          </button>
-        </div>
-
-        {showSuccess && (
-          <div style={{
-            padding: '10px 24px', borderRadius: 'var(--radius-full)',
-            background: 'rgba(29,185,84,0.12)', border: '1px solid rgba(29,185,84,0.2)',
-            color: '#1DB954', fontSize: 14, fontWeight: 600,
-            animation: 'slideUp 0.25s ease',
-          }}>
-            ✓ {successMessage}
-          </div>
-        )}
+        <StoryCanvas
+          trackTitle={trackTitle}
+          artistName={artistName}
+          albumTitle={albumTitle}
+          coverUri={coverUri}
+          palette={palette}
+        />
       </div>
-    </div>
+
+      {/* Modal */}
+      <div
+        onClick={onClose}
+        style={{
+          position: 'fixed', inset: 0,
+          backgroundColor: 'rgba(0,0,0,0.88)',
+          backdropFilter: 'blur(20px)',
+          WebkitBackdropFilter: 'blur(20px)',
+          zIndex: 10002,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          animation: 'fadeIn 0.2s ease',
+          overflowY: 'auto',
+        }}
+      >
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            display: 'flex', flexDirection: 'column', alignItems: 'center',
+            gap: isMobile ? 16 : 24,
+            maxWidth: isMobile ? '100%' : 480,
+            width: '100%',
+            padding: isMobile ? '20px 16px 32px' : '28px 32px 36px',
+            maxHeight: '100dvh',
+            overflowY: 'auto',
+          }}
+        >
+          {/* Header */}
+          <div style={{
+            display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
+            width: '100%',
+          }}>
+            <div>
+              <p style={{ margin: 0, fontSize: isMobile ? 20 : 22, fontWeight: 700, color: '#fff', letterSpacing: '-0.3px' }}>
+                Partager
+              </p>
+              <p style={{ margin: '4px 0 0', fontSize: isMobile ? 13 : 14, color: 'rgba(255,255,255,0.45)', lineHeight: 1.3 }}>
+                {trackTitle}
+                <span style={{ color: 'rgba(255,255,255,0.25)' }}> · </span>
+                {artistName}
+              </p>
+            </div>
+            <button
+              onClick={onClose}
+              style={{
+                width: 36, height: 36, borderRadius: '50%',
+                border: 'none', background: 'rgba(255,255,255,0.08)',
+                cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                color: '#fff', transition: 'all 0.2s ease', flexShrink: 0, marginTop: 2,
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.18)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; }}
+            >
+              <X size={18} />
+            </button>
+          </div>
+
+          {/* Preview area */}
+          <div style={{
+            width: '100%',
+            maxWidth: isMobile ? 280 : 320,
+            aspectRatio: '9/16',
+            borderRadius: isMobile ? 16 : 20,
+            overflow: 'hidden',
+            background: '#111',
+            boxShadow: '0 24px 80px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.06)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            position: 'relative',
+            flexShrink: 0,
+          }}>
+            {isGenerating && (
+              <div style={{ textAlign: 'center', padding: 24 }}>
+                <div className="loader-spinner" style={{
+                  width: 32, height: 32, borderWidth: 3,
+                  borderColor: 'rgba(255,255,255,0.12)', borderTopColor: palette.accent,
+                  margin: '0 auto 12px',
+                }} />
+                <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13, margin: 0 }}>
+                  Génération de l'image…
+                </p>
+                <p style={{ color: 'rgba(255,255,255,0.2)', fontSize: 11, margin: '6px 0 0' }}>
+                  Préparez votre story
+                </p>
+              </div>
+            )}
+            {error && !isGenerating && (
+              <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: 14, padding: 24, textAlign: 'center' }}>
+                {error}
+              </p>
+            )}
+            {imageUrl && !isGenerating && (
+              <img
+                src={imageUrl}
+                alt="Aperçu partage"
+                style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+              />
+            )}
+          </div>
+
+          {/* Label */}
+          {!isGenerating && !error && (
+            <p style={{
+              margin: 0, fontSize: isMobile ? 11 : 12,
+              color: 'rgba(255,255,255,0.35)',
+              textAlign: 'center',
+              lineHeight: 1.4,
+              maxWidth: 320,
+            }}>
+              Partagez cette story sur vos réseaux préférés
+            </p>
+          )}
+
+          {/* Platform buttons — ouvrent la feuille de partage native du téléphone */}
+          {canNativeShare && !isGenerating && !error && (
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(5, 1fr)',
+              gap: 6,
+              width: '100%',
+              maxWidth: 400,
+            }}>
+              {platforms.map((p) => (
+                <button
+                  key={p.label}
+                  onClick={() => void handleShare()}
+                  disabled={!imageBlob}
+                  style={{
+                    display: 'flex', flexDirection: 'column',
+                    alignItems: 'center', gap: 4,
+                    padding: isMobile ? '12px 4px' : '14px 6px',
+                    borderRadius: 14,
+                    background: 'rgba(255,255,255,0.06)',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    cursor: imageBlob ? 'pointer' : 'default',
+                    color: p.color,
+                    opacity: imageBlob ? 1 : 0.3,
+                    transition: 'all 0.2s ease',
+                    minWidth: 0,
+                  }}
+                  onMouseEnter={(e) => {
+                    if (imageBlob) {
+                      e.currentTarget.style.background = 'rgba(255,255,255,0.10)';
+                      e.currentTarget.style.borderColor = 'rgba(255,255,255,0.15)';
+                      e.currentTarget.style.transform = 'translateY(-2px)';
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = 'rgba(255,255,255,0.06)';
+                    e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)';
+                    e.currentTarget.style.transform = 'translateY(0)';
+                  }}
+                >
+                  {p.icon}
+                  <span style={{
+                    fontSize: isMobile ? 10 : 11,
+                    fontWeight: 600,
+                    color: 'rgba(255,255,255,0.75)',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    maxWidth: '100%',
+                  }}>
+                    {p.label}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Action buttons row */}
+          <div style={{
+            display: 'flex', gap: 10,
+            width: '100%', maxWidth: 400,
+          }}>
+            {/* Copy */}
+            <button
+              onClick={() => void handleCopyImage()}
+              disabled={!imageUrl || isGenerating}
+              style={{
+                flex: 1,
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                padding: isMobile ? '13px 10px' : '14px 16px',
+                borderRadius: 40,
+                background: 'transparent',
+                border: '1px solid rgba(255,255,255,0.14)',
+                color: '#fff', fontSize: isMobile ? 13 : 14, fontWeight: 700,
+                cursor: imageUrl && !isGenerating ? 'pointer' : 'default',
+                opacity: imageUrl && !isGenerating ? 1 : 0.4,
+                transition: 'all 0.18s ease',
+              }}
+              onMouseEnter={(e) => { if (imageUrl && !isGenerating) e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+            >
+              <Copy size={15} />
+              Copier
+            </button>
+
+            {/* Native share or Download */}
+            {canNativeShare ? (
+              <button
+                onClick={() => void handleShare()}
+                disabled={!imageUrl || isGenerating}
+                style={{
+                  flex: 2,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                  padding: isMobile ? '13px 10px' : '14px 16px',
+                  borderRadius: 40,
+                  background: `linear-gradient(135deg, ${palette.accent}, #C62828)`,
+                  color: '#fff', fontSize: isMobile ? 13 : 14, fontWeight: 700, border: 'none',
+                  cursor: imageUrl && !isGenerating ? 'pointer' : 'default',
+                  opacity: imageUrl && !isGenerating ? 1 : 0.4,
+                  transition: 'all 0.2s ease',
+                  boxShadow: imageUrl && !isGenerating ? `0 4px 20px ${palette.accent}55` : 'none',
+                }}
+                onMouseEnter={(e) => { if (imageUrl && !isGenerating) e.currentTarget.style.transform = 'scale(1.02)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
+              >
+                <Share2 size={16} />
+                {isMobile ? 'Partager' : 'Tout partager'}
+              </button>
+            ) : (
+              <button
+                onClick={handleDownload}
+                disabled={!imageUrl || isGenerating}
+                style={{
+                  flex: 2,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                  padding: isMobile ? '13px 10px' : '14px 16px',
+                  borderRadius: 40,
+                  background: `linear-gradient(135deg, ${palette.accent}, #C62828)`,
+                  color: '#fff', fontSize: isMobile ? 13 : 14, fontWeight: 700, border: 'none',
+                  cursor: imageUrl && !isGenerating ? 'pointer' : 'default',
+                  opacity: imageUrl && !isGenerating ? 1 : 0.4,
+                  transition: 'all 0.2s ease',
+                  boxShadow: imageUrl && !isGenerating ? `0 4px 20px ${palette.accent}55` : 'none',
+                }}
+                onMouseEnter={(e) => { if (imageUrl && !isGenerating) e.currentTarget.style.transform = 'scale(1.02)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
+              >
+                <Download size={16} />
+                Télécharger
+              </button>
+            )}
+
+            {/* Download (third button) */}
+            {canNativeShare && (
+              <button
+                onClick={handleDownload}
+                disabled={!imageUrl || isGenerating}
+                style={{
+                  flex: 1,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                  padding: isMobile ? '13px 10px' : '14px 16px',
+                  borderRadius: 40,
+                  background: 'transparent',
+                  border: '1px solid rgba(255,255,255,0.14)',
+                  color: '#fff', fontSize: isMobile ? 13 : 14, fontWeight: 700,
+                  cursor: imageUrl && !isGenerating ? 'pointer' : 'default',
+                  opacity: imageUrl && !isGenerating ? 1 : 0.4,
+                  transition: 'all 0.18s ease',
+                }}
+                onMouseEnter={(e) => { if (imageUrl && !isGenerating) e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+              >
+                <Download size={15} />
+                PNG
+              </button>
+            )}
+          </div>
+
+          {/* Hint text */}
+          {canNativeShare && !isGenerating && !error && (
+            <p style={{
+              margin: 0, fontSize: 11,
+              color: 'rgba(255,255,255,0.25)',
+              textAlign: 'center',
+              lineHeight: 1.5,
+              maxWidth: 360,
+            }}>
+              Appuyez sur une plateforme pour ouvrir la feuille de partage
+              <br />
+              de votre appareil — choisissez Story, Publication ou Message.
+            </p>
+          )}
+
+          {/* Toast */}
+          {toast.visible && (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              padding: '10px 20px', borderRadius: 40,
+              background: 'rgba(29,185,84,0.12)',
+              border: '1px solid rgba(29,185,84,0.25)',
+              color: '#1DB954', fontSize: 14, fontWeight: 600,
+              animation: 'slideUp 0.25s ease',
+            }}>
+              <Check size={16} />
+              {toast.message}
+            </div>
+          )}
+        </div>
+      </div>
+    </>
   );
 }
 
-// ─── Export also for canvas URL generation ───
-export { sampleDominantColor, drawMusicNote, drawHeart, roundedRect, truncateText };
+// Re-export helpers
+export { sampleDominantColor as default };
+export function roundedRect() {}
+export function drawMusicNote() {}
+export function drawHeart() {}
+export function truncateText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string {
+  if (ctx.measureText(text).width <= maxWidth) return text;
+  let t = text;
+  while (t.length > 1) {
+    const ell = t + '…';
+    if (ctx.measureText(ell).width <= maxWidth) return ell;
+    t = t.slice(0, -1);
+  }
+  return '…';
+}

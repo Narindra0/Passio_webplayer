@@ -613,8 +613,29 @@ export function AudioProvider({ children }: { children: ReactNode }) {
 
   const playAtIndex = useCallback(async (index: number) => {
     const q = queueRef.current;
-    const alb = albumRef.current;
+    let alb = albumRef.current;
     if (index < 0 || index >= q.length || !alb) return;
+
+    // 🚀 En mode trackList (titres gratuits de plusieurs albums différents),
+    //    mettre à jour l'album et la clé de déchiffrement pour la piste courante
+    if (queueScopeRef.current === 'trackList' && queueParallelRef.current) {
+      const parallelAlbums = queueParallelRef.current.albums;
+      const parallelKeys = queueParallelRef.current.keys;
+      if (index < parallelAlbums.length && parallelAlbums[index]) {
+        const correctAlbum = parallelAlbums[index];
+        if (correctAlbum && correctAlbum.id !== albumRef.current?.id) {
+          albumRef.current = correctAlbum;
+          setAlbum(correctAlbum);
+          alb = correctAlbum;
+          // Mettre à jour la clé pour le bon album
+          const correctKey = parallelKeys[index] ?? null;
+          if (correctKey !== decryptionKeyRef.current) {
+            decryptionKeyRef.current = correctKey;
+            setDecryptionKey(correctKey);
+          }
+        }
+      }
+    }
 
     // Afficher le BottomPlayer IMMÉDIATEMENT avec l'état chargement
     // pour que l'utilisateur ait un retour visuel instantané
