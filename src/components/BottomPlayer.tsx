@@ -3,12 +3,13 @@ import { useAlbumColors } from '@/hooks/useAlbumColors';
 import { useCachedImage } from '@/hooks/useCachedImage';
 import { buildVibrantWithAlpha } from '@/services/colorExtractor';
 import { AlertCircle, Pause, Play, Share2, SkipBack, SkipForward, TextQuote, Volume2, Volume1, Volume, VolumeX, X } from 'lucide-react';
-import { hasFeatArtists, parseFeatArtists } from '@/utils/featArtists';
+import { hasFeatArtists, parseFeatArtists, normalizeArtistName } from '@/utils/featArtists';
 import { FeatArtistLinks } from './FeatArtistLinks';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useBottomInset } from '@/hooks/useBottomInset';
 import { ShareCard } from './ShareCard';
 import { useMemo, useEffect, useState } from 'react';
+import { useArtistNameLookup } from '@/contexts/ArtistLookupContext';
 
 export function BottomPlayer() {
   const {
@@ -18,6 +19,29 @@ export function BottomPlayer() {
     playbackError, clearPlaybackError, setLyricsAutoOpen,
     volume, setVolume, toggleMute, isMuted
   } = useAudioPlayback();
+  const { getArtistId } = useArtistNameLookup();
+  
+  // Build artistIdMap for FeatArtistLinks
+  const artistIdMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    if (album) {
+      // Add main artist
+      const name = album.artist_name || album.artist?.name;
+      const id = album.artist_id || album.artist?.id;
+      if (name && id) {
+        map[normalizeArtistName(name)] = id;
+      }
+      // Add artists from album.artists
+      if (album.artists) {
+        for (const a of album.artists) {
+          if (a.name && a.id) {
+            map[normalizeArtistName(a.name)] = a.id;
+          }
+        }
+      }
+    }
+    return map;
+  }, [album]);
   const { progress, duration } = useAudioProgress();
   const [showError, setShowError] = useState(false);
   const [shareModalVisible, setShareModalVisible] = useState(false);
@@ -172,12 +196,12 @@ export function BottomPlayer() {
                 style={{
                   position: 'absolute',
                   top: 0, left: 0, height: '100%',
-                  background: isLoading
+                  backgroundImage: isLoading
                     ? `linear-gradient(90deg, ${coverColors.colors?.vibrant || 'var(--color-accent)'}, ${coverColors.colors?.muted || 'var(--color-accent-light)'}, ${coverColors.colors?.vibrant || 'var(--color-accent)'})`
                     : `linear-gradient(90deg, ${coverColors.colors?.vibrant || 'var(--color-accent)'}, ${coverColors.colors?.muted || 'var(--color-accent-light)'})`,
                   width: `${Math.round(progress * 100)}%`,
                   borderRadius: 2,
-                  transition: 'width 0.1s linear, background 0.6s ease',
+                  transition: 'width 0.1s linear, background-image 0.6s ease',
                   boxShadow: `0 0 6px ${coverColors.colors?.vibrant || 'var(--color-accent-glow)'}`,
                   backgroundSize: isLoading ? '200% 100%' : undefined,
                   animation: isLoading ? 'shimmer 2s ease-in-out infinite' : undefined,
@@ -272,7 +296,7 @@ export function BottomPlayer() {
                 >
                   {artistName}
                   {featNames.length > 0 && (
-                    <FeatArtistLinks featNames={featNames} style={{ fontSize: isMobile ? 10 : 12 }} />
+                    <FeatArtistLinks featNames={featNames} artistIdMap={artistIdMap} style={{ fontSize: isMobile ? 10 : 12 }} />
                   )}
                 </div>
               </div>

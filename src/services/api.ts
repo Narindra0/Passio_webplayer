@@ -142,3 +142,7 @@ export async function fetchLyricsByUrl(lyricsUrl: string): Promise<string> {
 
   return response.text();
 }
+
+export async function getAudioToken(trackId: string): Promise<{ token: string; trackId: string }> {
+  return request<{ token: string; trackId: string }>(`/api/stream/tracks/${encodeURIComponent(trackId)}/token`, { method: 'GET' });
+}

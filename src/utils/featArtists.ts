@@ -16,6 +16,22 @@ export interface FeatParseResult {
   featNames: string[];
 }
 
+/**
+ * Normalise un nom d'artiste pour la recherche
+ * - Enlève la ponctuation inutile (.,;!?)
+ * - Enlève les espaces superflus
+ * - Met en minuscules
+ * - Préserve les accents, les symboles comme $, #, &, etc.
+ */
+export function normalizeArtistName(name: string): string {
+  if (!name) return '';
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[\s.,;!?]+/g, ' ') // Remplace espaces multiples ou ponctuation simple par un seul espace
+    .trim();
+}
+
 // Expressions régulières pour détecter les motifs feat/ft/featuring
 // Gère : (Feat. X), (Ft. X), feat. X, ft. X, featuring X, avec ou sans parenthèses
 // Les parenthèses sont optionnelles

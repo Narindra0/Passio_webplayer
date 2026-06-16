@@ -43,6 +43,7 @@ export class MSESecurePlayer {
   private downloadInProgress = false;
   /** ID appareil pour l'authentification des requêtes de streaming */
   public deviceId: string | null = null;
+  public currentToken: string | null = null;
 
   public onEnded: (() => void) | null = null;
 
@@ -74,6 +75,9 @@ export class MSESecurePlayer {
     };
     if (this.deviceId) {
       headers[DEVICE_HEADER] = this.deviceId;
+    }
+    if (this.currentToken) {
+      headers['X-Audio-Token'] = this.currentToken;
     }
     return headers;
   }

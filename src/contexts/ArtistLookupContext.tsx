@@ -12,6 +12,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { readFreeCatalogCache } from '@/services/freeCatalogCache';
 import { listAlbums, listOwnedAlbums } from '@/services/api';
 import type { PublicAlbumSummary } from '@/types/backend';
+import { normalizeArtistName } from '@/utils/featArtists';
 
 interface ArtistLookupValue {
   /** Retourne l'ID d'un artiste à partir de son nom, ou null si inconnu */
@@ -38,7 +39,7 @@ function buildNameToIdMap(albums: PublicAlbumSummary[]): Map<string, string> {
 
   const tryAdd = (name: string, id: string) => {
     if (!name || !id) return;
-    const key = name.trim().toLowerCase();
+    const key = normalizeArtistName(name);
     if (!map.has(key)) {
       map.set(key, id);
     }
@@ -135,7 +136,7 @@ export function ArtistLookupProvider({ children }: { children: ReactNode }) {
   const getArtistId = useCallback(
     (name: string): string | null => {
       if (!name) return null;
-      return nameToIdMap.get(name.trim().toLowerCase()) ?? null;
+      return nameToIdMap.get(normalizeArtistName(name)) ?? null;
     },
     [nameToIdMap],
   );

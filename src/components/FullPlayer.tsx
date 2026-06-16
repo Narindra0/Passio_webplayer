@@ -18,7 +18,7 @@ import { useNavigate } from 'react-router-dom';
 import { FullPlayerLyrics } from './FullPlayerLyrics';
 import { PlayerWaveform } from './PlayerWaveform';
 import { ShareCard } from './ShareCard';
-import { hasFeatArtists, parseFeatArtists } from '@/utils/featArtists';
+import { hasFeatArtists, parseFeatArtists, normalizeArtistName } from '@/utils/featArtists';
 import { FeatArtistLinks } from './FeatArtistLinks';
 import { listAlbums } from '@/services/api';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
@@ -89,13 +89,13 @@ export function FullPlayer() {
           const name = a.artist_name || a.artist?.name;
           const id = a.artist_id || a.artist?.id;
           if (name && id) {
-            map[name.trim().toLowerCase()] = id;
+            map[normalizeArtistName(name)] = id;
           }
           // Tableau artists[] (feat artists déjà côté serveur)
           if (a.artists) {
             for (const art of a.artists) {
               if (art.id && art.name) {
-                map[art.name.trim().toLowerCase()] = art.id;
+                map[normalizeArtistName(art.name)] = art.id;
               }
             }
           }
@@ -164,13 +164,13 @@ export function FullPlayer() {
       const name = album.artist_name || album.artist?.name;
       const id = album.artist_id || album.artist?.id;
       if (name && id) {
-        map[name.trim().toLowerCase()] = id;
+        map[normalizeArtistName(name)] = id;
       }
       // Tableau artists[] (inclut les feat artists du serveur)
       if (album.artists) {
         for (const a of album.artists) {
           if (a.name && a.id) {
-            map[a.name.trim().toLowerCase()] = a.id;
+            map[normalizeArtistName(a.name)] = a.id;
           }
         }
       }
@@ -191,7 +191,7 @@ export function FullPlayer() {
   // Filtrer les feat artists qui existent dans la plateforme (artiste connu avec ID)
   const knownFeatArtists = useMemo(() => {
     return featNames
-      .map((n: string) => ({ name: n, artistId: localArtistIdMap[n.trim().toLowerCase()] ?? null }))
+      .map((n: string) => ({ name: n, artistId: localArtistIdMap[normalizeArtistName(n)] ?? null }))
       .filter((item): item is { name: string; artistId: string } => item.artistId !== null);
   }, [featNames, localArtistIdMap]);
 
@@ -199,7 +199,7 @@ export function FullPlayer() {
   const allFeatArtists = useMemo(() => {
     return featNames.map((n: string) => ({
       name: n,
-      artistId: localArtistIdMap[n.trim().toLowerCase()] ?? null,
+      artistId: localArtistIdMap[normalizeArtistName(n)] ?? null,
     }));
   }, [featNames, localArtistIdMap]);
 

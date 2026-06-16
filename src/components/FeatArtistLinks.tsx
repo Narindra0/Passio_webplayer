@@ -5,6 +5,7 @@
 
 import { useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { normalizeArtistName } from '@/utils/featArtists';
 
 export interface FeatArtistLinksProps {
   /** Noms des artistes en feat (ex: ["Balz", "Ando"]) */
@@ -33,7 +34,7 @@ export function FeatArtistLinks({ featNames, style, artistIdMap }: FeatArtistLin
   // Construire une fonction de lookup locale (évite dépendance au contexte)
   const findArtistId = useCallback((name: string): string | null => {
     if (!name || !artistIdMap) return null;
-    return artistIdMap[name.trim().toLowerCase()] ?? null;
+    return artistIdMap[normalizeArtistName(name)] ?? null;
   }, [artistIdMap]);
 
   if (!featNames || featNames.length === 0) return null;

@@ -22,6 +22,7 @@ export class SecureAudioPlayer {
   private readonly DEVICE_HEADER = 'x-passio-device-id';
   /** ID appareil pour l'authentification des requêtes de streaming */
   public deviceId: string | null = null;
+  public currentToken: string | null = null;
 
   constructor() {
     // We don't initialize AudioContext here to respect Safari's policies
@@ -38,14 +39,30 @@ export class SecureAudioPlayer {
   /**
    * Retourne les en-têtes d'authentification pour les requêtes de streaming.
    */
-  private getAuthHeaders(): Record<string, string> {
+  public getAuthHeaders(): Record<string, string> {
     const headers: Record<string, string> = {
       [this.STREAM_HEADER]: this.STREAM_HEADER_VALUE,
     };
     if (this.deviceId) {
       headers[this.DEVICE_HEADER] = this.deviceId;
     }
+    if (this.currentToken) {
+      headers['X-Audio-Token'] = this.currentToken;
+    }
     return headers;
+  }
+
+  /**
+   * Fetch the ephemeral token for the track
+   */
+  public async fetchToken(trackId: string): Promise<void> {
+    try {
+      const { getAudioToken } = await import('./api');
+      const tokenData = await getAudioToken(trackId);
+      this.currentToken = tokenData.token;
+    } catch (e) {
+      console.warn('SecureAudioPlayer: Failed to get audio token', e);
+    }
   }
 
   /**
@@ -127,10 +144,7 @@ export class SecureAudioPlayer {
               usedFullDownload = true;
               const fullResp = await fetch(url, {
                 signal,
-                headers: {
-                  [this.STREAM_HEADER]: this.STREAM_HEADER_VALUE,
-                  ...(this.deviceId ? { [this.DEVICE_HEADER]: this.deviceId } : {}),
-                },
+                headers: this.getAuthHeaders(),
                 keepalive: true,
               });
               if (!fullResp.ok) throw new Error(`HTTP ${fullResp.status}`);
@@ -244,6 +258,9 @@ export class SecureAudioPlayer {
 
       // If not in DB, download in chunks
       if (!fileData) {
+        if (id) {
+          await this.fetchToken(id);
+        }
         fileData = await this.downloadInChunks(url, onProgress);
       } else {
         if (onProgress) onProgress(100);

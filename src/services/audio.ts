@@ -134,14 +134,14 @@ export async function prefetchSecureTrack(url: string, trackId: string): Promise
   // S'assurer que le device ID est initialisé avant le préchargement
   await ensureStreamDeviceId();
 
+  await secureAudioPlayer.fetchToken(trackId);
+
   // Probe préalable : vérifier que le endpoint répond avant de lancer le téléchargement
   // (identique au probe que fait mseSecurePlayer.loadAndPlay pour la lecture normale)
   try {
-    const probeHeaders: Record<string, string> = { 'X-Passio-Stream': 'secure' };
-    if (streamDeviceId) probeHeaders['x-passio-device-id'] = streamDeviceId;
     const probeResp = await fetch(url, {
       method: 'HEAD',
-      headers: probeHeaders,
+      headers: secureAudioPlayer.getAuthHeaders(),
       credentials: 'include',
     });
     if (!probeResp.ok) {
@@ -581,6 +581,13 @@ export async function playSecureTrackMSE(
   currentStatusCallback = onStatusUpdate || null;
 
   try {
+    const match = proxyUrl.match(/\/api\/stream\/tracks\/([^/]+)\/audio/);
+    if (match) {
+      const trackId = decodeURIComponent(match[1]);
+      await secureAudioPlayer.fetchToken(trackId);
+      mseSecurePlayer.currentToken = secureAudioPlayer.currentToken;
+    }
+
     // 1. Lancer le streaming MSE (télécharge + append progressif)
     console.log('[MSE] 🎯 Streaming MSE sécurisé:', proxyUrl);
     const audio = await mseSecurePlayer.loadAndPlay(proxyUrl);
