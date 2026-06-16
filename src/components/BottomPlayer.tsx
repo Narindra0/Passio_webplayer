@@ -112,18 +112,24 @@ export function BottomPlayer() {
 
   const VolIcon = isMuted || volume === 0 ? VolumeX : volume < 0.5 ? Volume : volume < 0.8 ? Volume1 : Volume2;
 
+  // Base heights (sans inset)
+  const basePlayerHeight = isMobile ? 64 : 80;
+  const baseErrorHeight = isMobile ? 36 : 40; // error banner
+  // Total container height: base + safe-area inset so content floats above system bar
+  const totalHeight = (showError ? basePlayerHeight + baseErrorHeight : basePlayerHeight)
+    + (isMobile ? bottomInset : 0);
+
   return (
     <div
       className={`bottom-player glass-panel ${entryClass}${showError ? ' has-error' : ''}`}
       style={{
-        height: showError ? (isMobile ? 100 : 120) : (isMobile ? 64 : 80),
+        height: totalHeight,
         display: 'flex',
         flexDirection: 'column',
         flexShrink: 0,
         zIndex: 100,
         position: 'relative',
         transition: 'height 0.3s ease',
-        paddingBottom: isMobile && bottomInset > 0 ? bottomInset + 'px' : 0,
       }}
     >
       {/* Error banner */}
@@ -158,9 +164,9 @@ export function BottomPlayer() {
         </div>
       )}
 
-      {/* Main player bar */}
+      {/* Main player bar — sits above the safe-area inset space */}
       <div style={{
-        height: isMobile ? 64 : 80,
+        height: basePlayerHeight,
         display: 'flex',
         alignItems: 'center',
         padding: isMobile ? '0 10px' : '0 16px',

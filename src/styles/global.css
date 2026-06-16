@@ -83,6 +83,10 @@
   --page-padding: 40px 32px 32px;
   --page-padding-mobile: 20px 16px 24px;
   --header-padding: 0;
+
+  /* Safe-area inset bottom — synced by useBottomInset hook via JS.
+     Defaults to the CSS env() value; the hook overrides it at runtime. */
+  --sab: env(safe-area-inset-bottom, 0px);
 }
 
 /* Reset */
@@ -799,21 +803,28 @@ img { max-width: 100%; height: auto; }
 }
 
 /* ============================================================
-   Safe Area — mobile bottom browser nav bars
+   Safe Area — mobile bottom system navigation / home indicator
    ============================================================ */
-.safe-top { padding-top: env(safe-area-inset-top, 0px); }
-.safe-bottom { padding-bottom: env(safe-area-inset-bottom, 0px); }
+.safe-top  { padding-top:    env(safe-area-inset-top, 0px); }
+.safe-bottom { padding-bottom: var(--sab, env(safe-area-inset-bottom, 0px)); }
 
-/* Fallback: CSS-only safe area for mobile nav & player
-   When JS hook is not yet ready, these ensure content isn't hidden
-   behind system home indicator or browser chrome.
-   No !important — the JS hook's inline style takes precedence when active. */
-@media (max-width: 768px) {
-  .mobile-nav {
-    padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
-  }
-  .bottom-player {
-    padding-bottom: env(safe-area-inset-bottom, 0px);
+/* CSS-only safe area fallback for mobile nav & player.
+   The JS hook sets inline styles that take precedence, but these rules
+   ensure the layout is correct on the very first paint (before JS runs)
+   and on browsers where env() is the only way to get the value. */
+@supports (padding-bottom: env(safe-area-inset-bottom)) {
+  @media (max-width: 768px) {
+    /* MobileNav pill: add inset below the navigation pill */
+    .mobile-nav {
+      padding-bottom: calc(12px + var(--sab, env(safe-area-inset-bottom, 0px)));
+    }
+
+    /* BottomPlayer: the JS hook drives height; CSS covers the first-paint gap.
+       We use padding-bottom here only as a last-resort fallback when --sab=0
+       (i.e. before the JS hook has run its first rAF). */
+    .bottom-player {
+      padding-bottom: 0; /* JS handles this via explicit height */
+    }
   }
 }
 

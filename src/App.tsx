@@ -40,6 +40,9 @@ export function App() {
           display: 'flex',
           flexDirection: 'column',
           height: '100vh',
+          // dvh = Dynamic Viewport Height: accounts for retractable browser UI on mobile
+          // Falls back to 100vh on older browsers
+          ...(CSS.supports('height', '100dvh') ? { height: '100dvh' } : {}),
           backgroundColor: 'var(--color-bg-dark)',
           overflow: 'hidden',
         }}

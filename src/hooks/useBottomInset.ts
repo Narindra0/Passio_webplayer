@@ -1,55 +1,61 @@
 import { useEffect, useState } from 'react';
 
 /**
- * Returns the height (in px) of the bottom browser chrome / nav bar
- * (Safari bottom toolbar, Android Chrome URL bar) + system home indicator.
+ * Returns the height (in px) of the bottom safe area inset
+ * (system home indicator on iOS/Android gesture navigation bar).
  *
- * Uses `window.visualViewport` which fires `resize` events when the
- * browser chrome appears/hides on scroll on mobile.
- *
- * Falls back to the CSS `env(safe-area-inset-bottom)` value when
- * visualViewport is unavailable (some older browsers).
+ * Strategy:
+ * 1. Reads `env(safe-area-inset-bottom)` via a dummy element (most reliable).
+ * 2. Also monitors `window.visualViewport` resize to catch browser chrome
+ *    appearing/hiding on scroll (Android Chrome bottom address bar).
+ * 3. Syncs the value to a `--sab` CSS custom property on :root so that
+ *    CSS can use it directly without waiting for JS re-renders.
+ * 4. Does a deferred initial read via rAF to ensure the browser has fully
+ *    laid out and computed env() values before the first read.
  */
 export function useBottomInset(): number {
-  const [bottomInset, setBottomInset] = useState(() => {
-    // Initial read: try CSS safe-area-inset-bottom directly
-    return readSafeAreaInsetBottom();
-  });
+  const [bottomInset, setBottomInset] = useState(0);
 
   useEffect(() => {
-    const vv = window.visualViewport;
-    if (!vv) {
-      // Fallback: poll safe-area-inset-bottom on resize when visualViewport is unavailable
-      const onResize = () => setBottomInset(readSafeAreaInsetBottom());
-      window.addEventListener('resize', onResize);
-      return () => window.removeEventListener('resize', onResize);
-    }
-
-    const handler = () => {
-      // On mobile, the visual viewport shrinks when bottom browser UI appears.
-      // diff = layout viewport height - (visual viewport height + top offset)
-      // This gives us the height occupied by bottom browser chrome.
-      const chromeInset = Math.max(0, window.innerHeight - (vv.height + (vv.offsetTop || 0)));
+    const update = () => {
       const safeAreaInset = readSafeAreaInsetBottom();
+      const vv = window.visualViewport;
+      let value = safeAreaInset;
 
-      // Combine both: the browser nav bar + the system home indicator
-      // We take the max because sometimes env(safe-area-inset-bottom) already
-      // includes the browser chrome (iOS Safari does this).
-      setBottomInset(Math.max(chromeInset, safeAreaInset));
+      if (vv) {
+        // Detect browser chrome (Android bottom address bar)
+        const chromeInset = Math.max(
+          0,
+          window.innerHeight - (vv.height + (vv.offsetTop || 0)),
+        );
+        // Take the max: sometimes env() already includes chrome (iOS Safari)
+        value = Math.max(safeAreaInset, chromeInset);
+      }
+
+      setBottomInset(value);
+      // Sync to CSS custom property so CSS can use it without waiting for re-render
+      document.documentElement.style.setProperty('--sab', `${value}px`);
     };
 
-    vv.addEventListener('resize', handler);
-    vv.addEventListener('scroll', handler);
-    // Also listen to window resize as a safety net
-    window.addEventListener('resize', handler);
+    // Deferred initial read: rAF ensures env() is computed after first paint
+    const raf = requestAnimationFrame(() => {
+      update();
+    });
 
-    // Run once immediately
-    handler();
+    const vv = window.visualViewport;
+    if (vv) {
+      vv.addEventListener('resize', update);
+      vv.addEventListener('scroll', update);
+    }
+    window.addEventListener('resize', update);
 
     return () => {
-      vv.removeEventListener('resize', handler);
-      vv.removeEventListener('scroll', handler);
-      window.removeEventListener('resize', handler);
+      cancelAnimationFrame(raf);
+      if (vv) {
+        vv.removeEventListener('resize', update);
+        vv.removeEventListener('scroll', update);
+      }
+      window.removeEventListener('resize', update);
     };
   }, []);
 
@@ -58,19 +64,19 @@ export function useBottomInset(): number {
 
 /**
  * Reads `env(safe-area-inset-bottom)` from the CSS environment.
+ * Injects a temporary fixed element to let the browser compute the env() value.
  * Returns 0 if unavailable or unparseable.
  */
 function readSafeAreaInsetBottom(): number {
   if (typeof document === 'undefined') return 0;
 
-  // Use a dummy element to compute the env() value
   const dummy = document.createElement('div');
   dummy.style.cssText =
-    'position:fixed;visibility:hidden;pointer-events:none;padding-bottom:env(safe-area-inset-bottom,0px)';
+    'position:fixed;bottom:0;left:0;visibility:hidden;pointer-events:none;' +
+    'height:env(safe-area-inset-bottom,0px);min-height:env(safe-area-inset-bottom,0px)';
   document.body.appendChild(dummy);
-  const computed = getComputedStyle(dummy).paddingBottom;
+  const value = parseFloat(getComputedStyle(dummy).height);
   document.body.removeChild(dummy);
 
-  const px = parseFloat(computed);
-  return isNaN(px) ? 0 : Math.max(0, px);
+  return isNaN(value) ? 0 : Math.max(0, value);
 }
