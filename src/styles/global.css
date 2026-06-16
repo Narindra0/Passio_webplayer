@@ -776,6 +776,7 @@ img { max-width: 100%; height: auto; }
   .artist-discography-grid {
     gap: 12px !important;
   }
+}
 
 /* Group hover — for AlbumCard play button overlay */
 .group:hover .group-hover\:opacity-100 {

@@ -1,5 +1,6 @@
 import { getTrackFromDB } from './indexedDB';
 import { fetchWithRetry, getRetryDelay } from './networkUtils';
+import { getAudioToken } from './api';
 
 export class SecureAudioPlayer {
   private audioContext: AudioContext | null = null;
@@ -57,7 +58,6 @@ export class SecureAudioPlayer {
    */
   public async fetchToken(trackId: string): Promise<void> {
     try {
-      const { getAudioToken } = await import('./api');
       const tokenData = await getAudioToken(trackId);
       this.currentToken = tokenData.token;
     } catch (e) {
