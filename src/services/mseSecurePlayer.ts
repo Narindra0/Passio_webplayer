@@ -44,8 +44,28 @@ export class MSESecurePlayer {
   /** ID appareil pour l'authentification des requêtes de streaming */
   public deviceId: string | null = null;
   public currentToken: string | null = null;
+  public currentTrackId: string | null = null;
 
   public onEnded: (() => void) | null = null;
+
+  /**
+   * Generates the deterministic XOR seed based on trackId
+   */
+  private async getXorSeed(trackId: string): Promise<Uint8Array> {
+    const encoder = new TextEncoder();
+    const data = encoder.encode('passio-xor-seed-' + trackId);
+    const hashBuffer = await window.crypto.subtle.digest('SHA-256', data);
+    return new Uint8Array(hashBuffer);
+  }
+
+  /**
+   * Applies XOR obfuscation/deobfuscation to the buffer
+   */
+  private applyXor(buffer: Uint8Array, seed: Uint8Array, offset: number = 0) {
+    for (let i = 0; i < buffer.length; i++) {
+      buffer[i] ^= seed[(offset + i) % seed.length];
+    }
+  }
 
   /** Promesse résolue après le premier batch initial (permet de détecter les erreurs QUIC) */
   private resolveInitialBatch: (() => void) | null = null;
@@ -95,6 +115,9 @@ export class MSESecurePlayer {
     this.streaming = false;
     this.nextOffset = 0;
     this.totalSize = 0;
+
+    const match = url.match(/\/api\/stream\/tracks\/([^/]+)\/audio/);
+    this.currentTrackId = match ? decodeURIComponent(match[1]) : null;
 
     const controller = new AbortController();
     this.abortController = controller;
@@ -292,6 +315,12 @@ export class MSESecurePlayer {
 
         const chunk = await response.arrayBuffer();
         if (!this.streaming || controller.signal.aborted) break;
+
+        if (this.currentTrackId) {
+          const uint8 = new Uint8Array(chunk);
+          const seed = await this.getXorSeed(this.currentTrackId);
+          this.applyXor(uint8, seed, this.nextOffset);
+        }
 
         // Attendre que le SourceBuffer soit prêt (avec timeout)
         if (this.sourceBuffer!.updating) {

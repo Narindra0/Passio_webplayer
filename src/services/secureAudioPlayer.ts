@@ -24,6 +24,26 @@ export class SecureAudioPlayer {
   /** ID appareil pour l'authentification des requêtes de streaming */
   public deviceId: string | null = null;
   public currentToken: string | null = null;
+  public currentTrackId: string | null = null;
+
+  /**
+   * Generates the deterministic XOR seed based on trackId
+   */
+  private async getXorSeed(trackId: string): Promise<Uint8Array> {
+    const encoder = new TextEncoder();
+    const data = encoder.encode('passio-xor-seed-' + trackId);
+    const hashBuffer = await window.crypto.subtle.digest('SHA-256', data);
+    return new Uint8Array(hashBuffer);
+  }
+
+  /**
+   * Applies XOR obfuscation/deobfuscation to the buffer
+   */
+  private applyXor(buffer: Uint8Array, seed: Uint8Array, offset: number = 0) {
+    for (let i = 0; i < buffer.length; i++) {
+      buffer[i] ^= seed[(offset + i) % seed.length];
+    }
+  }
 
   constructor() {
     // We don't initialize AudioContext here to respect Safari's policies
@@ -149,8 +169,13 @@ export class SecureAudioPlayer {
               });
               if (!fullResp.ok) throw new Error(`HTTP ${fullResp.status}`);
               const fullBuffer = await fullResp.arrayBuffer();
+              const uint8 = new Uint8Array(fullBuffer);
+              if (this.currentTrackId) {
+                const seed = await this.getXorSeed(this.currentTrackId);
+                this.applyXor(uint8, seed, 0);
+              }
               if (onProgress) onProgress(100);
-              return new Uint8Array(fullBuffer);
+              return uint8;
             }
             throw err;
           }
@@ -194,6 +219,12 @@ export class SecureAudioPlayer {
     for (const chunk of chunks) {
       fullBuffer.set(chunk, offset);
       offset += chunk.length;
+    }
+
+    // --- XOR DEOBFUSCATION ---
+    if (this.currentTrackId) {
+      const seed = await this.getXorSeed(this.currentTrackId);
+      this.applyXor(fullBuffer, seed, 0);
     }
 
     // Efface les chunks intermédiaires de la RAM après assemblage
@@ -248,6 +279,7 @@ export class SecureAudioPlayer {
         const match = url.match(/\/api\/stream\/tracks\/([^/]+)\/audio/);
         if (match) id = decodeURIComponent(match[1]);
       }
+      this.currentTrackId = id || null;
 
       let fileData: Uint8Array | ArrayBuffer | undefined;
 

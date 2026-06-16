@@ -253,16 +253,20 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     const effectiveKey = await resolveKeyForAlbum(albumData, key);
     const ownedPaid = !isFreeRelease && (libraryRef.current.some((entry) => entry.id === albumData.id) || await isAlbumOwnedByDevice(albumData.id));
 
-    // 🚀 For FREE tracks: always use stream mode if we have a URL!
-    if (isFreeRelease) {
-      if (track.encrypted_audio_url || track.preview_url || track.stream_url) return 'stream';
-      if (albumData.stream_status === 'ready' && albumData.stream_url) return 'hls';
+    // 🚀 HLS stream (Albums prêts)
+    if (isFreeRelease && albumData.stream_status === 'ready' && albumData.stream_url) {
+      return 'hls';
     }
 
-    if (!isFreeRelease && (effectiveKey || ownedPaid)) return 'remote';
-    if (effectiveKey && (track.encrypted_audio_url || track.preview_url)) return 'remote';
-    if (track.preview_url || track.stream_url) return 'stream';
-    if (isFreeRelease && albumData.stream_status === 'ready' && albumData.stream_url) return 'hls';
+    // 🔒 PROTECTION IDM : 
+    // Au lieu de donner directement track.preview_url ou track.encrypted_audio_url (qui fuient vers IDM),
+    // on force systématiquement le mode 'remote' si la piste a un ID pour passer par notre proxy XOR.
+    if (track.id && (track.audio_storage_key || track.encrypted_audio_url || track.preview_url)) {
+      return 'remote';
+    }
+
+    // Fallback URL externes (ex: stream_url vers soundcloud, radio...)
+    if (track.stream_url) return 'stream';
 
     throw new Error("Aucune URL de lecture disponible pour ce titre.");
   }
