@@ -178,15 +178,9 @@ export function AudioProvider({ children }: { children: ReactNode }) {
         const isFreeAlbum = albumRef.current?.is_free;
         const nextUrl = nextTrack.encrypted_audio_url ?? nextTrack.preview_url ?? `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(nextTrack.id)}/audio`;
         
-        if (isFreeAlbum) {
-          // 🚀 For FREE tracks: just use a simple fetch to prime the browser cache
-          console.log('[AudioContext] ⚡ Préchargement simple pour piste gratuite suivante:', nextTrack.title);
-          fetch(nextUrl, { method: 'HEAD', mode: 'no-cors' }).catch(() => {});
-        } else {
-          // For premium tracks: use secure prefetch
-          console.log('[AudioContext] ⚡ Préchargement sécurisé pour piste premium suivante:', nextTrack.title);
+          // For all tracks: use secure prefetch to properly pass auth headers and avoid honeypot
+          console.log('[AudioContext] ⚡ Préchargement sécurisé pour piste suivante:', nextTrack.title);
           prefetchSecureTrack(nextUrl, nextTrack.id);
-        }
       }
     }
   }
@@ -253,17 +247,19 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     const effectiveKey = await resolveKeyForAlbum(albumData, key);
     const ownedPaid = !isFreeRelease && (libraryRef.current.some((entry) => entry.id === albumData.id) || await isAlbumOwnedByDevice(albumData.id));
 
-    // 🚀 HLS stream (Albums prêts)
-    if (isFreeRelease && albumData.stream_status === 'ready' && albumData.stream_url) {
-      return 'hls';
-    }
-
     // 🔒 PROTECTION IDM : 
     // Au lieu de donner directement track.preview_url ou track.encrypted_audio_url (qui fuient vers IDM),
     // on force systématiquement le mode 'remote' si la piste a un ID pour passer par notre proxy XOR.
     if (track.id && (track.audio_storage_key || track.encrypted_audio_url || track.preview_url)) {
       return 'remote';
     }
+
+    // 🚀 HLS stream (Albums prêts)
+    if (isFreeRelease && albumData.stream_status === 'ready' && albumData.stream_url) {
+      return 'hls';
+    }
+
+
 
     // Fallback URL externes (ex: stream_url vers soundcloud, radio...)
     if (track.stream_url) return 'stream';
@@ -430,13 +426,8 @@ export function AudioProvider({ children }: { children: ReactNode }) {
               const isFreeAlbum = albumRef.current?.is_free;
               const nextUrl = nextTrack.encrypted_audio_url ?? nextTrack.preview_url ?? `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(nextTrack.id)}/audio`;
               
-              if (isFreeAlbum) {
-                console.log('[AudioContext] Préchargement simple pour piste gratuite suivante (fin de piste):', nextTrack.title);
-                fetch(nextUrl, { method: 'HEAD', mode: 'no-cors' }).catch(() => {});
-              } else {
-                console.log('[AudioContext] Préchargement sécurisé pour piste premium suivante (fin de piste):', nextTrack.title);
+                console.log('[AudioContext] Préchargement sécurisé pour piste suivante (fin de piste):', nextTrack.title);
                 prefetchSecureTrack(nextUrl, nextTrack.id);
-              }
             }
           }
         }
@@ -680,13 +671,8 @@ export function AudioProvider({ children }: { children: ReactNode }) {
       const firstUrl = firstTrack.encrypted_audio_url ?? firstTrack.preview_url ?? `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(firstTrack.id)}/audio`;
       const isFreeAlbum = albumData.is_free;
       
-      if (isFreeAlbum) {
-        console.log('[AudioContext] Préchargement simple pour première piste gratuite:', firstTrack.title);
-        fetch(firstUrl, { method: 'HEAD', mode: 'no-cors' }).catch(() => {});
-      } else {
-        console.log('[AudioContext] Préchargement sécurisé pour première piste premium:', firstTrack.title);
-        prefetchSecureTrack(firstUrl, firstTrack.id);
-      }
+      console.log('[AudioContext] Préchargement sécurisé pour première piste:', firstTrack.title);
+      prefetchSecureTrack(firstUrl, firstTrack.id);
     }
 
     const libIdx = libraryRef.current.findIndex((a) => a.id === albumData.id);
