@@ -586,10 +586,13 @@ export async function playRemoteTrack(
  */
 export async function playSecureTrackMSE(
   proxyUrl: string,
-  onStatusUpdate?: StatusCallback
+  onStatusUpdate?: StatusCallback,
+  skipStopCurrent: boolean = false
 ): Promise<boolean> {
   await ensureStreamDeviceId();
-  await stopCurrentTrack();
+  if (!skipStopCurrent) {
+    await stopCurrentTrack();
+  }
   currentStatusCallback = onStatusUpdate || null;
 
   try {
@@ -667,10 +670,13 @@ export async function playSecureTrackMSE(
 export async function playSecureTrack(
   trackId: string,
   proxyUrl: string,
-  onStatusUpdate?: StatusCallback
+  onStatusUpdate?: StatusCallback,
+  skipStopCurrent: boolean = false
 ): Promise<boolean> {
   await ensureStreamDeviceId();
-  await stopCurrentTrack();
+  if (!skipStopCurrent) {
+    await stopCurrentTrack();
+  }
   currentStatusCallback = onStatusUpdate || null;
 
   try {
@@ -754,7 +760,8 @@ export async function playWebOptimizedTrack(
   previewUrl: string | null | undefined,
   proxyUrl: string,
   isPremium: boolean,
-  onStatusUpdate?: StatusCallback
+  onStatusUpdate?: StatusCallback,
+  skipStopCurrent: boolean = false
 ): Promise<boolean> {
   // ⏳ Si un secure prefetch est en cours pour cette même piste, on attend
   if (securePrefetchTrackId === trackId && securePrefetchPromise) {
@@ -770,7 +777,7 @@ export async function playWebOptimizedTrack(
     if (previewUrl) {
       try {
         console.log('[WebAudio] 📱 Tentative HTML5 Audio avec preview URL');
-        const audio = await playStream(previewUrl, onStatusUpdate);
+        const audio = await playStream(previewUrl, onStatusUpdate, skipStopCurrent);
         if (audio) return true;
       } catch (err) {
         console.warn('[WebAudio] ❌ Preview URL échoué sur mobile:', err);
@@ -780,7 +787,7 @@ export async function playWebOptimizedTrack(
     // Essayer avec l'URL proxy en HTML5 Audio
     try {
       console.log('[WebAudio] 📱 Tentative HTML5 Audio avec proxy URL');
-      const audio = await playStream(proxyUrl, onStatusUpdate);
+      const audio = await playStream(proxyUrl, onStatusUpdate, true); // already skipped first stop
       if (audio) return true;
     } catch (err) {
       console.warn('[WebAudio] ❌ Proxy URL échoué sur mobile:', err);
@@ -788,7 +795,7 @@ export async function playWebOptimizedTrack(
     
     // Fallback final : SecureAudioPlayer
     console.log('[WebAudio] 🔒 Fallback mobile: AudioContext');
-    return playSecureTrack(trackId, proxyUrl, onStatusUpdate);
+    return playSecureTrack(trackId, proxyUrl, onStatusUpdate, true);
   }
 
   // 🖥️ Stratégie pour desktop
@@ -798,16 +805,16 @@ export async function playWebOptimizedTrack(
   if (MSESecurePlayer.isSupported()) {
     try {
       console.log('[WebAudio] 🎯 Tentative MSE streaming...');
-      return await playSecureTrackMSE(proxyUrl, onStatusUpdate);
+      return await playSecureTrackMSE(proxyUrl, onStatusUpdate, skipStopCurrent);
     } catch (mseErr) {
       console.warn('[WebAudio] ❌ MSE échoué, fallback AudioContext:', mseErr);
-      await stopCurrentTrack();
+      // no need to stopCurrentTrack here since we already did it
     }
   }
 
   // 🔒 Fallback : Web Audio API (téléchargement complet puis lecture)
   console.log('[WebAudio] 🔒 Fallback desktop: téléchargement complet via AudioContext');
-  return playSecureTrack(trackId, proxyUrl, onStatusUpdate);
+  return playSecureTrack(trackId, proxyUrl, onStatusUpdate, true);
 }
 
 export async function prefetchRemoteTrack(
@@ -845,9 +852,12 @@ export async function playDeviceFile(
 
 export async function playStream(
   streamUrl: string,
-  onStatusUpdate?: StatusCallback
+  onStatusUpdate?: StatusCallback,
+  skipStopCurrent: boolean = false
 ): Promise<HTMLAudioElement | any> {
-  await stopCurrentTrack();
+  if (!skipStopCurrent) {
+    await stopCurrentTrack();
+  }
   const resolvedUrl = resolvePlaybackUrl(streamUrl);
 
   currentStatusCallback = onStatusUpdate || null;

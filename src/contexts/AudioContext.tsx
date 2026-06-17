@@ -592,7 +592,8 @@ export function AudioProvider({ children }: { children: ReactNode }) {
             track.preview_url,
             proxyUrl,
             isPremium,
-            handleStatus
+            handleStatus,
+            true // skipStopCurrent since we already stopped
           );
           if (player) {
             currentIndexRef.current = index;
@@ -611,7 +612,7 @@ export function AudioProvider({ children }: { children: ReactNode }) {
       console.log('[AudioContext] [1/2] Trying stream mode URL:', url);
       if (!url) throw new Error("L'aperçu de cette piste n'est pas disponible.");
       try {
-        const streamPlayer = await playStream(url, handleStatus);
+        const streamPlayer = await playStream(url, handleStatus, true);
         if (streamPlayer) {
           console.log('[AudioContext] ✅ Lecture démarrée avec URL Cloudflare directe');
           currentIndexRef.current = index;
@@ -627,7 +628,7 @@ export function AudioProvider({ children }: { children: ReactNode }) {
       // Fallback to proxy if direct fails
       const proxyUrl = track.encrypted_audio_url || `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(track.id)}/audio`;
       console.log('[AudioContext] [2/2] Tentative URL proxy pour mode non-remote:', proxyUrl);
-      const streamPlayer = await playStream(proxyUrl, handleStatus);
+      const streamPlayer = await playStream(proxyUrl, handleStatus, true);
       if (!streamPlayer) throw new Error('Impossible de lire ce titre.');
       console.log('[AudioContext] ✅ Lecture démarrée avec URL proxy');
       // Solution C: Préchargement immédiat de la piste suivante (pour stream)

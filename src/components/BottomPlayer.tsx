@@ -48,7 +48,7 @@ export function BottomPlayer() {
   const [shareModalVisible, setShareModalVisible] = useState(false);
 
   const isDeviceMode = playMode === 'device' && deviceCurrentTrack;
-  const hasActiveTrack = playMode === 'device' ? !!deviceCurrentTrack : !!currentTrack;
+  const hasActiveTrack = playMode === 'device' ? !!deviceCurrentTrack : (!!currentTrack && !!album);
 
   // Compute these values even if no active track (for hook consistency)
   const rawTitle = hasActiveTrack ? (isDeviceMode ? deviceCurrentTrack!.title : currentTrack!.title) : '';
@@ -60,9 +60,9 @@ export function BottomPlayer() {
   const artistName = hasActiveTrack
     ? (isDeviceMode
       ? deviceCurrentTrack!.artist
-      : (album!.artist_name ?? album!.artist?.name ?? ''))
+      : (album?.artist_name ?? album?.artist?.name ?? ''))
     : '';
-  const coverUri = hasActiveTrack ? (isDeviceMode ? deviceCurrentTrack!.artworkUri : album!.cover_url) : '';
+  const coverUri = hasActiveTrack ? (isDeviceMode ? deviceCurrentTrack!.artworkUri : album?.cover_url) : '';
 
   // All hooks must come before early return!
   useEffect(() => {
