@@ -26,13 +26,17 @@ import {
     setMuted as setAudioMuted,
     stopCurrentTrack,
     togglePlayPause as toggleAudioPlayPause,
-    seekToSeconds as audioSeekToSeconds
+    seekToSeconds as audioSeekToSeconds,
+    ensureStreamDeviceId
 } from '@/services/audio';
 import { readLocalDecryptionKey, resolveOfflinePlayback } from '@/services/offlineAccess';
 import type { PublicAlbumDetails, PublicAlbumSummary, PublicTrack } from '@/types/backend';
 import type { DeviceTrack } from '@/types/localLibrary';
 import { logger } from '@/utils/logger';
 import { getTrackIndexInQueue, sortTracksByPosition } from '@/utils/tracks';
+import { getOrCreateDeviceId } from '@/services/device';
+import { secureAudioPlayer } from '@/services/secureAudioPlayer';
+import { mseSecurePlayer } from '@/services/mseSecurePlayer';
 
 export type PlayMode = 'hls' | 'stream' | 'local' | 'remote' | 'device';
 export type QueueMode = 'sequential' | 'shuffle';
@@ -184,7 +188,7 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     if (nextIdx >= 0 && nextIdx < q.length) {
       const nextTrack = q[nextIdx];
       if (nextTrack) {
-        const isFreeAlbum = albumRef.current?.is_free;
+        const isFreeAlbum = Boolean(albumRef.current?.is_free);
         if (!isFreeAlbum) {
           const nextUrl = `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(nextTrack.id)}/audio`;
           console.log('[AudioContext] ⚡ Préchargement sécurisé pour piste suivante:', nextTrack.title);
@@ -295,6 +299,15 @@ export function AudioProvider({ children }: { children: ReactNode }) {
         localStorage.removeItem('passio_audio_session');
       }
     }
+  }, []);
+
+  // Initialize device ID for secure players
+  useEffect(() => {
+    (async () => {
+      const deviceId = await getOrCreateDeviceId();
+      secureAudioPlayer.setDeviceId(deviceId);
+      mseSecurePlayer.setDeviceId(deviceId);
+    })();
   }, []);
 
   async function resolveLocalKey(albumId: string, keyInMemory: string | null): Promise<string | null> {
@@ -448,7 +461,9 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     key: string | null,
     isRetry: boolean = false,
   ) {
-    console.log('[AudioContext] 🎵 Démarrage playback (simplifié)', track.title);
+    console.log('[AudioContext] 🎵 Démarrage playback', track.title);
+    console.log('[AudioContext] Track details:', track);
+    console.log('[AudioContext] Album details:', albumData);
     
     if (!track || !albumData) {
       console.error('[AudioContext] ❌ Track ou album manquant');
@@ -457,22 +472,15 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     }
 
     // Initialiser l'état
-    prefetchTriggeredRef.current = false;
     if (!isRetry) setPlaybackError(null);
     setIsLoading(true);
     setIsPlaying(false);
-    pendingSeekSecondsRef.current = null;
-    isDevicePlaybackRef.current = false;
 
     try {
-      // Arrêter la piste en cours UNE SEULE FOIS
       await stopCurrentTrack();
+      await ensureStreamDeviceId();
 
       const handleStatus = (status: any) => {
-        if (status.isLoaded && pendingSeekSecondsRef.current !== null) {
-          audioSeekToSeconds(pendingSeekSecondsRef.current);
-          pendingSeekSecondsRef.current = null;
-        }
         const currentTime = status.currentTime ?? 0;
         const dur = status.duration ?? 0;
         if (dur > 0) updateProgressThrottled(currentTime, dur);
@@ -482,62 +490,62 @@ export function AudioProvider({ children }: { children: ReactNode }) {
         }
       };
 
-      // Essayer TOUTES les URLs disponibles, HTML5 Audio UNIQUEMENT
-      const urlsToTry = [
-        track.encrypted_audio_url, // Priorité: Cloudflare URL
-        track.preview_url,
-        `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(track.id)}/audio`,
-        track.stream_url
-      ].filter(Boolean) as string[];
+      const isFreeAlbum = Boolean(albumData.is_free);
 
-      let played = false;
-      let skipStop = true; // déjà fait stopCurrentTrack()
-
-      for (const url of urlsToTry) {
-        try {
-          console.log('[AudioContext] 🎧 Tentative avec URL:', url);
-          const audio = await playStream(url, handleStatus, skipStop);
-          if (audio) {
-            console.log('[AudioContext] ✅ Succès playback');
-            currentIndexRef.current = index;
-            setCurrentIndex(index);
-            played = true;
-            break;
+      // First, try direct Cloudflare URLs if track is free!
+      if (isFreeAlbum) {
+        console.log('[AudioContext] 🎵 Trying direct Cloudflare URLs first (free track)...');
+        const directUrls = [];
+        if (track.encrypted_audio_url) directUrls.push(track.encrypted_audio_url);
+        if (track.preview_url && track.preview_url !== track.encrypted_audio_url) directUrls.push(track.preview_url);
+        
+        for (const directUrl of directUrls) {
+          try {
+            console.log('[AudioContext] 🎧 Trying direct URL:', directUrl);
+            const audio = await playStream(directUrl, handleStatus, true);
+            if (audio) {
+              console.log('[AudioContext] ✅ Success with direct URL!');
+              currentIndexRef.current = index;
+              setCurrentIndex(index);
+              return;
+            }
+          } catch (err) {
+            console.warn('[AudioContext] ❌ Failed with direct URL:', err);
           }
-        } catch (err) {
-          console.warn('[AudioContext] ❌ Échec avec cette URL:', err);
         }
-        skipStop = true; // pour les prochaines URLs
+        console.log('[AudioContext] 🔄 Direct URLs failed, falling back to backend proxy...');
       }
-
-      if (!played) {
-        throw new Error('Aucune URL de lecture valide pour ce titre');
+      
+      // Fallback to backend proxy
+      const url = `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(track.id)}/audio`;
+      console.log('[AudioContext] 🎧 Trying backend proxy:', url);
+      
+      // Fetch the audio token and set it on the secure players
+      await secureAudioPlayer.fetchToken(track.id);
+      mseSecurePlayer.currentToken = secureAudioPlayer.currentToken;
+      mseSecurePlayer.currentTrackId = track.id;
+      
+      // Try web optimized track
+      const success = await playWebOptimizedTrack(
+        track.id,
+        track.preview_url,
+        url,
+        isFreeAlbum,
+        handleStatus,
+        true
+      );
+      
+      if (success) {
+        console.log('[AudioContext] ✅ Succès playback with backend proxy!');
+        currentIndexRef.current = index;
+        setCurrentIndex(index);
+        return;
       }
+      
+      throw new Error('All playback methods failed');
 
     } catch (err) {
       console.error('[AudioContext] ❌ Échec playback:', err);
-
-      // Une seule tentative de refresh
-      if (!isRetry) {
-        try {
-          console.log('[AudioContext] 🔄 Tentative refresh album');
-          const freshAlbum = unwrapAlbumDetails(await getAlbum(albumData.id));
-          const sortedTracks = sortTracksByPosition(freshAlbum.tracks || []);
-          const freshTrack = sortedTracks.find(t => t.id === track.id);
-
-          if (freshTrack) {
-            albumRef.current = freshAlbum;
-            setAlbum(freshAlbum);
-            queueRef.current = sortedTracks;
-            setQueue(sortedTracks);
-            await startPlayback(freshTrack, index, freshAlbum, key, true);
-            return;
-          }
-        } catch (refreshErr) {
-          console.error('[AudioContext] ❌ Échec refresh:', refreshErr);
-        }
-      }
-
       reportPlaybackError('AudioContext.playback', err);
     } finally {
       setIsLoading(false);
@@ -642,7 +650,7 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     // Solution C: Précharger la première piste dès le chargement de l'album
     if (sorted.length > 0) {
       const firstTrack = sorted[0];
-      const isFreeAlbum = albumData.is_free;
+      const isFreeAlbum = Boolean(albumData.is_free);
       
       if (!isFreeAlbum) {
         const firstUrl = `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(firstTrack.id)}/audio`;

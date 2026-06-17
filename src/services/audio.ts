@@ -48,7 +48,7 @@ let deviceIdInitPromise: Promise<string | null> | null = null;
  * Initialise l'ID appareil pour les requêtes de streaming.
  * Appelé automatiquement avant la première lecture.
  */
-async function ensureStreamDeviceId(): Promise<string | null> {
+export async function ensureStreamDeviceId(): Promise<string | null> {
   if (streamDeviceId) return streamDeviceId;
   if (deviceIdInitPromise) return deviceIdInitPromise;
   deviceIdInitPromise = getOrCreateDeviceId().then(id => {
@@ -763,33 +763,43 @@ export async function playWebOptimizedTrack(
   onStatusUpdate?: StatusCallback,
   skipStopCurrent: boolean = false
 ): Promise<boolean> {
-  console.log('[WebAudio] 🔧 Stratégie MAXIMALE STABILITÉ : UNIQUEMENT HTML5 Audio');
+  console.log('[WebAudio] 🔧 Stratégie MAXIMALE STABILITÉ');
   
-  // Essayer UNIQUEMENT HTML5 Audio (le plus stable et compatible)
-  const urlsToTry = [
-    previewUrl,
-    `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(trackId)}/audio`,
-    proxyUrl
-  ].filter(Boolean) as string[];
-
-  for (const url of urlsToTry) {
+  await ensureStreamDeviceId();
+  
+  try {
+    // Try MSE first on desktop
+    if (MSESecurePlayer.isSupported()) {
+      try {
+        console.log('[WebAudio] 🎯 Tentative MSE Secure Player');
+        const mseSuccess = await playSecureTrackMSE(proxyUrl, onStatusUpdate, skipStopCurrent);
+        if (mseSuccess) {
+          return true;
+        }
+      } catch (mseErr) {
+        console.warn('[WebAudio] ❌ Échec MSE:', mseErr);
+      }
+    }
+    
+    // Try secure audio player (web audio api)
     try {
-      console.log('[WebAudio] 🎵 Tentative HTML5 Audio avec:', url);
-      const audio = await playStream(url, onStatusUpdate, skipStopCurrent);
-      if (audio) {
-        console.log('[WebAudio] ✅ Succès avec HTML5 Audio');
+      console.log('[WebAudio] 🔒 Tentative Secure Audio Player');
+      const secureSuccess = await playSecureTrack(trackId, proxyUrl, onStatusUpdate, skipStopCurrent);
+      if (secureSuccess) {
         return true;
       }
-    } catch (err) {
-      console.warn('[WebAudio] ❌ Échec HTML5 Audio avec cette URL:', err);
-      // Prochaine URL à essayer
+    } catch (secureErr) {
+      console.warn('[WebAudio] ❌ Échec Secure Player:', secureErr);
     }
-    // Pour les prochaines URLs, on ne veut pas rappeler stopCurrentTrack
-    skipStopCurrent = true;
+    
+    // Fallback to plain HTML5 audio
+    console.log('[WebAudio] 🎵 Fallback HTML5 Audio');
+    await playStream(proxyUrl, onStatusUpdate, skipStopCurrent);
+    return true;
+  } catch (err) {
+    console.error('[WebAudio] ❌ Toutes les méthodes ont échoué:', err);
+    throw err;
   }
-
-  // Si tous les essais échouent, throw error
-  throw new Error('Impossible de lire ce titre (toutes les URLs ont échoué)');
 }
 
 export async function prefetchRemoteTrack(
@@ -846,19 +856,19 @@ export async function playStream(
     
     if (onStatusUpdate) setupAudioEvents(audio, onStatusUpdate);
     audio.crossOrigin = 'anonymous';
-    audio.preload = 'auto';
+    audio.preload = 'metadata'; // Preload only metadata, not full file
     (audio as any).playsInline = true; // Important pour iOS (non-standard property)
     (audio as any).disableRemotePlayback = false;
     
     // Attendre que le média soit prêt, sans timeout problématique
     await new Promise<void>((resolve, reject) => {
-      const onCanPlay = () => {
+      const onLoadedMetadata = () => {
         audio.removeEventListener('error', onError);
         resolve();
       };
       
       const onError = (e: Event) => {
-        audio.removeEventListener('canplay', onCanPlay);
+        audio.removeEventListener('loadedmetadata', onLoadedMetadata);
         const error = audio.error;
         let errorMsg = 'Échec chargement audio';
         if (error) {
@@ -873,18 +883,18 @@ export async function playStream(
         reject(new Error(errorMsg));
       };
       
-      audio.addEventListener('canplay', onCanPlay, { once: true });
+      audio.addEventListener('loadedmetadata', onLoadedMetadata, { once: true });
       audio.addEventListener('error', onError, { once: true });
       audio.src = audioUrl;
     });
     
-    // Essayer de lire, mais ne pas échouer si autoplay bloqué
+    // On peut lancer la lecture (clic utilisateur = interaction valide !)
     try {
       await audio.play();
-      console.log('[Audio] ✅ Lecture démarrée');
+      console.log('[Audio] ✅ Lecture démarrée (interaction utilisateur)');
     } catch (playErr) {
-      console.warn('[Audio] ⚠️ Autoplay bloqué (normal sur mobile), en pause:', playErr);
-      if (onStatusUpdate) onStatusUpdate({ playing: false });
+      console.warn('[Audio] ⚠️ Autoplay bloqué (même après interaction ?!), en pause:', playErr);
+      if (onStatusUpdate) onStatusUpdate({ playing: false, isLoaded: true });
     }
     
     return audio;
@@ -972,26 +982,8 @@ export async function playStream(
  * Doit être appelé depuis un gestionnaire d'événement utilisateur (clic).
  */
 export function unlockAudioContext(): void {
-  try {
-    // Créer un contexte audio temporaire et jouer un son silencieux
-    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-    if (AudioContextClass) {
-      const tempCtx = new AudioContextClass();
-      const oscillator = tempCtx.createOscillator();
-      const gainNode = tempCtx.createGain();
-      gainNode.gain.value = 0;
-      oscillator.connect(gainNode);
-      gainNode.connect(tempCtx.destination);
-      oscillator.start();
-      oscillator.stop();
-      if (tempCtx.state === 'suspended') {
-        tempCtx.resume().catch(() => {});
-      }
-      console.log('[Audio] AudioContext débloqué pour mobile');
-    }
-  } catch (e) {
-    console.warn('[Audio] Impossible de débloquer l\'AudioContext:', e);
-  }
+  // Plus besoin! On utilise UNIQUEMENT HTML5 Audio, pas de Web Audio API !
+  console.log('[Audio] unlockAudioContext ignoré (pas de Web Audio utilisé)');
 }
 
 export function setTrackEndHandler(handler: () => void) {

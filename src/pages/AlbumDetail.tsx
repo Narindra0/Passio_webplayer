@@ -469,10 +469,18 @@ export function AlbumDetailScreen() {
             const isThisPlaying = isCurrent && audio.isPlaying;
             const featResult = hasFeatArtists(track.title) ? parseFeatArtists(track.title) : null;
             // Solution C: Préchargement de la piste au survol pour une lecture instantanée
-            const prefetchOnHover = () => {
-              const trackProxyUrl = `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(track.id)}/audio`;
-              prefetchTrackBlob(trackProxyUrl, track.id);
-            };
+        const prefetchOnHover = () => {
+          if (album.is_free) {
+            const directUrl = track.encrypted_audio_url || track.preview_url;
+            if (directUrl) {
+              console.log('[AlbumDetail] Préchargement piste gratuite via Cloudflare:', directUrl);
+              fetch(directUrl, { method: 'HEAD' }).catch(() => {});
+              return;
+            }
+          }
+          const trackProxyUrl = `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(track.id)}/audio`;
+          prefetchTrackBlob(trackProxyUrl, track.id);
+        };
             return (
               <button className="album-track"
                 key={track.id}

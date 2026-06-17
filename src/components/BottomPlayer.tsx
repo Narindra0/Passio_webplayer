@@ -2,7 +2,6 @@ import { useAudioPlayback, useAudioProgress } from '@/contexts/AudioContext';
 import { useAlbumColors } from '@/hooks/useAlbumColors';
 import { useCachedImage } from '@/hooks/useCachedImage';
 import { buildVibrantWithAlpha } from '@/services/colorExtractor';
-import { unlockAudioContext } from '@/services/audio';
 import { AlertCircle, Pause, Play, Share2, SkipBack, SkipForward, TextQuote, Volume2, Volume1, Volume, VolumeX, X } from 'lucide-react';
 import { hasFeatArtists, parseFeatArtists, normalizeArtistName } from '@/utils/featArtists';
 import { FeatArtistLinks } from './FeatArtistLinks';
@@ -363,7 +362,6 @@ export function BottomPlayer() {
                 className="bottom-player-playbtn"
                 onClick={(e) => { 
                   e.stopPropagation(); 
-                  unlockAudioContext(); // Débloque l'audio sur mobile
                   togglePlayPause(); 
                 }}
                 style={{
@@ -458,7 +456,6 @@ export function BottomPlayer() {
               className="bottom-player-playbtn"
               onClick={(e) => { 
                 e.stopPropagation(); 
-                unlockAudioContext(); // Débloque l'audio sur mobile
                 togglePlayPause(); 
               }}
               style={{
