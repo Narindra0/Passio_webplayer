@@ -59,13 +59,14 @@ export async function fetchWithRetry(
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      // 🔒 credentials: 'include' requis pour les requêtes cross-origin
-      //    via Cloudflare (api.passiio.shop). keepalive: true maintient
-      //    la connexion TCP/TLS entre le navigateur et Cloudflare.
+      // 🔒 credentials: 'include' requis pour les requêtes cross-origin vers l'API.
+      // Mais pour le Cloudflare B2 proxy (/audio/artists/...), on doit utiliser 'omit'
+      // car le proxy retourne Access-Control-Allow-Origin: * (incompatible avec 'include').
+      const defaultCredentials = url.includes('/audio/artists/') ? 'omit' : 'include';
+
       const response = await fetch(url, {
+        credentials: defaultCredentials,
         ...options,
-        keepalive: true,
-        credentials: 'include',
       });
       return response;
     } catch (err) {

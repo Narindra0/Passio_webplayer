@@ -5,7 +5,6 @@ import { AppErrorBoundary } from './components/AppErrorBoundary';
 import { Sidebar } from './components/Sidebar';
 import { MobileNav } from './components/MobileNav';
 import { BottomPlayer } from './components/BottomPlayer';
-import { FullPlayer } from './components/FullPlayer';
 import { ArtistLookupProvider } from './contexts/ArtistLookupContext';
 
 // Lazy-loaded pages
@@ -20,6 +19,9 @@ const Search = React.lazy(() => import('./pages/Search').then(m => ({ default: m
 const Tracks = React.lazy(() => import('./pages/Tracks').then(m => ({ default: m.TracksScreen })));
 const Artists = React.lazy(() => import('./pages/Artists').then(m => ({ default: m.ArtistsScreen })));
 const Discover = React.lazy(() => import('./pages/Discover').then(m => ({ default: m.DiscoverScreen })));
+
+// Lazy-load FullPlayer (gros composant, seulement affiché quand on écoute de la musique)
+const FullPlayer = React.lazy(() => import('./components/FullPlayer').then(m => ({ default: m.FullPlayer })));
 
 function PageLoader() {
   return (
@@ -90,7 +92,11 @@ export function App() {
           </main>
 
           {/* Right Now Playing Panel (FullPlayer) */}
-          {isFullPlayerVisible && <FullPlayer />}
+          {isFullPlayerVisible && (
+            <Suspense fallback={null}>
+              <FullPlayer />
+            </Suspense>
+          )}
         </div>
 
         {/* Mobile Navigation Pill (shown only on mobile) */}

@@ -130,9 +130,10 @@ export class SecureAudioPlayer {
       const end = chunkEnd - 1;
       
       let response: Response | null = null;
+      let buffer: ArrayBuffer | null = null;
       let retries = 0;
 
-      while (retries <= MAX_RETRIES && !response) {
+      while (retries <= MAX_RETRIES && !buffer) {
         try {
           const resp = await fetchWithRetry(url, {
             headers: {
@@ -144,6 +145,7 @@ export class SecureAudioPlayer {
           });
 
           if (resp.ok || resp.status === 206) {
+            buffer = await resp.arrayBuffer();
             response = resp;
           } else if (resp.status === 416) {
             // Range not satisfiable — we have the whole file
@@ -165,15 +167,17 @@ export class SecureAudioPlayer {
               const fullResp = await fetch(url, {
                 signal,
                 headers: this.getAuthHeaders(),
-                keepalive: true,
               });
               if (!fullResp.ok) throw new Error(`HTTP ${fullResp.status}`);
               const fullBuffer = await fullResp.arrayBuffer();
               const uint8 = new Uint8Array(fullBuffer);
-              if (this.currentTrackId) {
-                const seed = await this.getXorSeed(this.currentTrackId);
-                this.applyXor(uint8, seed, 0);
-              }
+              // --- XOR DECHIFFREMENT TEMPORAIREMENT DÉSACTIVÉ ---
+              // if (this.currentTrackId) {
+              //   const seed = await this.getXorSeed(this.currentTrackId);
+              //   const seedHex = Array.from(seed).map(b => b.toString(16).padStart(2, '0')).join('');
+              //   console.log(`[XOR Secure (Full)] Track: ${this.currentTrackId}, Seed Hash (hex): ${seedHex}, Buffer Size: ${uint8.length}`);
+              //   this.applyXor(uint8, seed, 0);
+              // }
               if (onProgress) onProgress(100);
               return uint8;
             }
@@ -185,9 +189,9 @@ export class SecureAudioPlayer {
         }
       }
 
-      if (!response) break;
+      if (isFinished && !buffer) break;
+      if (!buffer || !response) break;
 
-      const buffer = await response.arrayBuffer();
       const uint8Array = new Uint8Array(buffer);
       chunks.push(uint8Array);
       
@@ -221,11 +225,15 @@ export class SecureAudioPlayer {
       offset += chunk.length;
     }
 
-    // --- XOR DEOBFUSCATION ---
-    if (this.currentTrackId) {
-      const seed = await this.getXorSeed(this.currentTrackId);
-      this.applyXor(fullBuffer, seed, 0);
-    }
+    // --- XOR DECHIFFREMENT TEMPORAIREMENT DÉSACTIVÉ ---
+    // if (this.currentTrackId) {
+    //   const seed = await this.getXorSeed(this.currentTrackId);
+    //   const seedHex = Array.from(seed).map(b => b.toString(16).padStart(2, '0')).join('');
+    //   console.log(`[XOR Secure (Chunks)] Track: ${this.currentTrackId}, Seed Hash (hex): ${seedHex}, Buffer Size: ${fullBuffer.length}`);
+    //   console.log(`[XOR Secure (Chunks)] Before De-XOR (first 16 bytes): ${Array.from(fullBuffer.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join('')}`);
+    //   this.applyXor(fullBuffer, seed, 0);
+    //   console.log(`[XOR Secure (Chunks)] After De-XOR (first 16 bytes): ${Array.from(fullBuffer.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join('')}`);
+    // }
 
     // Efface les chunks intermédiaires de la RAM après assemblage
     for (const chunk of chunks) {
@@ -391,6 +399,7 @@ export class SecureAudioPlayer {
   public pause() {
     if (!this.isPlaying || !this.sourceNode || !this.audioContext) return;
 
+    this.sourceNode.onended = null; // Prevent triggering 'ended' event
     this.sourceNode.stop();
     this.pausedAt = this.audioContext.currentTime - this.startTime;
     this.isPlaying = false;
@@ -407,6 +416,7 @@ export class SecureAudioPlayer {
 
     if (this.sourceNode) {
       try {
+        this.sourceNode.onended = null; // Prevent triggering 'ended' event
         this.sourceNode.stop();
         this.sourceNode.disconnect();
       } catch (e) {

@@ -481,7 +481,7 @@ export async function playRemoteTrack(
     
     // Wait for canplay or error with timeout
     await new Promise<void>((resolve, reject) => {
-      let timeoutId: number | null = null;
+      let timeoutId: ReturnType<typeof setTimeout> | null = null;
       
       const onCanPlay = () => {
         if (timeoutId) clearTimeout(timeoutId);
@@ -816,7 +816,7 @@ export async function playStream(
     
     // Wait for canplay or error with timeout
     await new Promise<void>((resolve, reject) => {
-      let timeoutId: number | null = null;
+      let timeoutId: ReturnType<typeof setTimeout> | null = null;
       
       const onCanPlay = () => {
         if (timeoutId) clearTimeout(timeoutId);
@@ -882,7 +882,7 @@ export async function playStream(
       
       // Wait for HLS to load or error with timeout
       await new Promise<void>((resolve, reject) => {
-        let timeoutId: number | null = null;
+        let timeoutId: ReturnType<typeof setTimeout> | null = null;
         let manifestParsed = false;
         
         hls.on(Hls.Events.MANIFEST_PARSED, () => {

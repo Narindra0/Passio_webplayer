@@ -25,7 +25,8 @@ import {
     setVolume as setAudioVolume,
     setMuted as setAudioMuted,
     stopCurrentTrack,
-    togglePlayPause as toggleAudioPlayPause
+    togglePlayPause as toggleAudioPlayPause,
+    seekToSeconds as audioSeekToSeconds
 } from '@/services/audio';
 import { readLocalDecryptionKey, resolveOfflinePlayback } from '@/services/offlineAccess';
 import type { PublicAlbumDetails, PublicAlbumSummary, PublicTrack } from '@/types/backend';
@@ -41,6 +42,15 @@ export type QueueScope = 'album' | 'trackList';
 export interface TrackListPlayItem {
   id: string;
   album_id: string;
+}
+
+export interface SavedAudioSession {
+  albumId: string;
+  currentIndex: number;
+  currentTime: number;
+  duration: number;
+  timestamp: number;
+  queueScope: QueueScope;
 }
 
 export interface AudioPlaybackState {
@@ -154,7 +164,7 @@ export function AudioProvider({ children }: { children: ReactNode }) {
   const queueModeRef = useRef<QueueMode>('sequential');
   const repeatModeRef = useRef<RepeatMode>('off');
   const keyCacheRef = useRef<Map<string, string>>(new Map());
-  const pendingHlsSeekSecondsRef = useRef<number | null>(null);
+  const pendingSeekSecondsRef = useRef<number | null>(null);
   const progressThrottleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastProgressRef = useRef(0);
   const lastDurationRef = useRef(0);
@@ -174,13 +184,20 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     if (nextIdx >= 0 && nextIdx < q.length) {
       const nextTrack = q[nextIdx];
       if (nextTrack) {
-        // Check if we're in a free album!
         const isFreeAlbum = albumRef.current?.is_free;
-        const nextUrl = nextTrack.encrypted_audio_url ?? nextTrack.preview_url ?? `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(nextTrack.id)}/audio`;
-        
-          // For all tracks: use secure prefetch to properly pass auth headers and avoid honeypot
+        if (!isFreeAlbum) {
+          const nextUrl = `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(nextTrack.id)}/audio`;
           console.log('[AudioContext] ⚡ Préchargement sécurisé pour piste suivante:', nextTrack.title);
           prefetchSecureTrack(nextUrl, nextTrack.id);
+        } else {
+          // Pour les pistes gratuites : préchargement simple via le navigateur
+          const directUrl = nextTrack.encrypted_audio_url || nextTrack.preview_url;
+          if (directUrl) {
+            console.log('[AudioContext] ⚡ Préchargement simple pour piste gratuite suivante:', nextTrack.title);
+            // Juste une requête HEAD pour mettre en cache
+            fetch(directUrl, { method: 'HEAD' }).catch(() => {});
+          }
+        }
       }
     }
   }
@@ -211,6 +228,19 @@ export function AudioProvider({ children }: { children: ReactNode }) {
       progressThrottleRef.current = null;
       setProgress(lastProgressRef.current);
       setDuration(lastDurationRef.current);
+
+      // Sauvegarde de la session pour la reprise après rafraîchissement
+      const currentSeconds = lastProgressRef.current * lastDurationRef.current;
+      if (albumRef.current?.id && currentIndexRef.current >= 0 && currentSeconds > 0) {
+         localStorage.setItem('passio_audio_session', JSON.stringify({
+           albumId: albumRef.current.id,
+           currentIndex: currentIndexRef.current,
+           currentTime: currentSeconds,
+           duration: lastDurationRef.current,
+           timestamp: Date.now(),
+           queueScope: queueScopeRef.current,
+         }));
+      }
     }, PROGRESS_THROTTLE_MS);
   }, []);
 
@@ -218,6 +248,53 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     return () => {
       if (progressThrottleRef.current) clearTimeout(progressThrottleRef.current);
     };
+  }, []);
+
+  useEffect(() => {
+    const savedSessionStr = localStorage.getItem('passio_audio_session');
+    if (savedSessionStr) {
+      try {
+        const session: SavedAudioSession = JSON.parse(savedSessionStr);
+        // Expiration après 5 minutes (300000 ms)
+        if (Date.now() - session.timestamp < 5 * 60 * 1000) {
+          getAlbum(session.albumId).then((albumResp) => {
+            const albumData = unwrapAlbumDetails(albumResp);
+            const sorted = sortTracksByPosition(albumData.tracks || []);
+            
+            queueScopeRef.current = session.queueScope;
+            setQueueScope(session.queueScope);
+            
+            albumRef.current = albumData;
+            setAlbum(albumData);
+            
+            queueRef.current = sorted;
+            setQueue(sorted);
+            
+            currentIndexRef.current = session.currentIndex;
+            setCurrentIndex(session.currentIndex);
+            
+            pendingSeekSecondsRef.current = session.currentTime;
+            
+            if (session.duration > 0) {
+              lastProgressRef.current = session.currentTime / session.duration;
+              lastDurationRef.current = session.duration;
+              setProgress(lastProgressRef.current);
+              setDuration(session.duration);
+            }
+            
+            // Auto-play de la session restaurée
+            resumePlayback();
+          }).catch(err => {
+             console.warn('Failed to restore audio session', err);
+             localStorage.removeItem('passio_audio_session');
+          });
+        } else {
+          localStorage.removeItem('passio_audio_session');
+        }
+      } catch (e) {
+        localStorage.removeItem('passio_audio_session');
+      }
+    }
   }, []);
 
   async function resolveLocalKey(albumId: string, keyInMemory: string | null): Promise<string | null> {
@@ -230,6 +307,11 @@ export function AudioProvider({ children }: { children: ReactNode }) {
   }
 
   async function resolveKeyForAlbum(albumData: PublicAlbumDetails, keyHint?: string | null): Promise<string | null> {
+    // Skip key resolution entirely for FREE albums
+    if (Boolean(albumData.is_free)) {
+      console.log('[ResolveKey] Album FREE, skip key checks');
+      return null;
+    }
     const fromHint = keyHint ?? (albumData as PublicAlbumDetails & { decryption_key?: string }).decryption_key;
     if (fromHint) {
       keyCacheRef.current.set(albumData.id, fromHint);
@@ -244,12 +326,21 @@ export function AudioProvider({ children }: { children: ReactNode }) {
 
   async function resolvePlayMode(track: PublicTrack, albumData: PublicAlbumDetails, key: string | null): Promise<PlayMode> {
     const isFreeRelease = Boolean(albumData.is_free);
-    const effectiveKey = await resolveKeyForAlbum(albumData, key);
-    const ownedPaid = !isFreeRelease && (libraryRef.current.some((entry) => entry.id === albumData.id) || await isAlbumOwnedByDevice(albumData.id));
+    let effectiveKey = key;
+    let ownedPaid = false;
+    if (!isFreeRelease) {
+      effectiveKey = await resolveKeyForAlbum(albumData, key);
+      ownedPaid = libraryRef.current.some((entry) => entry.id === albumData.id) || await isAlbumOwnedByDevice(albumData.id);
+    }
 
-    // 🔒 PROTECTION IDM : 
-    // Au lieu de donner directement track.preview_url ou track.encrypted_audio_url (qui fuient vers IDM),
-    // on force systématiquement le mode 'remote' si la piste a un ID pour passer par notre proxy XOR.
+    // 🎯 Pour les pistes gratuites : utiliser d'abord les URL directes (Cloudflare) pour éviter les problèmes de décodage
+    if (isFreeRelease) {
+      if (track.encrypted_audio_url || track.preview_url || track.stream_url) {
+        return 'stream';
+      }
+    }
+
+    // 🔒 PROTECTION IDM pour les pistes payantes : forcer le mode remote pour passer par le proxy
     if (track.id && (track.audio_storage_key || track.encrypted_audio_url || track.preview_url)) {
       return 'remote';
     }
@@ -258,8 +349,6 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     if (isFreeRelease && albumData.stream_status === 'ready' && albumData.stream_url) {
       return 'hls';
     }
-
-
 
     // Fallback URL externes (ex: stream_url vers soundcloud, radio...)
     if (track.stream_url) return 'stream';
@@ -328,6 +417,8 @@ export function AudioProvider({ children }: { children: ReactNode }) {
       setIsPlaying(false);
       setProgress(0);
       isPlayingRef.current = false;
+      // Nettoyer la session de reprise quand la lecture se termine complètement
+      localStorage.removeItem('passio_audio_session');
     } finally {
       trackAdvanceLockRef.current = false;
     }
@@ -357,6 +448,12 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     key: string | null,
     isRetry: boolean = false,
   ) {
+    // Sécurité : vérifier que track et albumData sont bien définis
+    if (!track || !albumData) {
+      console.error('[AudioContext] startPlayback called with missing track or albumData');
+      return;
+    }
+    
     console.log('[AudioContext] startPlayback called with:', {
       trackId: track.id,
       trackTitle: track.title,
@@ -372,16 +469,19 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     if (!isRetry) setPlaybackError(null);
     setIsLoading(true);
     setIsPlaying(false);
-    pendingHlsSeekSecondsRef.current = null;
+    pendingSeekSecondsRef.current = null;
     isDevicePlaybackRef.current = false;
 
     try {
       // Résoudre la clé et le mode AVANT d'arrêter la piste en cours
       // → si resolvePlayMode échoue (aucun mode disponible), on ne perd pas la piste actuelle
-      const effectiveKey = await resolveLocalKey(albumData.id, key);
-      if (effectiveKey && !decryptionKeyRef.current) {
-        decryptionKeyRef.current = effectiveKey;
-        setDecryptionKey(effectiveKey);
+      let effectiveKey = key;
+      if (!Boolean(albumData.is_free)) {
+        effectiveKey = await resolveLocalKey(albumData.id, key);
+        if (effectiveKey && !decryptionKeyRef.current) {
+          decryptionKeyRef.current = effectiveKey;
+          setDecryptionKey(effectiveKey);
+        }
       }
 
       const mode = await resolvePlayMode(track, albumData, effectiveKey);
@@ -395,6 +495,11 @@ export function AudioProvider({ children }: { children: ReactNode }) {
         currentTime?: number; duration?: number; playing?: boolean;
         playbackState?: string; isLoaded?: boolean;
       }) => {
+        if (status.isLoaded && pendingSeekSecondsRef.current !== null) {
+          audioSeekToSeconds(pendingSeekSecondsRef.current);
+          pendingSeekSecondsRef.current = null;
+        }
+
         const currentTime: number = status.currentTime ?? 0;
         const dur: number = status.duration ?? 0;
         if (dur > 0) updateProgressThrottled(currentTime, dur);
@@ -424,10 +529,17 @@ export function AudioProvider({ children }: { children: ReactNode }) {
             const nextTrack = q[nextIdx];
             if (nextTrack) {
               const isFreeAlbum = albumRef.current?.is_free;
-              const nextUrl = nextTrack.encrypted_audio_url ?? nextTrack.preview_url ?? `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(nextTrack.id)}/audio`;
-              
+              if (!isFreeAlbum) {
+                const nextUrl = `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(nextTrack.id)}/audio`;
                 console.log('[AudioContext] Préchargement sécurisé pour piste suivante (fin de piste):', nextTrack.title);
                 prefetchSecureTrack(nextUrl, nextTrack.id);
+              } else {
+                const directUrl = nextTrack.encrypted_audio_url || nextTrack.preview_url;
+                if (directUrl) {
+                  console.log('[AudioContext] Préchargement simple pour piste gratuite suivante (fin de piste):', nextTrack.title);
+                  fetch(directUrl, { method: 'HEAD' }).catch(() => {});
+                }
+              }
             }
           }
         }
@@ -494,33 +606,33 @@ export function AudioProvider({ children }: { children: ReactNode }) {
           throw new Error('Impossible de lire ce titre.');
         }
       } else {
-        // For non-remote modes, try direct URLs first (prioritize encrypted_audio_url which is our Cloudflare CDN!)
-        const url = track.encrypted_audio_url ?? track.preview_url ?? track.stream_url;
-        console.log('[AudioContext] [1/2] Trying stream mode URL:', url);
-        if (!url) throw new Error("L'aperçu de cette piste n'est pas disponible.");
-        try {
-          const streamPlayer = await playStream(url, handleStatus);
-          if (streamPlayer) {
-            console.log('[AudioContext] ✅ Playback started with direct Cloudflare URL');
-            currentIndexRef.current = index;
-            setCurrentIndex(index);
-            // Solution C: Préchargement immédiat de la piste suivante
-            triggerNextTrackPrefetch(index);
-            return;
-          }
-        } catch (err) {
-          console.warn('[AudioContext] ❌ Direct Cloudflare URL failed for stream mode:', err);
+      // For non-remote modes, try direct URLs first (prioritize encrypted_audio_url which is our Cloudflare CDN!)
+      const url = track.encrypted_audio_url || track.preview_url || track.stream_url;
+      console.log('[AudioContext] [1/2] Trying stream mode URL:', url);
+      if (!url) throw new Error("L'aperçu de cette piste n'est pas disponible.");
+      try {
+        const streamPlayer = await playStream(url, handleStatus);
+        if (streamPlayer) {
+          console.log('[AudioContext] ✅ Lecture démarrée avec URL Cloudflare directe');
+          currentIndexRef.current = index;
+          setCurrentIndex(index);
+          // Solution C: Préchargement immédiat de la piste suivante
+          triggerNextTrackPrefetch(index);
+          return;
         }
-        
-        // Fallback to proxy if direct fails
-        const proxyUrl = `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(track.id)}/audio`;
-        console.log('[AudioContext] [2/2] Trying proxy URL for non-remote mode:', proxyUrl);
-        const streamPlayer = await playStream(proxyUrl, handleStatus);
-        if (!streamPlayer) throw new Error('Impossible de lire ce titre.');
-        console.log('[AudioContext] ✅ Playback started with proxy URL');
-        // Solution C: Préchargement immédiat de la piste suivante (pour stream)
-        triggerNextTrackPrefetch(index);
+      } catch (err) {
+        console.warn('[AudioContext] ❌ Échec URL Cloudflare directe pour mode stream:', err);
       }
+      
+      // Fallback to proxy if direct fails
+      const proxyUrl = track.encrypted_audio_url || `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(track.id)}/audio`;
+      console.log('[AudioContext] [2/2] Tentative URL proxy pour mode non-remote:', proxyUrl);
+      const streamPlayer = await playStream(proxyUrl, handleStatus);
+      if (!streamPlayer) throw new Error('Impossible de lire ce titre.');
+      console.log('[AudioContext] ✅ Lecture démarrée avec URL proxy');
+      // Solution C: Préchargement immédiat de la piste suivante (pour stream)
+      triggerNextTrackPrefetch(index);
+    }
 
       currentIndexRef.current = index;
       setCurrentIndex(index);
@@ -641,11 +753,13 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     setPlaybackError(null);
     setPlayMode(null);
     prefetchTriggeredRef.current = false;
-    pendingHlsSeekSecondsRef.current = null;
+    pendingSeekSecondsRef.current = null;
     isDevicePlaybackRef.current = false;
 
     let key = decryptionKeyRef.current;
-    if (!key) key = await resolveKeyForAlbum(alb, null);
+    if (!key && !Boolean(alb.is_free)) {
+      key = await resolveKeyForAlbum(alb, null);
+    }
     if (key) {
       decryptionKeyRef.current = key;
       setDecryptionKey(key);
@@ -668,11 +782,19 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     // Solution C: Précharger la première piste dès le chargement de l'album
     if (sorted.length > 0) {
       const firstTrack = sorted[0];
-      const firstUrl = firstTrack.encrypted_audio_url ?? firstTrack.preview_url ?? `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(firstTrack.id)}/audio`;
       const isFreeAlbum = albumData.is_free;
       
-      console.log('[AudioContext] Préchargement sécurisé pour première piste:', firstTrack.title);
-      prefetchSecureTrack(firstUrl, firstTrack.id);
+      if (!isFreeAlbum) {
+        const firstUrl = `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(firstTrack.id)}/audio`;
+        console.log('[AudioContext] Préchargement sécurisé pour première piste:', firstTrack.title);
+        prefetchSecureTrack(firstUrl, firstTrack.id);
+      } else {
+        const directUrl = firstTrack.encrypted_audio_url || firstTrack.preview_url;
+        if (directUrl) {
+          console.log('[AudioContext] Préchargement simple pour première piste gratuite:', firstTrack.title);
+          fetch(directUrl, { method: 'HEAD' }).catch(() => {});
+        }
+      }
     }
 
     const libIdx = libraryRef.current.findIndex((a) => a.id === albumData.id);
@@ -749,14 +871,44 @@ export function AudioProvider({ children }: { children: ReactNode }) {
 
   const playTrackAtIndex = useCallback(async (index: number) => { await playAtIndex(index); }, [playAtIndex]);
 
+  const resumePlayback = useCallback(async () => {
+    if (currentIndexRef.current >= 0 && albumRef.current && queueRef.current.length > 0) {
+      const q = queueRef.current;
+      const index = currentIndexRef.current;
+      const track = q[index];
+      const alb = albumRef.current;
+      
+      // Vérifier que la piste existe bien avant de démarrer la lecture
+      if (!track) {
+        console.warn('[AudioContext] resumePlayback: track not found at index', index);
+        return;
+      }
+      
+      let key = decryptionKeyRef.current;
+      if (!key) key = await resolveKeyForAlbum(alb, null);
+      if (key) {
+        decryptionKeyRef.current = key;
+        setDecryptionKey(key);
+      }
+      const seekTime = pendingSeekSecondsRef.current;
+      const p = startPlayback(track, index, alb, key);
+      pendingSeekSecondsRef.current = seekTime;
+      await p;
+    }
+  }, []);
+
   const togglePlayPause = useCallback(() => {
+    if (pendingSeekSecondsRef.current !== null && currentIndexRef.current >= 0 && albumRef.current) {
+      resumePlayback();
+      return;
+    }
     toggleAudioPlayPause().then((newState) => {
       setIsPlaying(newState);
       isPlayingRef.current = newState;
     }).catch(() => {
       // ignore
     });
-  }, []);
+  }, [resumePlayback]);
 
   const next = useCallback(async () => {
     const q = queueRef.current;

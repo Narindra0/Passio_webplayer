@@ -76,7 +76,7 @@ export class MSESecurePlayer {
   }
 
   static isSupported(): boolean {
-    return typeof MediaSource !== 'undefined' && MediaSource.isTypeSupported('audio/mpeg');
+    return typeof MediaSource !== 'undefined' && MediaSource.isTypeSupported('audio/mp4');
   }
 
   /**
@@ -135,7 +135,16 @@ export class MSESecurePlayer {
     }
 
     const rawType = probeResponse.headers.get('Content-Type') || 'audio/mpeg';
-    this.mimeType = rawType.split(';')[0].trim();
+    let parsedMime = rawType.split(';')[0].trim();
+    
+    // Workaround: Si le backend renvoie octet-stream, on force audio/mp4
+    // pour permettre au lecteur MSE (très rapide) de démarrer sans planter.
+    if (parsedMime === 'application/octet-stream' || !MediaSource.isTypeSupported(parsedMime)) {
+      console.warn(`[MSE] Type MIME non supporté détecté (${parsedMime}), tentative de forçage en audio/mp4...`);
+      parsedMime = 'audio/mp4';
+    }
+    
+    this.mimeType = parsedMime;
     if (!MediaSource.isTypeSupported(this.mimeType)) {
       throw new Error(`MSESecurePlayer: MSE not supported for ${this.mimeType}`);
     }
@@ -316,11 +325,18 @@ export class MSESecurePlayer {
         const chunk = await response.arrayBuffer();
         if (!this.streaming || controller.signal.aborted) break;
 
-        if (this.currentTrackId) {
-          const uint8 = new Uint8Array(chunk);
-          const seed = await this.getXorSeed(this.currentTrackId);
-          this.applyXor(uint8, seed, this.nextOffset);
-        }
+        let bufferToAppend = chunk;
+        // --- XOR DECHIFFREMENT TEMPORAIREMENT DÉSACTIVÉ ---
+        // if (this.currentTrackId) {
+        //   const uint8 = new Uint8Array(chunk);
+        //   const seed = await this.getXorSeed(this.currentTrackId);
+        //   const seedHex = Array.from(seed).map(b => b.toString(16).padStart(2, '0')).join('');
+        //   console.log(`[XOR MSE] Track: ${this.currentTrackId}, Seed Hash (hex): ${seedHex}, Chunk Size: ${uint8.length}, Offset: ${this.nextOffset}`);
+        //   console.log(`[XOR MSE] Before De-XOR (first 16 bytes): ${Array.from(uint8.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join('')}`);
+        //   this.applyXor(uint8, seed, this.nextOffset);
+        //   console.log(`[XOR MSE] After De-XOR (first 16 bytes): ${Array.from(uint8.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join('')}`);
+        //   bufferToAppend = uint8.buffer;
+        // }
 
         // Attendre que le SourceBuffer soit prêt (avec timeout)
         if (this.sourceBuffer!.updating) {
@@ -328,7 +344,7 @@ export class MSESecurePlayer {
         }
         if (!this.streaming || controller.signal.aborted) break;
 
-        this.sourceBuffer!.appendBuffer(chunk);
+        this.sourceBuffer!.appendBuffer(bufferToAppend);
         this.nextOffset += chunk.byteLength;
       }
     } finally {
