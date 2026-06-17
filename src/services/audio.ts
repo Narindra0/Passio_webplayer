@@ -763,58 +763,33 @@ export async function playWebOptimizedTrack(
   onStatusUpdate?: StatusCallback,
   skipStopCurrent: boolean = false
 ): Promise<boolean> {
-  // ⏳ Si un secure prefetch est en cours pour cette même piste, on attend
-  if (securePrefetchTrackId === trackId && securePrefetchPromise) {
-    console.log('[WebAudio] ⏳ Attente du secure prefetch pour:', trackId);
-    await securePrefetchPromise;
-  }
-
-  // 📱 Stratégie pour mobile : prioriser HTML5 Audio direct
-  if (isMobile()) {
-    console.log('[WebAudio] 📱 Détecté mobile, priorisation HTML5 Audio');
-    
-    // Essayer d'abord avec l'URL preview si disponible
-    if (previewUrl) {
-      try {
-        console.log('[WebAudio] 📱 Tentative HTML5 Audio avec preview URL');
-        const audio = await playStream(previewUrl, onStatusUpdate, skipStopCurrent);
-        if (audio) return true;
-      } catch (err) {
-        console.warn('[WebAudio] ❌ Preview URL échoué sur mobile:', err);
-      }
-    }
-    
-    // Essayer avec l'URL proxy en HTML5 Audio
-    try {
-      console.log('[WebAudio] 📱 Tentative HTML5 Audio avec proxy URL');
-      const audio = await playStream(proxyUrl, onStatusUpdate, true); // already skipped first stop
-      if (audio) return true;
-    } catch (err) {
-      console.warn('[WebAudio] ❌ Proxy URL échoué sur mobile:', err);
-    }
-    
-    // Fallback final : SecureAudioPlayer
-    console.log('[WebAudio] 🔒 Fallback mobile: AudioContext');
-    return playSecureTrack(trackId, proxyUrl, onStatusUpdate, true);
-  }
-
-  // 🖥️ Stratégie pour desktop
-  console.log('[WebAudio] 🖥️ Détecté desktop, stratégie standard');
+  console.log('[WebAudio] 🔧 Stratégie MAXIMALE STABILITÉ : UNIQUEMENT HTML5 Audio');
   
-  // 🎯 Essayer MSE (streaming progressif sécurisé) si supporté
-  if (MSESecurePlayer.isSupported()) {
+  // Essayer UNIQUEMENT HTML5 Audio (le plus stable et compatible)
+  const urlsToTry = [
+    previewUrl,
+    `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(trackId)}/audio`,
+    proxyUrl
+  ].filter(Boolean) as string[];
+
+  for (const url of urlsToTry) {
     try {
-      console.log('[WebAudio] 🎯 Tentative MSE streaming...');
-      return await playSecureTrackMSE(proxyUrl, onStatusUpdate, skipStopCurrent);
-    } catch (mseErr) {
-      console.warn('[WebAudio] ❌ MSE échoué, fallback AudioContext:', mseErr);
-      // no need to stopCurrentTrack here since we already did it
+      console.log('[WebAudio] 🎵 Tentative HTML5 Audio avec:', url);
+      const audio = await playStream(url, onStatusUpdate, skipStopCurrent);
+      if (audio) {
+        console.log('[WebAudio] ✅ Succès avec HTML5 Audio');
+        return true;
+      }
+    } catch (err) {
+      console.warn('[WebAudio] ❌ Échec HTML5 Audio avec cette URL:', err);
+      // Prochaine URL à essayer
     }
+    // Pour les prochaines URLs, on ne veut pas rappeler stopCurrentTrack
+    skipStopCurrent = true;
   }
 
-  // 🔒 Fallback : Web Audio API (téléchargement complet puis lecture)
-  console.log('[WebAudio] 🔒 Fallback desktop: téléchargement complet via AudioContext');
-  return playSecureTrack(trackId, proxyUrl, onStatusUpdate, true);
+  // Si tous les essais échouent, throw error
+  throw new Error('Impossible de lire ce titre (toutes les URLs ont échoué)');
 }
 
 export async function prefetchRemoteTrack(
@@ -866,70 +841,50 @@ export async function playStream(
     const audio = new Audio();
     currentAudio = audio;
     isSecureAudio = false;
+    
+    console.log('[Audio] 🔧 Chargement stream (simplifié) depuis:', audioUrl);
+    
     if (onStatusUpdate) setupAudioEvents(audio, onStatusUpdate);
     audio.crossOrigin = 'anonymous';
     audio.preload = 'auto';
-    audio.playsInline = true; // Important pour iOS pour éviter le plein écran
-    audio.disableRemotePlayback = false; // Permet la lecture sur appareils externes
+    (audio as any).playsInline = true; // Important pour iOS (non-standard property)
+    (audio as any).disableRemotePlayback = false;
     
-    console.log('[Audio] Loading stream from:', audioUrl);
-    
-    // Wait for canplay or error with timeout
+    // Attendre que le média soit prêt, sans timeout problématique
     await new Promise<void>((resolve, reject) => {
-      let timeoutId: ReturnType<typeof setTimeout> | null = null;
-      
       const onCanPlay = () => {
-        if (timeoutId) clearTimeout(timeoutId);
+        audio.removeEventListener('error', onError);
         resolve();
       };
       
       const onError = (e: Event) => {
-        if (timeoutId) clearTimeout(timeoutId);
+        audio.removeEventListener('canplay', onCanPlay);
         const error = audio.error;
-        let errorMessage = 'Failed to load stream';
+        let errorMsg = 'Échec chargement audio';
         if (error) {
           switch (error.code) {
-            case error.MEDIA_ERR_ABORTED:
-              errorMessage = 'Stream loading aborted';
-              break;
-            case error.MEDIA_ERR_NETWORK:
-              errorMessage = 'Network error while loading stream';
-              break;
-            case error.MEDIA_ERR_DECODE:
-              errorMessage = 'Stream decoding failed';
-              break;
-            case error.MEDIA_ERR_SRC_NOT_SUPPORTED:
-              errorMessage = 'Stream format not supported';
-              break;
+            case error.MEDIA_ERR_ABORTED: errorMsg = 'Chargement interrompu'; break;
+            case error.MEDIA_ERR_NETWORK: errorMsg = 'Erreur réseau'; break;
+            case error.MEDIA_ERR_DECODE: errorMsg = 'Erreur décodage'; break;
+            case error.MEDIA_ERR_SRC_NOT_SUPPORTED: errorMsg = 'Format non supporté'; break;
           }
-          console.error('[Audio] Stream error details:', { code: error.code, message: error.message, event: e });
+          console.error('[Audio] Détails erreur:', { code: error.code, message: error.message, event: e });
         }
-        reject(new Error(errorMessage));
+        reject(new Error(errorMsg));
       };
-      
-      timeoutId = setTimeout(() => {
-        audio.removeEventListener('canplay', onCanPlay);
-        audio.removeEventListener('error', onError);
-        reject(new Error('Stream load timeout'));
-      }, 30000); // 30 second timeout
       
       audio.addEventListener('canplay', onCanPlay, { once: true });
       audio.addEventListener('error', onError, { once: true });
-      
-      // Set src after adding event listeners
       audio.src = audioUrl;
     });
     
-    // Tentative de lecture avec gestion des erreurs d'autoplay
+    // Essayer de lire, mais ne pas échouer si autoplay bloqué
     try {
       await audio.play();
-      console.log('[Audio] Started playing stream');
+      console.log('[Audio] ✅ Lecture démarrée');
     } catch (playErr) {
-      console.warn('[Audio] Autoplay bloqué pour le stream, audio en pause:', playErr);
-      // Ne pas rejeter, l'utilisateur devra cliquer sur play
-      if (onStatusUpdate) {
-        onStatusUpdate({ playing: false });
-      }
+      console.warn('[Audio] ⚠️ Autoplay bloqué (normal sur mobile), en pause:', playErr);
+      if (onStatusUpdate) onStatusUpdate({ playing: false });
     }
     
     return audio;

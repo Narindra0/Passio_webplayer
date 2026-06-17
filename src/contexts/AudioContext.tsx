@@ -448,23 +448,15 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     key: string | null,
     isRetry: boolean = false,
   ) {
-    // Sécurité : vérifier que track et albumData sont bien définis
+    console.log('[AudioContext] 🎵 Démarrage playback (simplifié)', track.title);
+    
     if (!track || !albumData) {
-      console.error('[AudioContext] startPlayback called with missing track or albumData');
+      console.error('[AudioContext] ❌ Track ou album manquant');
+      reportPlaybackError('AudioContext.playback', new Error('Track ou album manquant'));
       return;
     }
-    
-    console.log('[AudioContext] startPlayback called with:', {
-      trackId: track.id,
-      trackTitle: track.title,
-      previewUrl: track.preview_url,
-      streamUrl: track.stream_url,
-      encryptedAudioUrl: track.encrypted_audio_url,
-      albumId: albumData.id,
-      albumTitle: albumData.title,
-      isRetry
-    });
-    
+
+    // Initialiser l'état
     prefetchTriggeredRef.current = false;
     if (!isRetry) setPlaybackError(null);
     setIsLoading(true);
@@ -473,213 +465,80 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     isDevicePlaybackRef.current = false;
 
     try {
-      // Résoudre la clé et le mode AVANT d'arrêter la piste en cours
-      // → si resolvePlayMode échoue (aucun mode disponible), on ne perd pas la piste actuelle
-      let effectiveKey = key;
-      if (!Boolean(albumData.is_free)) {
-        effectiveKey = await resolveLocalKey(albumData.id, key);
-        if (effectiveKey && !decryptionKeyRef.current) {
-          decryptionKeyRef.current = effectiveKey;
-          setDecryptionKey(effectiveKey);
-        }
-      }
-
-      const mode = await resolvePlayMode(track, albumData, effectiveKey);
-
-      // Maintenant qu'on sait qu'on peut lire, on arrête la piste précédente
+      // Arrêter la piste en cours UNE SEULE FOIS
       await stopCurrentTrack();
-      console.log('[AudioContext] Resolved playback mode:', mode);
-      setPlayMode(mode);
 
-      const handleStatus = (status: {
-        currentTime?: number; duration?: number; playing?: boolean;
-        playbackState?: string; isLoaded?: boolean;
-      }) => {
+      const handleStatus = (status: any) => {
         if (status.isLoaded && pendingSeekSecondsRef.current !== null) {
           audioSeekToSeconds(pendingSeekSecondsRef.current);
           pendingSeekSecondsRef.current = null;
         }
-
-        const currentTime: number = status.currentTime ?? 0;
-        const dur: number = status.duration ?? 0;
+        const currentTime = status.currentTime ?? 0;
+        const dur = status.duration ?? 0;
         if (dur > 0) updateProgressThrottled(currentTime, dur);
-        // L'avancement automatique est déclenché uniquement par l'événement 'ended' du HTMLAudioElement
-        // (via currentTrackEndHandler → advanceToNextTrack). Cela évite les doubles appels
-        // et le bug où une pause près de la fin avançait la piste.
-        
-        // Préchargement de la piste suivante quand il reste ≤ 10 secondes
-        if (
-          dur > 0 &&
-          currentTime > 0 &&
-          dur - currentTime <= 10 &&
-          !prefetchTriggeredRef.current &&
-          repeatModeRef.current !== 'one'
-        ) {
-          prefetchTriggeredRef.current = true;
-          const currentIdx = currentIndexRef.current;
-          const q = queueRef.current;
-          let nextIdx = currentIdx + 1;
-
-          // Gérer le repeat 'all' : reboucler à la première piste
-          if (nextIdx >= q.length && repeatModeRef.current === 'all' && q.length > 0) {
-            nextIdx = 0;
-          }
-
-          if (nextIdx >= 0 && nextIdx < q.length) {
-            const nextTrack = q[nextIdx];
-            if (nextTrack) {
-              const isFreeAlbum = albumRef.current?.is_free;
-              if (!isFreeAlbum) {
-                const nextUrl = `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(nextTrack.id)}/audio`;
-                console.log('[AudioContext] Préchargement sécurisé pour piste suivante (fin de piste):', nextTrack.title);
-                prefetchSecureTrack(nextUrl, nextTrack.id);
-              } else {
-                const directUrl = nextTrack.encrypted_audio_url || nextTrack.preview_url;
-                if (directUrl) {
-                  console.log('[AudioContext] Préchargement simple pour piste gratuite suivante (fin de piste):', nextTrack.title);
-                  fetch(directUrl, { method: 'HEAD' }).catch(() => {});
-                }
-              }
-            }
-          }
-        }
-
         if (status.playing !== undefined) {
           setIsPlaying(Boolean(status.playing));
           isPlayingRef.current = Boolean(status.playing);
         }
       };
 
-      // Album-level HLS stream temporarily disabled - causing issues
-      // if (
-      //   albumData.stream_url && 
-      //   albumData.stream_status === 'ready' && 
-      //   (albumData.stream_url.includes('.m3u8') || albumData.stream_url.includes('hls'))
-      // ) {
-      //   console.log('[AudioContext] Trying album HLS stream:', albumData.stream_url);
-      //   try {
-      //     const streamPlayer = await playStream(albumData.stream_url, handleStatus);
-      //     if (streamPlayer) {
-      //       console.log('[AudioContext] Playback started with album HLS stream');
-      //       currentIndexRef.current = index;
-      //       setCurrentIndex(index);
-      //       // TODO: Seek to the correct track position in the album stream
-      //       return;
-      //     }
-      //   } catch (err) {
-      //     console.warn('[AudioContext] Album HLS stream failed:', err);
-      //   }
-      // }
+      // Essayer TOUTES les URLs disponibles, HTML5 Audio UNIQUEMENT
+      const urlsToTry = [
+        track.encrypted_audio_url, // Priorité: Cloudflare URL
+        track.preview_url,
+        `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(track.id)}/audio`,
+        track.stream_url
+      ].filter(Boolean) as string[];
 
-      console.log('[AudioContext] Track playback details:', {
-        trackId: track.id,
-        trackTitle: track.title,
-        mode,
-        albumStreamUrl: albumData.stream_url,
-        albumStreamStatus: albumData.stream_status,
-        previewUrl: track.preview_url,
-        streamUrl: track.stream_url,
-        encryptedAudioUrl: track.encrypted_audio_url
-      });
+      let played = false;
+      let skipStop = true; // déjà fait stopCurrentTrack()
 
-      if (mode === 'remote') {
-        const proxyUrl = `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(track.id)}/audio`;
-        const isPremium = !albumData.is_free;
-        
+      for (const url of urlsToTry) {
         try {
-          const player = await playWebOptimizedTrack(
-            track.id,
-            track.preview_url,
-            proxyUrl,
-            isPremium,
-            handleStatus,
-            true // skipStopCurrent since we already stopped
-          );
-          if (player) {
+          console.log('[AudioContext] 🎧 Tentative avec URL:', url);
+          const audio = await playStream(url, handleStatus, skipStop);
+          if (audio) {
+            console.log('[AudioContext] ✅ Succès playback');
             currentIndexRef.current = index;
             setCurrentIndex(index);
-            // Solution C: Préchargement immédiat de la piste suivante
-            triggerNextTrackPrefetch(index);
-            return;
+            played = true;
+            break;
           }
         } catch (err) {
-          console.warn('[AudioContext] ❌ playWebOptimizedTrack failed:', err);
-          throw new Error('Impossible de lire ce titre.');
+          console.warn('[AudioContext] ❌ Échec avec cette URL:', err);
         }
-      } else {
-      // For non-remote modes, try direct URLs first (prioritize encrypted_audio_url which is our Cloudflare CDN!)
-      const url = track.encrypted_audio_url || track.preview_url || track.stream_url;
-      console.log('[AudioContext] [1/2] Trying stream mode URL:', url);
-      if (!url) throw new Error("L'aperçu de cette piste n'est pas disponible.");
-      try {
-        const streamPlayer = await playStream(url, handleStatus, true);
-        if (streamPlayer) {
-          console.log('[AudioContext] ✅ Lecture démarrée avec URL Cloudflare directe');
-          currentIndexRef.current = index;
-          setCurrentIndex(index);
-          // Solution C: Préchargement immédiat de la piste suivante
-          triggerNextTrackPrefetch(index);
-          return;
-        }
-      } catch (err) {
-        console.warn('[AudioContext] ❌ Échec URL Cloudflare directe pour mode stream:', err);
+        skipStop = true; // pour les prochaines URLs
       }
-      
-      // Fallback to proxy if direct fails
-      const proxyUrl = track.encrypted_audio_url || `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(track.id)}/audio`;
-      console.log('[AudioContext] [2/2] Tentative URL proxy pour mode non-remote:', proxyUrl);
-      const streamPlayer = await playStream(proxyUrl, handleStatus, true);
-      if (!streamPlayer) throw new Error('Impossible de lire ce titre.');
-      console.log('[AudioContext] ✅ Lecture démarrée avec URL proxy');
-      // Solution C: Préchargement immédiat de la piste suivante (pour stream)
-      triggerNextTrackPrefetch(index);
-    }
 
-      currentIndexRef.current = index;
-      setCurrentIndex(index);
-      // Ne PAS overrider isPlaying ici — handleStatus a déjà été appelé
-      // depuis playRemoteTrack/playStream avec la bonne valeur (playing: true/false)
+      if (!played) {
+        throw new Error('Aucune URL de lecture valide pour ce titre');
+      }
+
     } catch (err) {
-      console.error('[AudioContext] Playback failed with error:', err);
-      // Une seule tentative de récupération : rafraîchir les données de l'album et réessayer
-      // Si isRetry est déjà true, on affiche directement l'erreur définitive
+      console.error('[AudioContext] ❌ Échec playback:', err);
+
+      // Une seule tentative de refresh
       if (!isRetry) {
         try {
-          console.log('[AudioContext] 🔄 Rafraîchissement des données album pour nouvelles URLs signées');
+          console.log('[AudioContext] 🔄 Tentative refresh album');
           const freshAlbum = unwrapAlbumDetails(await getAlbum(albumData.id));
-          console.log('[AudioContext] Nouvelles données album recues:', freshAlbum);
-          
-          // Find the same track in the refreshed data WITHOUT mutating current state
-          // → Si la piste n'est pas trouvée dans les données fraîches, on ne touche PAS
-          //   à l'album/queue actuel pour éviter de casser l'affichage du lecteur
           const sortedTracks = sortTracksByPosition(freshAlbum.tracks || []);
           const freshTrack = sortedTracks.find(t => t.id === track.id);
-          console.log('[AudioContext] Piste fraiche trouvee:', freshTrack?.title);
+
           if (freshTrack) {
-            // Mettre à jour l'album et la queue SEULEMENT si on a trouvé la piste
             albumRef.current = freshAlbum;
             setAlbum(freshAlbum);
             queueRef.current = sortedTracks;
             setQueue(sortedTracks);
-            // Une seule tentative de rejeu, isRetry=true bloque toute récursion ultérieure
             await startPlayback(freshTrack, index, freshAlbum, key, true);
             return;
-          } else {
-            // Piste introuvable dans les données rafraîchies → ne pas muter l'état
-            console.warn('[AudioContext] ⚠️ Piste non trouvée dans les données rafraîchies, skip retry');
           }
         } catch (refreshErr) {
-          console.error('[AudioContext] Échec du rafraîchissement des données album:', refreshErr);
+          console.error('[AudioContext] ❌ Échec refresh:', refreshErr);
         }
       }
-      
-      // Ne PAS réinitialiser l'état de la piste en cours :
-      // - currentIndex, album, queue restent intacts → le lecteur reste affiché
-      // - Seule l'erreur est transmise à l'UI pour affichage du message
+
       reportPlaybackError('AudioContext.playback', err);
-      // isPlaying est déjà false (set dans playAtIndex)
-      // Ne surtout PAS appeler setIsPlaying(false) ici — c'est redondant
-      // et ne surtout PAS réinitialiser currentIndex ou album
     } finally {
       setIsLoading(false);
     }
