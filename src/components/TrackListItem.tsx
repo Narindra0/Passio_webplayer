@@ -2,7 +2,7 @@ import { Play, Pause, CloudCheck } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useCachedImage } from '@/hooks/useCachedImage';
 import { getApiBaseUrl } from '@/services/api';
-import { prefetchTrackBlob } from '@/services/audio';
+import { prefetchTrackBlob, unlockAudioContext } from '@/services/audio';
 import { isTrackInDB } from '../services/indexedDB';
 import { FeatArtistLinks } from './FeatArtistLinks';
 import { hasFeatArtists, parseFeatArtists } from '@/utils/featArtists';
@@ -64,7 +64,10 @@ export function TrackListItem({ track, onPress, isPlaying = false }: TrackListIt
 
   return (
     <button
-      onClick={onPress}
+      onClick={() => {
+        unlockAudioContext(); // Débloque l'audio sur mobile
+        onPress();
+      }}
       className="track-item"
       style={{
         display: 'flex',

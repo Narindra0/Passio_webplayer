@@ -476,6 +476,8 @@ export async function playRemoteTrack(
     if (onStatusUpdate) setupAudioEvents(audio, onStatusUpdate);
     audio.crossOrigin = 'anonymous';
     audio.preload = 'auto';
+    audio.playsInline = true; // Important pour iOS pour éviter le plein écran
+    audio.disableRemotePlayback = false; // Permet la lecture sur appareils externes
     
     console.log('[Audio] Loading audio from:', audioUrl);
     
@@ -525,8 +527,18 @@ export async function playRemoteTrack(
       audio.src = audioUrl;
     });
     
-    await audio.play();
-    console.log('[Audio] Started playing');
+    // Tentative de lecture avec gestion des erreurs d'autoplay
+    try {
+      await audio.play();
+      console.log('[Audio] Lecture démarrée avec succès');
+    } catch (playErr) {
+      console.warn('[Audio] Autoplay bloqué, audio en pause:', playErr);
+      // Ne pas rejeter, l'utilisateur devra cliquer sur play
+      if (onStatusUpdate) {
+        onStatusUpdate({ playing: false });
+      }
+    }
+    
     return audio;
   };
 
@@ -724,12 +736,18 @@ export async function playSecureTrack(
 }
 
 /**
+ * Détecte si le navigateur est sur mobile.
+ */
+function isMobile(): boolean {
+  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+}
+
+/**
  * Point d'entrée principal pour la lecture des pistes premium.
  * 
- * Stratégie (par ordre de préférence) :
- * 1. ⚡ Secure prefetch disponible → AudioContext direct (instantané)
- * 2. 🎯 MSE supporté → streaming progressif (1-2s) sans exposer d'URL
- * 3. 🔒 Web Audio API → téléchargement complet puis lecture (3-6s)
+ * Stratégie adaptative selon l'appareil :
+ * - 📱 Mobile : Priorise HTML5 Audio (plus fiable) avec fallback
+ * - 🖥️ Desktop : Priorise MSE → Web Audio → HTML5
  */
 export async function playWebOptimizedTrack(
   trackId: string,
@@ -744,21 +762,51 @@ export async function playWebOptimizedTrack(
     await securePrefetchPromise;
   }
 
+  // 📱 Stratégie pour mobile : prioriser HTML5 Audio direct
+  if (isMobile()) {
+    console.log('[WebAudio] 📱 Détecté mobile, priorisation HTML5 Audio');
+    
+    // Essayer d'abord avec l'URL preview si disponible
+    if (previewUrl) {
+      try {
+        console.log('[WebAudio] 📱 Tentative HTML5 Audio avec preview URL');
+        const audio = await playStream(previewUrl, onStatusUpdate);
+        if (audio) return true;
+      } catch (err) {
+        console.warn('[WebAudio] ❌ Preview URL échoué sur mobile:', err);
+      }
+    }
+    
+    // Essayer avec l'URL proxy en HTML5 Audio
+    try {
+      console.log('[WebAudio] 📱 Tentative HTML5 Audio avec proxy URL');
+      const audio = await playStream(proxyUrl, onStatusUpdate);
+      if (audio) return true;
+    } catch (err) {
+      console.warn('[WebAudio] ❌ Proxy URL échoué sur mobile:', err);
+    }
+    
+    // Fallback final : SecureAudioPlayer
+    console.log('[WebAudio] 🔒 Fallback mobile: AudioContext');
+    return playSecureTrack(trackId, proxyUrl, onStatusUpdate);
+  }
+
+  // 🖥️ Stratégie pour desktop
+  console.log('[WebAudio] 🖥️ Détecté desktop, stratégie standard');
+  
   // 🎯 Essayer MSE (streaming progressif sécurisé) si supporté
-  // (playSecureTrack gère déjà le secure prefetch en interne, pas besoin de le vérifier ici)
   if (MSESecurePlayer.isSupported()) {
     try {
       console.log('[WebAudio] 🎯 Tentative MSE streaming...');
       return await playSecureTrackMSE(proxyUrl, onStatusUpdate);
     } catch (mseErr) {
       console.warn('[WebAudio] ❌ MSE échoué, fallback AudioContext:', mseErr);
-      // Nettoyer l'état après l'échec MSE
       await stopCurrentTrack();
     }
   }
 
   // 🔒 Fallback : Web Audio API (téléchargement complet puis lecture)
-  console.log('[WebAudio] 🔒 Fallback: téléchargement complet via AudioContext');
+  console.log('[WebAudio] 🔒 Fallback desktop: téléchargement complet via AudioContext');
   return playSecureTrack(trackId, proxyUrl, onStatusUpdate);
 }
 
@@ -811,6 +859,8 @@ export async function playStream(
     if (onStatusUpdate) setupAudioEvents(audio, onStatusUpdate);
     audio.crossOrigin = 'anonymous';
     audio.preload = 'auto';
+    audio.playsInline = true; // Important pour iOS pour éviter le plein écran
+    audio.disableRemotePlayback = false; // Permet la lecture sur appareils externes
     
     console.log('[Audio] Loading stream from:', audioUrl);
     
@@ -860,8 +910,18 @@ export async function playStream(
       audio.src = audioUrl;
     });
     
-    await audio.play();
-    console.log('[Audio] Started playing stream');
+    // Tentative de lecture avec gestion des erreurs d'autoplay
+    try {
+      await audio.play();
+      console.log('[Audio] Started playing stream');
+    } catch (playErr) {
+      console.warn('[Audio] Autoplay bloqué pour le stream, audio en pause:', playErr);
+      // Ne pas rejeter, l'utilisateur devra cliquer sur play
+      if (onStatusUpdate) {
+        onStatusUpdate({ playing: false });
+      }
+    }
+    
     return audio;
   };
 
@@ -938,7 +998,35 @@ export async function playStream(
   }
 
   // Fallback to HTML5 audio
+  console.log('[Audio] Fallback: HTML5 Audio direct');
   return await playWithHtmlAudio(resolvedUrl);
+}
+
+/**
+ * Crée un contexte audio silencieux pour débloquer l'audio sur mobile.
+ * Doit être appelé depuis un gestionnaire d'événement utilisateur (clic).
+ */
+export function unlockAudioContext(): void {
+  try {
+    // Créer un contexte audio temporaire et jouer un son silencieux
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    if (AudioContextClass) {
+      const tempCtx = new AudioContextClass();
+      const oscillator = tempCtx.createOscillator();
+      const gainNode = tempCtx.createGain();
+      gainNode.gain.value = 0;
+      oscillator.connect(gainNode);
+      gainNode.connect(tempCtx.destination);
+      oscillator.start();
+      oscillator.stop();
+      if (tempCtx.state === 'suspended') {
+        tempCtx.resume().catch(() => {});
+      }
+      console.log('[Audio] AudioContext débloqué pour mobile');
+    }
+  } catch (e) {
+    console.warn('[Audio] Impossible de débloquer l\'AudioContext:', e);
+  }
 }
 
 export function setTrackEndHandler(handler: () => void) {

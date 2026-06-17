@@ -87,15 +87,31 @@ export class SecureAudioPlayer {
 
   /**
    * Initialise l'AudioContext si pas déjà fait (compatible Safari).
+   * ⚠️ Cette méthode DOIT être appelée depuis un gestionnaire d'événement utilisateur (clic, touche) sur mobile.
    */
-  public ensureContext() {
+  public ensureContext(): boolean {
     if (!this.audioContext) {
       const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-      this.audioContext = new AudioContextClass();
+      try {
+        this.audioContext = new AudioContextClass();
+        console.log('[SecureAudioPlayer] AudioContext créé avec succès');
+      } catch (e) {
+        console.error('[SecureAudioPlayer] Échec de la création de l\'AudioContext:', e);
+        return false;
+      }
     }
     if (this.audioContext && this.audioContext.state === 'suspended') {
-      this.audioContext.resume();
+      try {
+        // Ne pas utiliser await ici pour ne pas bloquer le flux d'exécution
+        this.audioContext.resume().catch((err) => {
+          console.warn('[SecureAudioPlayer] Échec de la reprise de l\'AudioContext:', err);
+        });
+      } catch (e) {
+        console.error('[SecureAudioPlayer] Erreur lors de la reprise de l\'AudioContext:', e);
+        return false;
+      }
     }
+    return this.audioContext !== null && this.audioContext.state === 'running';
   }
 
   /**
@@ -346,25 +362,29 @@ export class SecureAudioPlayer {
    * Retourne true si la lecture a démarré, false sinon.
    */
   public async play(): Promise<boolean> {
-    if (!this.audioContext || !this.audioBuffer) {
-      console.warn("SecureAudioPlayer: Audio context or buffer not ready.");
+    if (!this.audioBuffer) {
+      console.warn("[SecureAudioPlayer] Audio buffer not ready.");
       return false;
     }
 
     if (this.isPlaying) return true;
 
-    // Must resume context on user action if suspended — ATTENDRE le resume !
-    if (this.audioContext.state === 'suspended') {
-      try {
-        await this.audioContext.resume();
-      } catch (e) {
-        console.error('SecureAudioPlayer: Failed to resume AudioContext', e);
-        return false;
-      }
+    // S'assurer que l'AudioContext est prêt et en état running
+    const contextReady = this.ensureContext();
+    if (!contextReady || !this.audioContext) {
+      console.error('[SecureAudioPlayer] Impossible de préparer l\'AudioContext');
+      return false;
+    }
+
+    // Attendre que l'AudioContext soit réellement en état running
+    let attempts = 0;
+    while (this.audioContext.state !== 'running' && attempts < 10) {
+      await new Promise(r => setTimeout(r, 50));
+      attempts++;
     }
 
     if (this.audioContext.state !== 'running') {
-      console.warn('SecureAudioPlayer: AudioContext not running, state:', this.audioContext.state);
+      console.warn('[SecureAudioPlayer] AudioContext pas en état running après attente, state:', this.audioContext.state);
       return false;
     }
 
@@ -385,11 +405,12 @@ export class SecureAudioPlayer {
     try {
       this.sourceNode.start(0, this.pausedAt);
     } catch (e) {
-      console.error('SecureAudioPlayer: Failed to start source node', e);
+      console.error('[SecureAudioPlayer] Échec du démarrage du source node', e);
       return false;
     }
     this.startTime = this.audioContext.currentTime - this.pausedAt;
     this.isPlaying = true;
+    console.log('[SecureAudioPlayer] Lecture démarrée avec succès');
     return true;
   }
 

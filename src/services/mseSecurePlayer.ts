@@ -75,7 +75,19 @@ export class MSESecurePlayer {
     return this.audio;
   }
 
+  /**
+   * Détecte si le navigateur est sur mobile.
+   */
+  private static isMobile(): boolean {
+    return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+  }
+
   static isSupported(): boolean {
+    // Désactiver MSE sur mobile par défaut (meilleure compatibilité avec HTML5 Audio)
+    if (this.isMobile()) {
+      console.log('[MSE] Désactivé sur mobile pour une meilleure compatibilité');
+      return false;
+    }
     return typeof MediaSource !== 'undefined' && MediaSource.isTypeSupported('audio/mp4');
   }
 
