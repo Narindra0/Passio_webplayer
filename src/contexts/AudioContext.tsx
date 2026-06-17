@@ -15,6 +15,7 @@ import {
 
 import { isAlbumOwnedByDevice, resolveAlbumDecryptionKey } from '@/services/albumOwnership';
 import { getAlbum, getApiBaseUrl, listOwnedAlbums, unwrapAlbumDetails } from '@/services/api';
+import { getCloudflareAudioUrl } from '@/config/urls';
 import {
     seekTo as audioSeekTo,
     playDeviceFile,
@@ -195,7 +196,8 @@ export function AudioProvider({ children }: { children: ReactNode }) {
           prefetchSecureTrack(nextUrl, nextTrack.id);
         } else {
           // Pour les pistes gratuites : préchargement simple via le navigateur
-          const directUrl = nextTrack.encrypted_audio_url || nextTrack.preview_url;
+          let directUrl = getCloudflareAudioUrl(nextTrack.audio_storage_key || '');
+          if (!directUrl) directUrl = (nextTrack.encrypted_audio_url || nextTrack.preview_url) ?? null;
           if (directUrl) {
             console.log('[AudioContext] ⚡ Préchargement simple pour piste gratuite suivante:', nextTrack.title);
             // Juste une requête HEAD pour mettre en cache
@@ -495,7 +497,9 @@ export function AudioProvider({ children }: { children: ReactNode }) {
       // First, try direct Cloudflare URLs if track is free!
       if (isFreeAlbum) {
         console.log('[AudioContext] 🎵 Trying direct Cloudflare URLs first (free track)...');
-        const directUrls = [];
+        const directUrls: string[] = [];
+        const cfUrl = getCloudflareAudioUrl(track.audio_storage_key || '');
+        if (cfUrl) directUrls.push(cfUrl);
         if (track.encrypted_audio_url) directUrls.push(track.encrypted_audio_url);
         if (track.preview_url && track.preview_url !== track.encrypted_audio_url) directUrls.push(track.preview_url);
         
@@ -657,7 +661,8 @@ export function AudioProvider({ children }: { children: ReactNode }) {
         console.log('[AudioContext] Préchargement sécurisé pour première piste:', firstTrack.title);
         prefetchSecureTrack(firstUrl, firstTrack.id);
       } else {
-        const directUrl = firstTrack.encrypted_audio_url || firstTrack.preview_url;
+        let directUrl = getCloudflareAudioUrl(firstTrack.audio_storage_key || '');
+        if (!directUrl) directUrl = (firstTrack.encrypted_audio_url || firstTrack.preview_url) ?? null;
         if (directUrl) {
           console.log('[AudioContext] Préchargement simple pour première piste gratuite:', firstTrack.title);
           fetch(directUrl, { method: 'HEAD' }).catch(() => {});
