@@ -476,8 +476,8 @@ export async function playRemoteTrack(
     if (onStatusUpdate) setupAudioEvents(audio, onStatusUpdate);
     audio.crossOrigin = 'anonymous';
     audio.preload = 'auto';
-    audio.playsInline = true; // Important pour iOS pour éviter le plein écran
-    audio.disableRemotePlayback = false; // Permet la lecture sur appareils externes
+    (audio as any).playsInline = true; // Important pour iOS pour éviter le plein écran
+    (audio as any).disableRemotePlayback = false; // Permet la lecture sur appareils externes
     
     console.log('[Audio] Loading audio from:', audioUrl);
     
