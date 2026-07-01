@@ -1,4 +1,5 @@
 import React, { Component, type ErrorInfo, type ReactNode } from 'react';
+import { logger } from '@/utils/logger';
 
 type Props = { children: ReactNode };
 type State = { hasError: boolean };
@@ -11,7 +12,7 @@ export class AppErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
-    console.error('AppErrorBoundary', error.message, info.componentStack);
+    logger.error('AppErrorBoundary', error.message, info.componentStack);
   }
 
   private handleRetry = () => {

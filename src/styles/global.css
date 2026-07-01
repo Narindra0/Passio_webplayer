@@ -366,6 +366,53 @@ img { max-width: 100%; height: auto; }
 }
 
 /* ============================================================
+   Sidebar Navigation Interactions
+   ============================================================ */
+
+.sidebar-nav-btn {
+  position: relative;
+  overflow: visible;
+}
+
+/* Icon wrapper for targeted hover/active effects */
+.sidebar-nav-btn .nav-icon-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: color var(--transition-fast) ease, filter var(--transition-fast) ease;
+}
+
+/* ── Active state ── */
+
+/* Vertical accent indicator bar with glow */
+.sidebar-nav-btn.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 20%;
+  bottom: 20%;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--color-accent);
+  box-shadow: 0 0 10px var(--color-accent-glow), 0 0 20px rgba(220, 20, 60, 0.15);
+  animation: fadeIn 0.2s ease;
+  z-index: 1;
+}
+
+/* Active icon: accent color + subtle glow */
+.sidebar-nav-btn.active .nav-icon-wrapper {
+  color: var(--color-accent) !important;
+  filter: drop-shadow(0 0 5px var(--color-accent-glow));
+}
+
+/* ── Hover state (inactive only): icon→accent ── */
+
+.sidebar-nav-btn:not(.active):hover .nav-icon-wrapper {
+  color: var(--color-accent) !important;
+}
+
+/* ============================================================
    Progress Bar
    ============================================================ */
 
@@ -807,6 +854,109 @@ img { max-width: 100%; height: auto; }
    ============================================================ */
 .safe-top  { padding-top:    env(safe-area-inset-top, 0px); }
 .safe-bottom { padding-bottom: var(--sab, env(safe-area-inset-bottom, 0px)); }
+
+/* ============================================================
+   Bento Grid Layout — Desktop
+   ============================================================ */
+
+:root {
+  --bento-gap: 8px;
+  --bento-radius: var(--radius-md);
+  --bento-panel-bg: var(--color-surface);
+  --bento-panel-border: 1px solid var(--color-border-subtle);
+  --bento-shadow: var(--shadow-sm);
+}
+
+/* ── Base layout (mobile + desktop) ── */
+.bento-layout-row {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+.bento-main {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+/* Bento panel base (shared) */
+.bento-panel {
+  position: relative;
+  overflow: hidden;
+}
+
+@media (min-width: 769px) {
+  /* Bento layout row: adds gap & padding around panels */
+  .bento-layout-row {
+    gap: var(--bento-gap);
+    padding: var(--bento-gap) var(--bento-gap) 0;
+  }
+
+  /* Main content panel */
+  .bento-main {
+    background: var(--bento-panel-bg);
+    border: var(--bento-panel-border);
+    border-radius: var(--bento-radius);
+    box-shadow: var(--bento-shadow);
+  }
+
+  /* Sidebar panel — rounded on the right side only */
+  .bento-sidebar {
+    border-radius: var(--bento-radius);
+    overflow: hidden;
+    background: var(--color-bg-dark);
+    border: var(--bento-panel-border);
+    box-shadow: var(--bento-shadow);
+  }
+  .bento-sidebar > aside {
+    border: none !important;
+    background: transparent !important;
+  }
+
+  /* FullPlayer panel — rounded on the left */
+  .bento-player-wrapper {
+    border-radius: var(--bento-radius);
+    overflow: hidden;
+    background: var(--color-bg-dark);
+    border: var(--bento-panel-border);
+    box-shadow: var(--bento-shadow);
+    flex-shrink: 0;
+  }
+  .bento-player-wrapper > .fullplayer {
+    border: none !important;
+    background: transparent !important;
+  }
+
+  /* BottomPlayer — floating bento bar */
+  .bottom-player {
+    margin: var(--bento-gap) var(--bento-gap) var(--bento-gap) !important;
+    border-radius: var(--bento-radius) !important;
+    overflow: hidden !important;
+    border: var(--bento-panel-border) !important;
+    box-shadow: var(--shadow-md) !important;
+    background: var(--color-surface-glass) !important;
+    backdrop-filter: blur(20px) !important;
+    -webkit-backdrop-filter: blur(20px) !important;
+  }
+
+  /* Adjust inner padding for main content scroll */
+  .bento-main .screen {
+    border-radius: 0;
+  }
+}
+
+/* Retirer le comportement Bento sur mobile */
+@media (max-width: 768px) {
+  .bottom-player {
+    margin: 0 !important;
+    border-radius: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+  }
+}
 
 /* CSS-only safe area fallback for mobile nav & player.
    The JS hook sets inline styles that take precedence, but these rules

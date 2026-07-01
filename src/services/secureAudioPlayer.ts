@@ -1,6 +1,7 @@
 import { getTrackFromDB } from './indexedDB';
 import { fetchWithRetry, getRetryDelay } from './networkUtils';
 import { getAudioToken } from './api';
+import { logger } from '@/utils/logger';
 
 export class SecureAudioPlayer {
   private audioContext: AudioContext | null = null;
@@ -81,7 +82,7 @@ export class SecureAudioPlayer {
       const tokenData = await getAudioToken(trackId);
       this.currentToken = tokenData.token;
     } catch (e) {
-      console.warn('SecureAudioPlayer: Failed to get audio token', e);
+      logger.warn('SecureAudioPlayer: Failed to get audio token', e);
     }
   }
 
@@ -94,9 +95,9 @@ export class SecureAudioPlayer {
       const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
       try {
         this.audioContext = new AudioContextClass();
-        console.log('[SecureAudioPlayer] AudioContext créé avec succès');
+        logger.info('[SecureAudioPlayer] AudioContext créé avec succès');
       } catch (e) {
-        console.error('[SecureAudioPlayer] Échec de la création de l\'AudioContext:', e);
+        logger.error('[SecureAudioPlayer] Échec de la création de l\'AudioContext:', e);
         return false;
       }
     }
@@ -104,10 +105,10 @@ export class SecureAudioPlayer {
       try {
         // Ne pas utiliser await ici pour ne pas bloquer le flux d'exécution
         this.audioContext.resume().catch((err) => {
-          console.warn('[SecureAudioPlayer] Échec de la reprise de l\'AudioContext:', err);
+          logger.warn('[SecureAudioPlayer] Échec de la reprise de l\'AudioContext:', err);
         });
       } catch (e) {
-        console.error('[SecureAudioPlayer] Erreur lors de la reprise de l\'AudioContext:', e);
+        logger.error('[SecureAudioPlayer] Erreur lors de la reprise de l\'AudioContext:', e);
         return false;
       }
     }
@@ -178,7 +179,7 @@ export class SecureAudioPlayer {
           if (retries > MAX_RETRIES) {
             // Si le serveur ne supporte pas les Range, fallback vers un téléchargement complet
             if (!usedFullDownload) {
-              console.warn('SecureAudioPlayer: Range requests not supported, falling back to full download');
+              logger.warn('SecureAudioPlayer: Range requests not supported, falling back to full download');
               usedFullDownload = true;
               const fullResp = await fetch(url, {
                 signal,
@@ -352,7 +353,7 @@ export class SecureAudioPlayer {
       arrayBuffer = null!;
       
     } catch (error) {
-      console.error("SecureAudioPlayer: Error loading track", error);
+      logger.error("SecureAudioPlayer: Error loading track", error);
       throw error;
     }
   }
@@ -363,7 +364,7 @@ export class SecureAudioPlayer {
    */
   public async play(): Promise<boolean> {
     if (!this.audioBuffer) {
-      console.warn("[SecureAudioPlayer] Audio buffer not ready.");
+      logger.warn("[SecureAudioPlayer] Audio buffer not ready.");
       return false;
     }
 
@@ -372,7 +373,7 @@ export class SecureAudioPlayer {
     // S'assurer que l'AudioContext est prêt et en état running
     const contextReady = this.ensureContext();
     if (!contextReady || !this.audioContext) {
-      console.error('[SecureAudioPlayer] Impossible de préparer l\'AudioContext');
+      logger.error('[SecureAudioPlayer] Impossible de préparer l\'AudioContext');
       return false;
     }
 
@@ -384,7 +385,7 @@ export class SecureAudioPlayer {
     }
 
     if (this.audioContext.state !== 'running') {
-      console.warn('[SecureAudioPlayer] AudioContext pas en état running après attente, state:', this.audioContext.state);
+      logger.warn('[SecureAudioPlayer] AudioContext pas en état running après attente, state:', this.audioContext.state);
       return false;
     }
 
@@ -405,12 +406,12 @@ export class SecureAudioPlayer {
     try {
       this.sourceNode.start(0, this.pausedAt);
     } catch (e) {
-      console.error('[SecureAudioPlayer] Échec du démarrage du source node', e);
+      logger.error('[SecureAudioPlayer] Échec du démarrage du source node', e);
       return false;
     }
     this.startTime = this.audioContext.currentTime - this.pausedAt;
     this.isPlaying = true;
-    console.log('[SecureAudioPlayer] Lecture démarrée avec succès');
+    logger.info('[SecureAudioPlayer] Lecture démarrée avec succès');
     return true;
   }
 

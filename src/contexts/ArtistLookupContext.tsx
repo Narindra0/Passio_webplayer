@@ -13,6 +13,7 @@ import { readFreeCatalogCache } from '@/services/freeCatalogCache';
 import { listAlbums, listOwnedAlbums } from '@/services/api';
 import type { PublicAlbumSummary } from '@/types/backend';
 import { normalizeArtistName } from '@/utils/featArtists';
+import { logger } from '@/utils/logger';
 
 interface ArtistLookupValue {
   /** Retourne l'ID d'un artiste à partir de son nom, ou null si inconnu */
@@ -89,12 +90,12 @@ export function ArtistLookupProvider({ children }: { children: ReactNode }) {
           for (const [name, id] of freeMap) {
             combinedMap.set(name, id);
           }
-          console.log('[ArtistLookup] Cache gratuit:', freeMap.size, 'artistes trouvés');
+          logger.info('[ArtistLookup] Cache gratuit:', freeMap.size, 'artistes trouvés');
         } else {
-          console.log('[ArtistLookup] Cache gratuit vide');
+          logger.info('[ArtistLookup] Cache gratuit vide');
         }
       } catch (err) {
-        console.error('[ArtistLookup] Erreur cache gratuit:', err);
+        logger.error('[ArtistLookup] Erreur cache gratuit:', err);
       }
 
       // 2. Charger les albums possédés (API)
@@ -104,9 +105,9 @@ export function ArtistLookupProvider({ children }: { children: ReactNode }) {
         for (const [name, id] of ownedMap) {
           combinedMap.set(name, id);
         }
-        console.log('[ArtistLookup] Albums possédés:', ownedMap.size, 'artistes');
+        logger.info('[ArtistLookup] Albums possédés:', ownedMap.size, 'artistes');
       } catch (err) {
-        console.warn('[ArtistLookup] API listOwnedAlbums a échoué:', err);
+        logger.warn('[ArtistLookup] API listOwnedAlbums a échoué:', err);
       }
 
       // 3. Charger TOUS les albums (API) — couvre les artistes feat premium / inconnus
@@ -116,13 +117,13 @@ export function ArtistLookupProvider({ children }: { children: ReactNode }) {
         for (const [name, id] of allMap) {
           combinedMap.set(name, id);
         }
-        console.log('[ArtistLookup] Tous les albums:', allMap.size, 'artistes');
+        logger.info('[ArtistLookup] Tous les albums:', allMap.size, 'artistes');
       } catch (err) {
-        console.warn('[ArtistLookup] API listAlbums a échoué:', err);
+        logger.warn('[ArtistLookup] API listAlbums a échoué:', err);
       }
 
       if (!cancelled) {
-        console.log('[ArtistLookup] Map finale:', combinedMap.size, 'artistes — ex: Balz →', combinedMap.get('balz'));
+        logger.info('[ArtistLookup] Map finale:', combinedMap.size, 'artistes — ex: Balz →', combinedMap.get('balz'));
         setNameToIdMap(combinedMap);
         setIsLoaded(true);
       }

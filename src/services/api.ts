@@ -5,6 +5,7 @@ import type {
   PublicAlbumSummary
 } from '@/types/backend';
 import { getOrCreateDeviceId } from './device';
+import { logger } from '@/utils/logger';
 
 function getDefaultApiUrl(): string {
   return 'http://localhost:3001';
@@ -48,7 +49,7 @@ async function request<T>(path: string, init: RequestInitWithJson = {}): Promise
     // 🔍 Diagnostic 403 : album key rejeté
     if (response.status === 403) {
       const via = (response.headers.get('cf-ray') ? 'cloudflare' : 'direct');
-      console.warn('[API] 🔐 403 Forbidden:', {
+      logger.warn('[API] 🔐 403 Forbidden:', {
         path,
         via,
         deviceId: deviceId?.slice(0, 8) + '…',

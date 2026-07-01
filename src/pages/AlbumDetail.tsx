@@ -4,7 +4,7 @@ import { useCachedImage } from '@/hooks/useCachedImage';
 import { useAudioPlayback, useAudioProgress } from '@/contexts/AudioContext';
 import { useLibraryMode } from '@/contexts/LibraryModeContext';
 import { albumHasStreamableTracks, loadOwnedAlbumForPlayback, resolveAlbumDecryptionKey } from '@/services/albumOwnership';
-import { downloadAlbumWithStreaming, getDownloadProgress, isAlbumReadyOffline, subscribeToDownloadProgress, type DownloadProgress } from '@/services/downloadManager';
+import { isAlbumReadyOffline } from '@/services/downloadManager';
 import { resolveOfflinePlayback } from '@/services/offlineAccess';
 import type { PublicAlbumDetails, PublicTrack } from '@/types/backend';
 import { useAlbumColors } from '@/hooks/useAlbumColors';
@@ -13,12 +13,12 @@ import {
   ShieldCheck, ShoppingBag, Sparkles, Clock,
 } from 'lucide-react';
 import { ShareCard } from '@/components/ShareCard';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { hasFeatArtists, parseFeatArtists } from '@/utils/featArtists';
-import { FeatArtistLinks } from '@/components/FeatArtistLinks';
 import { getApiBaseUrl } from '@/services/api';
 import { prefetchTrackBlob } from '@/services/audio';
+import { logger } from '@/utils/logger';
+import { hasFeatArtists, parseFeatArtists, normalizeArtistName } from '@/utils/featArtists';
 
 function formatDuration(seconds: number | null | undefined): string {
   if (!seconds || isNaN(seconds)) return '--:--';
@@ -38,11 +38,9 @@ export function AlbumDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [decryptionKey, setDecryptionKey] = useState<string | null>(null);
   const [ownedByDevice, setOwnedByDevice] = useState(false);
-  const [downloadProgress, setDownloadProgress] = useState<DownloadProgress | null>(null);
   const [isOfflineReady, setIsOfflineReady] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [shareModalVisible, setShareModalVisible] = useState(false);
-  const unsubscribeRef = useRef<(() => void) | null>(null);
 
   // Call all hooks BEFORE any early returns
   const cachedCover = useCachedImage(album?.cover_url);
@@ -74,15 +72,6 @@ export function AlbumDetailScreen() {
 
   useEffect(() => {
     void loadAlbumData();
-    if (id) {
-      unsubscribeRef.current = subscribeToDownloadProgress(id, (p) => {
-        setDownloadProgress(p);
-        if (p.status === 'completed') setIsOfflineReady(true);
-      });
-      const existing = getDownloadProgress(id);
-      if (existing) { setDownloadProgress(existing); if (existing.status === 'completed') setIsOfflineReady(true); }
-    }
-    return () => { if (unsubscribeRef.current) unsubscribeRef.current(); };
   }, [id, loadAlbumData]);
 
   if (loading) return <Screen><div className="flex justify-center items-center" style={{ minHeight: 300 }}><div className="loader-spinner" /></div></Screen>;
@@ -102,6 +91,19 @@ export function AlbumDetailScreen() {
 
   const totalDuration = sortedTracks.reduce((acc, t) => acc + (t.duration || 0), 0);
   const totalDurationLabel = formatDuration(totalDuration);
+  const hasDuration = sortedTracks.some(t => t.duration != null && t.duration > 0);
+
+  // Build artist lookup map from album.artists for clickable feat links
+  const artistIdMap: Record<string, string> = {};
+  if (album?.artists) {
+    for (const a of album.artists) {
+      if (a.name) artistIdMap[normalizeArtistName(a.name)] = a.id;
+    }
+  }
+  // Also index the main artist
+  if (album?.artist?.id && album?.artist?.name) {
+    artistIdMap[normalizeArtistName(album.artist.name)] = album.artist.id;
+  }
 
   async function handlePressTrack(track: PublicTrack, index: number) {
     if (!canPlay || !album) return;
@@ -122,31 +124,19 @@ export function AlbumDetailScreen() {
     catch (err) { setActionError(err instanceof Error ? err.message : 'Impossible de lire ce titre.'); }
   }
 
-  async function handleDownload() {
-    if (!album) return;
-    setActionError(null);
-    const loaded = await loadOwnedAlbumForPlayback(album.id);
-    const key = decryptionKey ?? loaded.decryptionKey ?? (await resolveAlbumDecryptionKey(album.id, null));
-    if (key) setDecryptionKey(key);
-    const status = await downloadAlbumWithStreaming(loaded.album, key, (track, index) => { if (!audio.isPlaying && audio.currentTrack?.id !== track.id) void audio.playTrackAtIndex(index); });
-    if (status === 'completed') setIsOfflineReady(true);
-    else if (status === 'error') setActionError(getDownloadProgress(album.id)?.error ?? 'Échec du téléchargement.');
-  }
-
   return (
     <Screen padded={false}>
-      <div style={{ maxWidth: 900, margin: '0 auto', width: '100%' }}>
-        {/* ========== HERO — Album Header ========== */}
-        <div className="album-hero"
-          style={{
-            position: 'relative',
-            padding: '48px 32px 32px',
-            background: coverColors.gradientStyle,
-            transition: 'background 0.6s ease',
-            display: 'flex',
-            gap: 32,
-            alignItems: 'flex-end',
-          }}
+      {/* ========== HERO — Album Header (full width) ========== */}
+      <div className="album-hero"
+        style={{
+          position: 'relative',
+          padding: '60px 48px 40px',
+          background: coverColors.gradientStyle,
+          transition: 'background 0.6s ease',
+          display: 'flex',
+          gap: 40,
+          alignItems: 'flex-end',
+        }}
         >
           {/* Back button */}
           <button className="album-back"
@@ -178,12 +168,12 @@ export function AlbumDetailScreen() {
           {/* Album Cover */}
           <div className="album-cover"
             style={{
-              width: 200,
-              height: 200,
-              minWidth: 200,
+              width: 260,
+              height: 260,
+              minWidth: 260,
               borderRadius: 'var(--radius-sm)',
               overflow: 'hidden',
-              boxShadow: 'var(--shadow-xl)',
+              boxShadow: '0 8px 40px rgba(0,0,0,0.5)',
               marginTop: 20,
             }}
           >
@@ -243,28 +233,47 @@ export function AlbumDetailScreen() {
 
             <h1 style={{
               color: 'var(--color-text-primary)',
-              fontSize: 'clamp(28px, 4vw, 48px)',
+              fontSize: 'clamp(28px, 4vw, 56px)',
               fontWeight: 800,
-              letterSpacing: '-1px',
-              lineHeight: 1.1,
-              margin: '0 0 8px',
+              letterSpacing: '-1.5px',
+              lineHeight: 1.08,
+              margin: '0 0 12px',
             }}>
               {album.title}
             </h1>
 
             {/* Artist + metadata */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
-              <span style={{ color: 'var(--color-text-primary)', fontSize: 14, fontWeight: 600, whiteSpace: 'nowrap' }}>
-                {artistName}
-              </span>
-              <span style={{ color: 'var(--color-text-muted)', fontSize: 12 }}>·</span>
-              <span style={{ color: 'var(--color-text-secondary)', fontSize: 14, fontWeight: 500 }}>
-                {album.tracks?.length ?? 0} titres
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 16 }}>
+              {(() => {
+                const artistId = artistIdMap[normalizeArtistName(artistName)];
+                const link = artistId ? `/artist/${artistId}` : null;
+                return (
+                  <span
+                    onClick={link ? (e) => { e.stopPropagation(); navigate(link); } : undefined}
+                    style={{
+                      color: 'var(--color-text-secondary)',
+                      fontSize: 16,
+                      fontWeight: 600,
+                      whiteSpace: 'nowrap',
+                      letterSpacing: '-0.3px',
+                      cursor: link ? 'pointer' : 'default',
+                      transition: 'color 0.15s ease',
+                    }}
+                    onMouseEnter={link ? (e) => { e.currentTarget.style.color = 'var(--color-text-primary)'; e.currentTarget.style.textDecoration = 'underline'; } : undefined}
+                    onMouseLeave={link ? (e) => { e.currentTarget.style.color = 'var(--color-text-secondary)'; e.currentTarget.style.textDecoration = 'none'; } : undefined}
+                  >
+                    {artistName}
+                  </span>
+                );
+              })()}
+              <span style={{ color: 'var(--color-text-muted)', fontSize: 14 }}>·</span>
+              <span style={{ color: 'var(--color-text-secondary)', fontSize: 15, fontWeight: 500 }}>
+                {album.tracks?.length ?? 0} titre{(album.tracks?.length ?? 0) > 1 ? 's' : ''}
               </span>
               {totalDuration > 0 && (
                 <>
-                  <span style={{ color: 'var(--color-text-muted)', fontSize: 12 }}>·</span>
-                  <span style={{ color: 'var(--color-text-secondary)', fontSize: 13, fontWeight: 500, fontVariantNumeric: 'tabular-nums' }}>
+                  <span style={{ color: 'var(--color-text-muted)', fontSize: 14 }}>·</span>
+                  <span style={{ color: 'var(--color-text-secondary)', fontSize: 14, fontWeight: 500, fontVariantNumeric: 'tabular-nums' }}>
                     {totalDurationLabel}
                   </span>
                 </>
@@ -387,32 +396,6 @@ export function AlbumDetailScreen() {
                 </button>
               )}
 
-              {/* Download button — for owned but not offline */}
-              {isOwned && !isOfflineReady && downloadProgress?.status !== 'downloading' && (
-                <button
-                  onClick={handleDownload}
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    padding: '12px 24px',
-                    borderRadius: 'var(--radius-full)',
-                    background: 'var(--color-surface-elevated)',
-                    border: '1px solid var(--color-border-subtle)',
-                    cursor: 'pointer',
-                    color: 'var(--color-text-primary)',
-                    fontSize: 14,
-                    fontWeight: 600,
-                    transition: 'all var(--transition-fast) ease',
-                  }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-surface-hover)'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--color-surface-elevated)'; }}
-                >
-                  <Download size={18} />
-                  Télécharger
-                </button>
-              )}
-
               {/* Share button */}
               <button
                 onClick={() => setShareModalVisible(true)}
@@ -441,25 +424,61 @@ export function AlbumDetailScreen() {
           </div>
         </div>
 
+        {/* ========== CONTENT (constrained width) ========== */}
+        <div style={{ maxWidth: 1200, margin: '0 auto', width: '100%' }}>
+
+        {/* ========== ALBUM DESCRIPTION ========== */}
+        {album.description && (
+          <div style={{
+            padding: '32px 48px 24px',
+            borderBottom: '1px solid var(--color-border-subtle)',
+          }}>
+            <h3 style={{
+              color: 'var(--color-text-muted)',
+              fontSize: 12,
+              fontWeight: 700,
+              textTransform: 'uppercase',
+              letterSpacing: '1px',
+              marginBottom: 10,
+            }}>
+              À propos
+            </h3>
+            <p style={{
+              color: 'var(--color-text-secondary)',
+              fontSize: 15,
+              lineHeight: '24px',
+              margin: 0,
+              maxWidth: 700,
+            }}>
+              {album.description}
+            </p>
+          </div>
+        )}
+
         {/* ========== TRACKLIST ========== */}
-        <div className="album-tracklist" style={{ padding: '24px 32px 32px' }}>
+        <div className="album-tracklist" style={{ padding: '28px 48px 40px' }}>
           {/* Track list header */}
           {sortedTracks.length > 0 && (
             <div style={{
               display: 'flex',
               alignItems: 'center',
-              gap: 12,
-              padding: '0 12px 10px',
+              gap: 16,
+              padding: '0 16px 12px',
               borderBottom: '1px solid var(--color-border-subtle)',
-              marginBottom: 4,
+              marginBottom: 6,
             }}>
-              <span style={{ width: 24, color: 'var(--color-text-muted)', fontSize: 11, fontWeight: 600, textAlign: 'center' }}>#</span>
-              <span style={{ flex: 1, color: 'var(--color-text-muted)', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+              <span style={{ width: 28, color: 'var(--color-text-muted)', fontSize: 12, fontWeight: 600, textAlign: 'center' }}>#</span>
+              <span style={{ flex: 1, color: 'var(--color-text-muted)', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.8px' }}>
                 Titre
               </span>
-              <span style={{ width: 40, color: 'var(--color-text-muted)', fontSize: 11, fontWeight: 600, textAlign: 'right', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                <Clock size={13} />
+              <span style={{ flex: '0 0 120px', color: 'var(--color-text-muted)', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.8px', display: 'flex', alignItems: 'center' }}>
+                Artiste
               </span>
+              {hasDuration && (
+                <span style={{ width: 48, color: 'var(--color-text-muted)', fontSize: 11, fontWeight: 600, textAlign: 'right', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
+                  <Clock size={14} />
+                </span>
+              )}
             </div>
           )}
 
@@ -473,7 +492,7 @@ export function AlbumDetailScreen() {
           if (album.is_free) {
             const directUrl = track.encrypted_audio_url || track.preview_url;
             if (directUrl) {
-              console.log('[AlbumDetail] Préchargement piste gratuite via Cloudflare:', directUrl);
+              logger.info('[AlbumDetail] Préchargement piste gratuite via Cloudflare:', directUrl);
               fetch(directUrl, { method: 'HEAD' }).catch(() => {});
               return;
             }
@@ -489,8 +508,8 @@ export function AlbumDetailScreen() {
                 style={{
                   display: 'flex',
                   alignItems: 'center',
-                  gap: 12,
-                  padding: '8px 12px',
+                  gap: 16,
+                  padding: '10px 16px',
                   width: '100%',
                   background: isCurrent ? 'var(--color-accent-soft)' : 'transparent',
                   border: 'none',
@@ -498,7 +517,7 @@ export function AlbumDetailScreen() {
                   cursor: canPlay || isPaidNotOwned ? 'pointer' : 'default',
                   textAlign: 'left',
                   opacity: !canPlay && !isPaidNotOwned ? 0.5 : 1,
-                  transition: 'background-color var(--transition-fast) ease',
+                  transition: 'background-color var(--transition-fast) ease, padding var(--transition-fast) ease',
                 }}
                 onMouseEnter={(e) => {
                   prefetchOnHover();
@@ -509,7 +528,7 @@ export function AlbumDetailScreen() {
                 }}
               >
                 {/* Track number or play icon */}
-                <div style={{ width: 24, textAlign: 'center', flexShrink: 0 }}>
+                <div style={{ width: 28, textAlign: 'center', flexShrink: 0 }}>
                   {isThisPlaying ? (
                     <div style={{ display: 'flex', alignItems: 'flex-end', gap: 2, height: 16, justifyContent: 'center' }}>
                       <div className="equalizer-bar" style={{ width: 3, backgroundColor: 'var(--color-accent)', borderRadius: 2 }} />
@@ -535,9 +554,9 @@ export function AlbumDetailScreen() {
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <p style={{
                     color: isCurrent ? 'var(--color-accent)' : 'var(--color-text-primary)',
-                    fontSize: 14,
+                    fontSize: 16,
                     fontWeight: 600,
-                    lineHeight: '20px',
+                    lineHeight: '24px',
                     margin: 0,
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
@@ -547,24 +566,47 @@ export function AlbumDetailScreen() {
                   >
                     {featResult ? featResult.cleanTitle : track.title}
                   </p>
-                  <p style={{
-                    color: isCurrent ? 'var(--color-text-secondary)' : 'var(--color-text-muted)',
-                    fontSize: 12,
-                    lineHeight: '16px',
-                    margin: '1px 0 0',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                  }}>
-                    {artistName}
-                    {featResult && (
-                      <FeatArtistLinks featNames={featResult.featNames} style={{ fontSize: 11 }} />
-                    )}
-                  </p>
+                </div>
+
+                {/* Artist column — main artist + feat artists with clickable links */}
+                <div style={{ flex: '0 0 180px', minWidth: 0, fontSize: 14, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'right' }}>
+                  {(() => {
+                    const mainArtistId = artistIdMap[normalizeArtistName(artistName)];
+                    const allArtists = featResult?.featNames?.length
+                      ? [{ name: artistName, id: mainArtistId }, ...featResult.featNames.map(n => ({ name: n, id: artistIdMap[normalizeArtistName(n)] || null }))]
+                      : [{ name: artistName, id: mainArtistId }];
+                    return allArtists.map((item, i) => {
+                      const isLast = i === allArtists.length - 1;
+                      const link = item.id ? `/artist/${item.id}` : null;
+                      return (
+                        <span key={item.name}>
+                          {link ? (
+                            <span
+                              onClick={(e) => { e.stopPropagation(); navigate(link); }}
+                              style={{
+                                color: 'var(--color-text-muted)',
+                                cursor: 'pointer',
+                                transition: 'color 0.15s ease',
+                              }}
+                              onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--color-text-primary)'; e.currentTarget.style.textDecoration = 'underline'; }}
+                              onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--color-text-muted)'; e.currentTarget.style.textDecoration = 'none'; }}
+                            >
+                              {item.name}
+                            </span>
+                          ) : (
+                            <span style={{ color: 'var(--color-text-muted)' }}>
+                              {item.name}
+                            </span>
+                          )}
+                          {!isLast && <span style={{ color: 'var(--color-text-muted)' }}>, </span>}
+                        </span>
+                      );
+                    });
+                  })()}
                 </div>
 
                 {/* Duration + status */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
                   {isPaidNotOwned ? (
                     <Lock size={13} color="var(--color-text-muted)" style={{ opacity: 0.5 }} />
                   ) : isThisPlaying ? (
@@ -572,13 +614,13 @@ export function AlbumDetailScreen() {
                   ) : isCurrent ? (
                     <Play size={14} color="var(--color-accent)" />
                   ) : null}
-                  {track.duration != null && track.duration > 0 && (
+                  {hasDuration && track.duration != null && track.duration > 0 && (
                     <span style={{
                       color: 'var(--color-text-muted)',
-                      fontSize: 12,
+                      fontSize: 13,
                       fontWeight: 500,
                       fontVariantNumeric: 'tabular-nums',
-                      minWidth: 36,
+                      minWidth: 44,
                       textAlign: 'right',
                     }}>
                       {formatDuration(track.duration)}
@@ -590,37 +632,14 @@ export function AlbumDetailScreen() {
           })}
         </div>
 
-        {/* ========== DOWNLOAD SECTION ========== */}
-        {isOwned && !isOfflineReady && downloadProgress?.status === 'downloading' && (
-          <div className="album-section" style={{ margin: '0 32px 24px' }}>
-            <div style={{
-              padding: 16,
-              background: 'var(--color-surface-elevated)',
-              borderRadius: 'var(--radius-sm)',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 8,
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <Download size={16} color="var(--color-text-muted)" />
-                <span style={{ color: 'var(--color-text-secondary)', fontSize: 13, fontWeight: 600 }}>
-                  Téléchargement... {Math.round(downloadProgress.progress)}%
-                </span>
-              </div>
-              <div className="progress-bar">
-                <div className="progress-fill accent" style={{ width: `${downloadProgress.progress}%` }} />
-              </div>
-            </div>
-          </div>
-        )}
-
         {/* ========== ERROR ========== */}
         {actionError && (
-          <div className="album-section" style={{ margin: '0 32px 24px', padding: 12, borderRadius: 'var(--radius-sm)', background: 'rgba(233, 20, 41, 0.1)', border: '1px solid rgba(233, 20, 41, 0.2)' }}>
+          <div className="album-section" style={{ margin: '0 48px 24px', padding: 12, borderRadius: 'var(--radius-sm)', background: 'rgba(233, 20, 41, 0.1)', border: '1px solid rgba(233, 20, 41, 0.2)' }}>
             <p style={{ color: 'var(--color-error)', fontSize: 13, lineHeight: '18px', margin: 0 }}>{actionError}</p>
           </div>
         )}
       </div>
+      {/* end content container */}
 
       {/* Share Modal */}
       <ShareCard

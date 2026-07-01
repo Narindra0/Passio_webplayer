@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search } from 'lucide-react';
 import { AlbumCard } from '@/components/AlbumCard';
 import { Screen } from '@/components/Screen';
 import { useLibraryMode } from '@/contexts/LibraryModeContext';
-import { listOwnedAlbums } from '@/services/api';
+import { listAlbums } from '@/services/api';
 import { listVaultAlbums } from '@/services/downloadManager';
 import type { PublicAlbumSummary } from '@/types/backend';
 
@@ -18,52 +18,127 @@ export function CatalogScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  const [debouncedQuery, setDebouncedQuery] = useState('');
+  const [displayCount, setDisplayCount] = useState(15);
+  const BATCH_SIZE = 15;
+  const sentinelRef = useRef<HTMLDivElement>(null);
+
+  // ── Cache localStorage pour éviter de re-télécharger le catalogue ──
+  const CACHE_KEY = 'passio_catalog_v1';
+  const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+  function readCache(): AlbumWithOffline[] | null {
+    try {
+      const raw = localStorage.getItem(CACHE_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as { cachedAt: string; albums: AlbumWithOffline[] };
+      if (!Array.isArray(parsed.albums)) return null;
+      const age = Date.now() - new Date(parsed.cachedAt).getTime();
+      if (age > CACHE_TTL) return null;
+      return parsed.albums;
+    } catch { return null; }
+  }
+
+  function writeCache(albums: AlbumWithOffline[]): void {
+    try {
+      localStorage.setItem(CACHE_KEY, JSON.stringify({
+        cachedAt: new Date().toISOString(),
+        albums,
+      }));
+    } catch { /* QuotaExceededError — ignore */ }
+  }
+
+  // ✨ Debounce la recherche (250ms) pour éviter les re-renders à chaque frappe
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedQuery(query), 250);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  // Reset infinite scroll when search changes
+  useEffect(() => { setDisplayCount(15); }, [debouncedQuery]);
 
   const loadAlbums = useCallback(async () => {
-    setLoading(true);
     setError(null);
     try {
-      let ownedAlbums: PublicAlbumSummary[] = [];
-      if (!isOfflineMode) {
-        try {
-          ownedAlbums = await listOwnedAlbums();
-        } catch (e) {
-          // If network error, ignore and just show offline
-        }
-      }
-
-      const vaultAlbums = await listVaultAlbums();
-      const offlineIds = new Set(vaultAlbums.map(a => a.id));
+      // Lancer la récupération du vault UNE SEULE FOIS, réutilisée partout
+      const vaultPromise = listVaultAlbums().catch(() => [] as PublicAlbumSummary[]);
 
       if (isOfflineMode) {
-        const processedAlbums = vaultAlbums.map(a => ({ ...a, isOffline: true }));
-        setAlbums(processedAlbums);
-      } else {
-        const processedAlbums = ownedAlbums.map(album => ({ ...album, isOffline: offlineIds.has(album.id) }));
-        const allAlbums = [...processedAlbums];
-        vaultAlbums.forEach(va => {
-           if (!allAlbums.some(a => a.id === va.id)) {
-               allAlbums.push({ ...va, isOffline: true });
-           }
-        });
-        setAlbums(allAlbums);
+        // Hors-ligne : uniquement les albums dans le vault, pas de cache
+        const vaultAlbums = await vaultPromise;
+        setAlbums(vaultAlbums.map(a => ({ ...a, isOffline: true })));
+        setLoading(false);
+        return;
+      }
+
+      // 1. Afficher le cache IMMÉDIATEMENT + attendre le vault en parallèle
+      const cached = readCache();
+      const vaultAlbums = await vaultPromise;
+      const vaultIds = new Set(vaultAlbums.map(a => a.id));
+
+      if (cached) {
+        // Fusionner avec le statut offline frais
+        const merged = cached.map(a => ({ ...a, isOffline: vaultIds.has(a.id) }));
+        setAlbums(merged);
+        setLoading(false);
+      }
+
+      // 2. Toujours rafraîchir depuis le réseau en arrière-plan
+      //    (stale-while-revalidate : l'utilisateur voit le cache INSTANTANÉMENT)
+      try {
+        const freshAlbums = await listAlbums();
+        const processed = freshAlbums.map(album => ({
+          ...album,
+          isOffline: vaultIds.has(album.id),
+        }));
+        setAlbums(processed);
+        writeCache(processed);
+      } catch (networkErr) {
+        if (!cached) {
+          setError(networkErr instanceof Error ? networkErr.message : 'Erreur réseau');
+        }
       }
     } catch (loadError) {
-      setAlbums([]);
-      setError(loadError instanceof Error ? loadError.message : 'Erreur réseau inconnue');
+      // Échec de listVaultAlbums (rare) + pas de cache non plus
+      const cached = readCache();
+      if (cached) {
+        setAlbums(cached);
+      } else {
+        setError(loadError instanceof Error ? loadError.message : 'Erreur inconnue');
+      }
     } finally { setLoading(false); }
   }, [isOfflineMode]);
 
   useEffect(() => { void loadAlbums(); }, [loadAlbums]);
 
   const filteredAlbums = useMemo(() => {
-    const search = query.trim().toLowerCase();
+    const search = debouncedQuery.trim().toLowerCase();
     return albums.filter((album) => {
       const title = String(album.title || '').toLowerCase();
       const artist = String(album.artist_name || album.artist?.name || '').toLowerCase();
       return !search || title.includes(search) || artist.includes(search);
     });
-  }, [albums, query]);
+  }, [albums, debouncedQuery]);
+
+  // Infinite scroll IntersectionObserver (placed after filteredAlbums declaration)
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting) {
+          setDisplayCount((prev) =>
+            Math.min(prev + BATCH_SIZE, filteredAlbums.length),
+          );
+        }
+      },
+      { rootMargin: '400px' },
+    );
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [filteredAlbums.length]);
 
   return (
     <Screen padded>
@@ -107,15 +182,48 @@ export function CatalogScreen() {
             gap: 16,
           }}
         >
-          {filteredAlbums.map((album) => (
-            <AlbumCard
+          {filteredAlbums.slice(0, displayCount).map((album, index) => (
+            <div
               key={album.id}
-              album={album}
-              variant="tile"
-              isOffline={album.isOffline}
-              onPress={() => navigate(`/album/${album.id}`)}
-            />
+              style={{
+                animation: 'slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) both',
+                animationDelay: `${(index % 5) * 0.06}s`,
+              }}
+            >
+              <AlbumCard
+                album={album}
+                variant="tile"
+                isOffline={album.isOffline}
+                onPress={() => navigate(`/album/${album.id}`)}
+              />
+            </div>
           ))}
+          {/* Infinite scroll sentinel + loader */}
+          {displayCount < filteredAlbums.length && (
+            <div
+              ref={sentinelRef}
+              style={{
+                gridColumn: '1 / -1',
+                display: 'flex',
+                justifyContent: 'center',
+                alignItems: 'center',
+                padding: '24px 0',
+                gap: 12,
+              }}
+            >
+              <div style={{
+                width: 20,
+                height: 20,
+                border: '2px solid var(--color-border-subtle)',
+                borderTopColor: 'var(--color-accent)',
+                borderRadius: '50%',
+                animation: 'spin 0.8s linear infinite',
+              }} />
+              <span style={{ color: 'var(--color-text-muted)', fontSize: 13, fontWeight: 500 }}>
+                Chargement…
+              </span>
+            </div>
+          )}
         </div>
       ) : (
         <div style={{ textAlign: 'center', padding: 24 }}>

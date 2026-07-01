@@ -1,5 +1,6 @@
 import { getAlbum, getAlbumDecryptionKey, listOwnedAlbums, refreshAlbumTracks, unwrapAlbumDetails } from '@/services/api';
 import { readEncryptedValue, saveEncryptedValue } from '@/services/storage';
+import { logger } from '@/utils/logger';
 import type { PublicAlbumDetails } from '@/types/backend';
 
 const ACTIVATION_SNAPSHOT_PREFIX = 'passio_album_snap_';
@@ -17,7 +18,7 @@ export async function saveActivationSnapshot(album: PublicAlbumDetails, decrypti
     const payload = { album, decryption_key: decryptionKey, saved_at: new Date().toISOString() };
     localStorage.setItem(ACTIVATION_SNAPSHOT_PREFIX + album.id, JSON.stringify(payload));
   } catch (error) {
-    console.warn('Failed to save activation snapshot:', error);
+    logger.warn('Failed to save activation snapshot:', error);
   }
 }
 
@@ -97,7 +98,7 @@ export async function loadOwnedAlbumForPlayback(albumId: string): Promise<{
   album: PublicAlbumDetails; decryptionKey: string | null; ownedByDevice: boolean;
 }> {
   const snapshot = await readActivationSnapshot(albumId);
-  let raw = await getAlbum(albumId);
+  const raw = await getAlbum(albumId);
   let album = unwrapAlbumDetails(raw);
   let restricted = isRestrictedAlbumPayload(raw);
 

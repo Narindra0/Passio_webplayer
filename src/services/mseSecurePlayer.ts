@@ -17,6 +17,7 @@
  */
 
 import { fetchWithRetry } from './networkUtils';
+import { logger } from '@/utils/logger';
 
 const STREAM_HEADER = 'X-Passio-Stream';
 const STREAM_HEADER_VALUE = 'secure';
@@ -85,7 +86,7 @@ export class MSESecurePlayer {
   static isSupported(): boolean {
     // Désactiver MSE sur mobile par défaut (meilleure compatibilité avec HTML5 Audio)
     if (this.isMobile()) {
-      console.log('[MSE] Désactivé sur mobile pour une meilleure compatibilité');
+      logger.info('[MSE] Désactivé sur mobile pour une meilleure compatibilité');
       return false;
     }
     return typeof MediaSource !== 'undefined' && MediaSource.isTypeSupported('audio/mp4');
@@ -152,7 +153,7 @@ export class MSESecurePlayer {
     // Workaround: Si le backend renvoie octet-stream, on force audio/mp4
     // pour permettre au lecteur MSE (très rapide) de démarrer sans planter.
     if (parsedMime === 'application/octet-stream' || !MediaSource.isTypeSupported(parsedMime)) {
-      console.warn(`[MSE] Type MIME non supporté détecté (${parsedMime}), tentative de forçage en audio/mp4...`);
+      logger.warn(`[MSE] Type MIME non supporté détecté (${parsedMime}), tentative de forçage en audio/mp4...`);
       parsedMime = 'audio/mp4';
     }
     
@@ -212,7 +213,7 @@ export class MSESecurePlayer {
     this.streaming = true;
     this.startAdaptiveStreaming(url, controller).catch((err) => {
       if (err instanceof DOMException && err.name === 'AbortError') return;
-      console.error('[MSESecurePlayer] Streaming error:', err);
+      logger.error('[MSESecurePlayer] Streaming error:', err);
     });
 
     // ⚡ Attendre UNIQUEMENT le premier batch, pas tout le streaming
@@ -226,7 +227,7 @@ export class MSESecurePlayer {
     } catch (err) {
       clearTimeout(timeoutId);
       const error = err instanceof Error ? err : new Error(String(err));
-      console.warn('[MSE] ❌ Échec batch initial, déclenchement fallback:', error.message);
+      logger.warn('[MSE] ❌ Échec batch initial, déclenchement fallback:', error.message);
       this.stop();
       throw error;
     } finally {
@@ -297,7 +298,7 @@ export class MSESecurePlayer {
       if (this.rejectInitialBatch) {
         this.rejectInitialBatch(err instanceof Error ? err : new Error(String(err)));
       }
-      console.error('[MSESecurePlayer] Adaptive streaming error:', err);
+      logger.error('[MSESecurePlayer] Adaptive streaming error:', err);
     }
 
     // Signaler la fin du flux (même en erreur pour libérer le player)
@@ -337,7 +338,7 @@ export class MSESecurePlayer {
         const chunk = await response.arrayBuffer();
         if (!this.streaming || controller.signal.aborted) break;
 
-        let bufferToAppend = chunk;
+        const bufferToAppend = chunk;
         // --- XOR DECHIFFREMENT TEMPORAIREMENT DÉSACTIVÉ ---
         // if (this.currentTrackId) {
         //   const uint8 = new Uint8Array(chunk);

@@ -11,6 +11,7 @@ import { resolveOfflinePlayback } from '@/services/offlineAccess';
 import { loadArtistFromFreeCatalogCache } from '@/services/freeCatalogSearch';
 import { useCachedImage } from '@/hooks/useCachedImage';
 import { isAlbumOwnedByDevice } from '@/services/albumOwnership';
+import { hasFeatArtists, parseFeatArtists, normalizeArtistName } from '@/utils/featArtists';
 import type { PublicAlbumDetails, PublicAlbumSummary } from '@/types/backend';
 
 function formatDuration(seconds: number | null | undefined): string {
@@ -118,6 +119,22 @@ export function ArtistDetailScreen() {
 
   const totalDuration = tracksWithPaidFlag.reduce((acc, t) => acc + (t.duration || 0), 0);
   const totalDurationLabel = formatDuration(totalDuration);
+
+  // Build artist lookup map from all albums for clickable feat links
+  const artistIdMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const album of albums) {
+      if (album.artist?.id && album.artist?.name) {
+        map[normalizeArtistName(album.artist.name)] = album.artist.id;
+      }
+      if (album.artists) {
+        for (const a of album.artists) {
+          if (a.name) map[normalizeArtistName(a.name)] = a.id;
+        }
+      }
+    }
+    return map;
+  }, [albums]);
 
   return (
     <Screen padded={false}>
@@ -319,7 +336,7 @@ export function ArtistDetailScreen() {
       </div>
 
       {/* ========== CONTENT ========== */}
-      <div className="artist-content" style={{ padding: 'var(--page-padding)', maxWidth: 900, margin: '0 auto', width: '100%' }}>
+      <div className="artist-content" style={{ padding: 'var(--page-padding)', maxWidth: 1200, margin: '0 auto', width: '100%' }}>
         {loading ? (
           <div className="flex justify-center p-10"><div className="loader-spinner" /></div>
         ) : (
@@ -337,18 +354,18 @@ export function ArtistDetailScreen() {
                   style={{
                     display: 'flex',
                     alignItems: 'center',
-                    gap: 12,
-                    padding: '0 12px 10px',
+                    gap: 16,
+                    padding: '0 16px 12px',
                     borderBottom: '1px solid var(--color-border-subtle)',
-                    marginBottom: 4,
+                    marginBottom: 6,
                   }}
                 >
-                  <span style={{ width: 24, color: 'var(--color-text-muted)', fontSize: 11, fontWeight: 600, textAlign: 'center' }}>#</span>
-                  <span style={{ flex: 1, color: 'var(--color-text-muted)', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  <span style={{ width: 28, color: 'var(--color-text-muted)', fontSize: 12, fontWeight: 600, textAlign: 'center' }}>#</span>
+                  <span style={{ flex: 1, color: 'var(--color-text-muted)', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.8px' }}>
                     Titre
                   </span>
-                  <span style={{ width: 40, color: 'var(--color-text-muted)', fontSize: 11, fontWeight: 600, textAlign: 'right', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                    <Clock size={13} />
+                  <span style={{ width: 48, color: 'var(--color-text-muted)', fontSize: 11, fontWeight: 600, textAlign: 'right', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
+                    <Clock size={14} />
                   </span>
                 </div>
 
@@ -356,6 +373,7 @@ export function ArtistDetailScreen() {
                 {tracksWithPaidFlag.map((track, index) => {
                   const isCurrent = currentTrack?.id === track.id;
                   const isThisPlaying = isCurrent && isPlaying;
+                  const featResult = hasFeatArtists(track.title) ? parseFeatArtists(track.title) : null;
                   return (
                     <button
                       key={track.id}
@@ -365,8 +383,8 @@ export function ArtistDetailScreen() {
                       style={{
                         display: 'flex',
                         alignItems: 'center',
-                        gap: 12,
-                        padding: '8px 12px',
+                        gap: 16,
+                        padding: '10px 16px',
                         width: '100%',
                         background: isCurrent ? 'var(--color-accent-soft)' : 'transparent',
                         border: 'none',
@@ -374,7 +392,7 @@ export function ArtistDetailScreen() {
                         cursor: track._canPlay || track._isPaidNotOwned ? 'pointer' : 'default',
                         textAlign: 'left',
                         opacity: !track._canPlay && !track._isPaidNotOwned ? 0.5 : 1,
-                        transition: 'background-color var(--transition-fast) ease',
+                        transition: 'background-color var(--transition-fast) ease, padding var(--transition-fast) ease',
                       }}
                       onMouseEnter={(e) => {
                         if (!isCurrent && (track._canPlay || track._isPaidNotOwned)) e.currentTarget.style.background = 'var(--color-surface-hover)';
@@ -384,7 +402,7 @@ export function ArtistDetailScreen() {
                       }}
                     >
                       {/* Number or equalizer */}
-                      <div style={{ width: 24, textAlign: 'center', flexShrink: 0 }}>
+                      <div style={{ width: 28, textAlign: 'center', flexShrink: 0 }}>
                         {isThisPlaying ? (
                           <div style={{ display: 'flex', alignItems: 'flex-end', gap: 2, height: 16, justifyContent: 'center' }}>
                             <div className="equalizer-bar" style={{ width: 3, backgroundColor: 'var(--color-accent)', borderRadius: 2 }} />
@@ -407,24 +425,51 @@ export function ArtistDetailScreen() {
                       </div>
 
                       {/* Track info */}
-                      <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ flex: '0 0 50%', minWidth: 0 }}>
                         <p style={{
                           color: isCurrent ? 'var(--color-accent)' : 'var(--color-text-primary)',
-                          fontSize: 14,
+                          fontSize: 15,
                           fontWeight: 600,
-                          lineHeight: '20px',
+                          lineHeight: '22px',
                           margin: 0,
                           overflow: 'hidden',
                           textOverflow: 'ellipsis',
                           whiteSpace: 'nowrap',
                         }}>
-                          {track.title}
+                          {featResult ? featResult.cleanTitle : track.title}
+                          {featResult && featResult.featNames.length > 0 && (
+                            <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--color-text-muted)' }}>
+                              {' '}(feat.{' '}
+                              {featResult.featNames.map((name, i) => {
+                                const isLast = i === featResult.featNames.length - 1;
+                                const featId = artistIdMap[normalizeArtistName(name)];
+                                return (
+                                  <span key={name}>
+                                    {featId ? (
+                                      <span
+                                        onClick={(e) => { e.stopPropagation(); navigate(`/artist/${featId}`); }}
+                                        style={{ color: 'var(--color-accent)', cursor: 'pointer', fontWeight: 600, transition: 'opacity 0.15s ease' }}
+                                        onMouseEnter={(e) => { e.currentTarget.style.opacity = '0.7'; e.currentTarget.style.textDecoration = 'underline'; }}
+                                        onMouseLeave={(e) => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.textDecoration = 'none'; }}
+                                      >
+                                        {name}
+                                      </span>
+                                    ) : (
+                                      <span style={{ fontWeight: 500, color: 'var(--color-text-muted)' }}>{name}</span>
+                                    )}
+                                    {!isLast && <span style={{ color: 'var(--color-text-muted)' }}>, </span>}
+                                  </span>
+                                );
+                              })}
+                              )
+                            </span>
+                          )}
                         </p>
                         <p style={{
                           color: isCurrent ? 'var(--color-text-secondary)' : 'var(--color-text-muted)',
                           fontSize: 12,
                           lineHeight: '16px',
-                          margin: '1px 0 0',
+                          margin: '2px 0 0',
                           overflow: 'hidden',
                           textOverflow: 'ellipsis',
                           whiteSpace: 'nowrap',
@@ -434,7 +479,7 @@ export function ArtistDetailScreen() {
                       </div>
 
                       {/* Duration + status */}
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
                         {track._isPaidNotOwned ? (
                           <Lock size={13} color="var(--color-text-muted)" style={{ opacity: 0.5 }} />
                         ) : isThisPlaying ? (

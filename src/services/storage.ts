@@ -1,3 +1,5 @@
+import { logger } from '@/utils/logger';
+
 const STORAGE_PREFIX = 'passio_';
 
 function encode(value: string): string {
@@ -20,7 +22,7 @@ export async function saveEncryptedValue(key: string, value: string): Promise<vo
   try {
     localStorage.setItem(STORAGE_PREFIX + key, encode(value));
   } catch (err) {
-    console.warn('[Storage] Failed to save:', key, err);
+    logger.warn('[Storage] Failed to save:', key, err);
   }
 }
 

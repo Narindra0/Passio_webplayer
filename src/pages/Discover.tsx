@@ -18,6 +18,7 @@ import { resolveOfflinePlayback } from '@/services/offlineAccess';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useAlbumColors } from '@/hooks/useAlbumColors';
 import { useAudioPlayback } from '@/contexts/AudioContext';
+import { useLayout } from '@/contexts/LayoutContext';
 import { getPurchaseAlbumUrl } from '@/config/urls';
 import type { PublicAlbumDetails, PublicAlbumSummary } from '@/types/backend';
 
@@ -35,7 +36,7 @@ const TITRES_SCROLL_INCREMENT = 10;
 
 export function DiscoverScreen() {
   const navigate = useNavigate();
-  const { playFromTrackList, currentTrack, isPlaying } = useAudioPlayback();
+  const { playFromTrackList, currentTrack, isPlaying, isFullPlayerVisible } = useAudioPlayback();
 
   const [newAlbums, setNewAlbums] = useState<PublicAlbumSummary[]>([]);
   const [paidAlbums, setPaidAlbums] = useState<PublicAlbumSummary[]>([]);
@@ -61,6 +62,14 @@ export function DiscoverScreen() {
   const albumCacheRef = useRef<Map<string, PublicAlbumDetails>>(new Map());
   const scrollRefs = useRef<{ [key: string]: HTMLDivElement | null }>({});
   const isMobile = useMediaQuery('(max-width: 768px)');
+  const { isSidebarCollapsed } = useLayout();
+  // Layout adaptatif : si sidebar ouverte + player visible → affichage réduit
+  const isNarrowLayout = !isSidebarCollapsed && isFullPlayerVisible;
+  const ALBUM_DISPLAY_COUNT = isNarrowLayout ? 8 : 10;
+  const ALBUM_GRID_COLUMNS = isNarrowLayout ? 4 : 5;
+  const PREMIUM_DISPLAY_COUNT = isNarrowLayout ? 3 : 4;
+  const TRACK_DISPLAY_COUNT = isNarrowLayout ? 16 : 20;
+  const TRACK_GRID_COLUMNS = isNarrowLayout ? 1 : 2;
 
   // Auto-advance banners
   useEffect(() => {
@@ -292,87 +301,6 @@ export function DiscoverScreen() {
     });
   };
 
-  function PaginationBar({ page, totalPages, onPrev, onNext }: {
-    page: number;
-    totalPages: number;
-    onPrev: () => void;
-    onNext: () => void;
-  }) {
-    if (totalPages <= 1) return null;
-    return (
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 12,
-        marginTop: 20,
-        padding: '12px 0',
-      }}>
-        <button
-          onClick={onPrev}
-          disabled={page === 0}
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 6,
-            padding: '8px 18px',
-            borderRadius: 'var(--radius-full)',
-            background: page === 0 ? 'var(--color-surface)' : 'var(--color-surface-elevated)',
-            border: '1px solid var(--color-border-subtle)',
-            cursor: page === 0 ? 'default' : 'pointer',
-            color: page === 0 ? 'var(--color-text-muted)' : 'var(--color-text-secondary)',
-            fontSize: 13,
-            fontWeight: 600,
-            transition: 'all var(--transition-fast) ease',
-            opacity: page === 0 ? 0.4 : 1,
-          }}
-          onMouseEnter={(e) => {
-            if (page > 0) { e.currentTarget.style.background = 'var(--color-surface-hover)'; e.currentTarget.style.color = 'var(--color-text-primary)'; }
-          }}
-          onMouseLeave={(e) => {
-            if (page > 0) { e.currentTarget.style.background = 'var(--color-surface-elevated)'; e.currentTarget.style.color = 'var(--color-text-secondary)'; }
-          }}
-        >
-          <ChevronLeft size={15} />
-          Précédent
-        </button>
-
-        <span style={{ color: 'var(--color-text-muted)', fontSize: 13, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
-          {page + 1} / {totalPages}
-        </span>
-
-        <button
-          onClick={onNext}
-          disabled={page >= totalPages - 1}
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 6,
-            padding: '8px 18px',
-            borderRadius: 'var(--radius-full)',
-            background: page >= totalPages - 1 ? 'var(--color-surface)' : 'var(--color-surface-elevated)',
-            border: '1px solid var(--color-border-subtle)',
-            cursor: page >= totalPages - 1 ? 'default' : 'pointer',
-            color: page >= totalPages - 1 ? 'var(--color-text-muted)' : 'var(--color-text-secondary)',
-            fontSize: 13,
-            fontWeight: 600,
-            transition: 'all var(--transition-fast) ease',
-            opacity: page >= totalPages - 1 ? 0.4 : 1,
-          }}
-          onMouseEnter={(e) => {
-            if (page < totalPages - 1) { e.currentTarget.style.background = 'var(--color-surface-hover)'; e.currentTarget.style.color = 'var(--color-text-primary)'; }
-          }}
-          onMouseLeave={(e) => {
-            if (page < totalPages - 1) { e.currentTarget.style.background = 'var(--color-surface-elevated)'; e.currentTarget.style.color = 'var(--color-text-secondary)'; }
-          }}
-        >
-          Suivant
-          <ChevronRight size={15} />
-        </button>
-      </div>
-    );
-  }
-
   async function handleTrackPress(track: TrackWithAlbum) {
     try { await playFromTrackList(freeTracks, albumCacheRef.current, track.id); }
     catch { /* ignore */ }
@@ -405,14 +333,6 @@ export function DiscoverScreen() {
       if (filters.sortBy === 'Z-A') return (b.title || '').localeCompare(a.title || '');
       return 0;
     });
-
-  // Pagination — albums
-  const [albumPage, setAlbumPage] = useState(0);
-  const ALBUMS_PER_PAGE = 8;
-  const totalAlbumPages = Math.max(1, Math.ceil(filteredAlbums.length / ALBUMS_PER_PAGE));
-
-  // Reset album page when filters change
-  useEffect(() => { setAlbumPage(0); }, [filters]);
 
   // Premium albums sorted by newest first
   const sortedPaidAlbums = [...paidAlbums].sort((a, b) => {
@@ -827,17 +747,17 @@ export function DiscoverScreen() {
                       margin: '2px 0 0',
                       fontWeight: 500,
                     }}>
-                      {showAllPremium ? sortedPaidAlbums.length : Math.min(4, sortedPaidAlbums.length)} album{sortedPaidAlbums.length > 1 ? 's' : ''} premium
+                      {showAllPremium ? sortedPaidAlbums.length : Math.min(PREMIUM_DISPLAY_COUNT, sortedPaidAlbums.length)} album{sortedPaidAlbums.length > 1 ? 's' : ''} premium
                     </p>
                   </div>
                 </div>
               </div>
               <div style={{
                 display: 'grid',
-                gridTemplateColumns: 'repeat(4, 1fr)',
+                gridTemplateColumns: `repeat(${PREMIUM_DISPLAY_COUNT}, 1fr)`,
                 gap: 20,
               }} className="collections-grid">
-                {(showAllPremium ? sortedPaidAlbums : sortedPaidAlbums.slice(0, 4)).map((album) => (
+                {(showAllPremium ? sortedPaidAlbums : sortedPaidAlbums.slice(0, PREMIUM_DISPLAY_COUNT)).map((album) => (
                   <PremiumAlbumCard
                     key={album.id}
                     album={album}
@@ -847,7 +767,7 @@ export function DiscoverScreen() {
                 ))}
               </div>
               {/* Voir plus / Voir moins */}
-              {sortedPaidAlbums.length > 4 && (
+              {sortedPaidAlbums.length > PREMIUM_DISPLAY_COUNT && (
                 <div style={{ display: 'flex', justifyContent: 'center', marginTop: 20 }}>
                   <button
                     onClick={() => setShowAllPremium(!showAllPremium)}
@@ -986,12 +906,11 @@ export function DiscoverScreen() {
               </div>
               <div style={{
                 display: 'grid',
-                gridTemplateColumns: 'repeat(2, 1fr)',
-                gap: '4px 24px',
+                gridTemplateColumns: `repeat(${TRACK_GRID_COLUMNS}, 1fr)`,
+                gap: TRACK_GRID_COLUMNS === 1 ? '2px' : '4px 24px',
                 borderRadius: 'var(--radius-md)',
-                overflow: 'hidden',
               }} className="tracks-grid-2col">
-                {freeTracks.slice(0, 20).map((track, index) => (
+                {freeTracks.slice(0, TRACK_DISPLAY_COUNT).map((track, index) => (
                   <div key={track.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <span style={{
                       width: 24,
@@ -1017,7 +936,7 @@ export function DiscoverScreen() {
             </div>
           )}
 
-          {/* ──────── 5. TOUS LES ALBUMS — Paginé ──────── */}
+          {/* ──────── 5. TOUS LES ALBUMS — Grille fluide 5×2 ──────── */}
           {filteredAlbums.length > 0 && (
             <div>
               <div className="section-header">
@@ -1025,35 +944,28 @@ export function DiscoverScreen() {
                   <Disc size={20} color="var(--color-accent)" />
                   <h2 className="section-title">Tous les albums</h2>
                 </div>
-                <span style={{ color: 'var(--color-text-muted)', fontSize: 12, fontWeight: 600 }}>
-                  {filteredAlbums.length} albums · Page {albumPage + 1}/{totalAlbumPages}
+                <span
+                  className="section-link"
+                  onClick={() => navigate('/catalog')}
+                  style={{ cursor: 'pointer' }}
+                >
+                  Voir tout →
                 </span>
               </div>
               <div style={{
                 display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fill, minmax(175px, 1fr))',
+                gridTemplateColumns: `repeat(${ALBUM_GRID_COLUMNS}, minmax(0, 1fr))`,
                 gap: 16,
               }} className="albums-grid">
-                {filteredAlbums
-                  .slice(albumPage * ALBUMS_PER_PAGE, (albumPage + 1) * ALBUMS_PER_PAGE)
-                  .map((album) => (
-                    <AlbumCard
-                      key={album.id}
-                      album={album}
-                      variant="tile"
-                      onPress={() => navigate(`/album/${album.id}`)}
-                    />
-                  ))}
+                {filteredAlbums.slice(0, ALBUM_DISPLAY_COUNT).map((album) => (
+                  <AlbumCard
+                    key={album.id}
+                    album={album}
+                    variant="tile"
+                    onPress={() => navigate(`/album/${album.id}`)}
+                  />
+                ))}
               </div>
-              {/* Pagination */}
-              {totalAlbumPages > 1 && (
-                <PaginationBar
-                  page={albumPage}
-                  totalPages={totalAlbumPages}
-                  onPrev={() => setAlbumPage((p) => Math.max(0, p - 1))}
-                  onNext={() => setAlbumPage((p) => Math.min(totalAlbumPages - 1, p + 1))}
-                />
-              )}
             </div>
           )}
 
@@ -1235,7 +1147,7 @@ export function DiscoverScreen() {
                   <div>
                     <div style={{ display: 'flex', flexDirection: 'column' }}>
                       {(() => {
-                        let sorted = [...freeTracks];
+                        const sorted = [...freeTracks];
                         if (catalogSortBy === 'Plus récent') {
                           // Already sorted by newest first
                         } else if (catalogSortBy === 'Plus ancien') {

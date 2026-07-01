@@ -1,7 +1,7 @@
 import { ChevronLeft, ChevronRight, Compass, FolderOpen, KeyRound, Library, Search, Sparkles } from 'lucide-react';
-import { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useLibraryMode } from '../contexts/LibraryModeContext';
+import { useLayout } from '../contexts/LayoutContext';
 
 interface NavItem {
   path: string;
@@ -18,8 +18,8 @@ export function Sidebar() {
   const location = useLocation();
   const navigate = useNavigate();
   const { effectiveMode } = useLibraryMode();
+  const { isSidebarCollapsed: collapsed, setSidebarCollapsed: setCollapsed } = useLayout();
   const currentPath = location.pathname;
-  const [collapsed, setCollapsed] = useState(false);
 
   const mainNav: NavItem[] = effectiveMode === 'online' ? [
     { path: '/discover', label: 'Découvertes', icon: Sparkles },
@@ -51,46 +51,43 @@ export function Sidebar() {
         zIndex: 10,
       }}
     >
-      {/* Logo / Brand */}
+      {/* Logo / Brand — Logo officiel */}
       <div
         onClick={() => navigate('/discover')}
         style={{
-          padding: collapsed ? '24px 0 16px' : '24px 24px 16px',
+          padding: collapsed ? '20px 0 16px' : '20px 20px 16px',
           display: 'flex',
           alignItems: 'center',
           justifyContent: collapsed ? 'center' : 'flex-start',
-          gap: 12,
           cursor: 'pointer',
           flexShrink: 0,
+          transition: 'padding var(--transition-normal) ease',
         }}
       >
-        <div
-          style={{
-            width: 32,
-            height: 32,
-            borderRadius: 'var(--radius-sm)',
-            background: 'var(--color-accent-gradient)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            flexShrink: 0,
-            boxShadow: '0 0 12px rgba(220,20,60,0.3)',
-          }}
-        >
-          <span style={{ color: '#fff', fontSize: 16, fontWeight: 900 }}>P</span>
-        </div>
-        {!collapsed && (
-          <span
+        {collapsed ? (
+          <img
+            src="https://i.ibb.co/LDJ2Vcrr/Logo-2.png"
+            alt="Pass'io"
             style={{
-              color: 'var(--color-text-primary)',
-              fontSize: 16,
-              fontWeight: 700,
-              letterSpacing: '-0.3px',
-              whiteSpace: 'nowrap',
+              width: 32,
+              height: 32,
+              objectFit: 'contain',
+              filter: 'brightness(0) invert(1)',
+              flexShrink: 0,
             }}
-          >
-            Pass'io
-          </span>
+          />
+        ) : (
+          <img
+            src="https://i.ibb.co/xtfzgz67/Logo.png"
+            alt="Pass'io"
+            style={{
+              height: 32,
+              width: 'auto',
+              maxWidth: 180,
+              objectFit: 'contain',
+              filter: 'brightness(0) invert(1)',
+            }}
+          />
         )}
       </div>
 
@@ -108,6 +105,7 @@ export function Sidebar() {
             <button
               key={item.path}
               onClick={() => navigate(item.path)}
+              className={`sidebar-nav-btn${active ? ' active' : ''}`}
               style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -137,7 +135,9 @@ export function Sidebar() {
                 }
               }}
             >
-              <Icon size={22} style={{ flexShrink: 0 }} />
+              <span className="nav-icon-wrapper">
+                <Icon size={22} />
+              </span>
               {!collapsed && item.label}
             </button>
           );
@@ -168,6 +168,7 @@ export function Sidebar() {
             <button
               key={item.path}
               onClick={() => navigate(item.path)}
+              className={`sidebar-nav-btn${active ? ' active' : ''}`}
               style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -184,6 +185,7 @@ export function Sidebar() {
                 fontSize: 13,
                 fontWeight: active ? 600 : 500,
                 border: 'none',
+                position: 'relative',
               }}
               onMouseEnter={(e) => {
                 if (!active) {
@@ -196,7 +198,9 @@ export function Sidebar() {
                 }
               }}
             >
-              <Icon size={20} style={{ flexShrink: 0 }} />
+              <span className="nav-icon-wrapper">
+                <Icon size={20} />
+              </span>
               {!collapsed && item.label}
             </button>
           );

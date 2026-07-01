@@ -6,6 +6,7 @@ import { Sidebar } from './components/Sidebar';
 import { MobileNav } from './components/MobileNav';
 import { BottomPlayer } from './components/BottomPlayer';
 import { ArtistLookupProvider } from './contexts/ArtistLookupContext';
+import { LayoutProvider } from './contexts/LayoutContext';
 
 // Lazy-loaded pages
 const LoadingScreen = React.lazy(() => import('./pages/Loading').then(m => ({ default: m.LoadingScreen })));
@@ -36,6 +37,7 @@ export function App() {
 
   return (
     <AppErrorBoundary>
+      <LayoutProvider>
       <ArtistLookupProvider>
       <div
         style={{
@@ -50,22 +52,14 @@ export function App() {
         }}
       >
         {/* Main Area: Sidebar + Content + Right Panel */}
-        <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+        <div className="bento-layout-row">
           {/* Left Sidebar (hidden on mobile) */}
-          <div className="sidebar-desktop">
+          <div className="sidebar-desktop bento-sidebar">
             <Sidebar />
           </div>
 
           {/* Main Content Area */}
-          <main
-            style={{
-              flex: 1,
-              overflow: 'hidden',
-              display: 'flex',
-              flexDirection: 'column',
-              position: 'relative',
-            }}
-          >
+          <main className="bento-main">
             <div
               style={{
                 flex: 1,
@@ -93,9 +87,11 @@ export function App() {
 
           {/* Right Now Playing Panel (FullPlayer) */}
           {isFullPlayerVisible && (
-            <Suspense fallback={null}>
-              <FullPlayer />
-            </Suspense>
+            <div className="bento-player-wrapper">
+              <Suspense fallback={null}>
+                <FullPlayer />
+              </Suspense>
+            </div>
           )}
         </div>
 
@@ -108,6 +104,7 @@ export function App() {
         <BottomPlayer />
       </div>
       </ArtistLookupProvider>
+      </LayoutProvider>
     </AppErrorBoundary>
   );
 }

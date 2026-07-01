@@ -9,6 +9,7 @@ import {
     List,
     Pause,
     Play,
+    Radio,
     Repeat, Repeat1,
     Shuffle, SkipBack, SkipForward,
     Share2, TextQuote, Volume2, Volume1, Volume, VolumeX, X,
@@ -22,6 +23,7 @@ import { hasFeatArtists, parseFeatArtists, normalizeArtistName } from '@/utils/f
 import { FeatArtistLinks } from './FeatArtistLinks';
 import { listAlbums } from '@/services/api';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
+import { logger } from '@/utils/logger';
 
 function formatAlbumArtist(albumData: PublicAlbumDetails | null | undefined): string {
   if (!albumData) return 'Artiste inconnu';
@@ -41,6 +43,7 @@ export function FullPlayer() {
     deviceQueue, deviceCurrentIndex, playDeviceTrackAtIndex, queueAlbums,
     volume, setVolume, toggleMute, isMuted,
     lyricsAutoOpen, setLyricsAutoOpen,
+    autoplayEnabled, setAutoplayEnabled, isAutoplaying,
   } = useAudioPlayback();
   const { progress, duration } = useAudioProgress();
   const [lyricsModalVisible, setLyricsModalVisible] = useState(false);
@@ -100,10 +103,10 @@ export function FullPlayer() {
             }
           }
         }
-        console.log('[FullPlayer] Global artist map:', Object.keys(map).length, 'artists. Balz →', map['balz'], '| Keys:', Object.keys(map).sort().join(', '));
+        logger.info('[FullPlayer] Global artist map:', Object.keys(map).length, 'artists. Balz →', map['balz'], '| Keys:', Object.keys(map).sort().join(', '));
         if (!cancelled) setGlobalArtistIdMap(map);
       } catch (err) {
-        console.warn('[FullPlayer] listAlbums failed:', err);
+        logger.warn('[FullPlayer] listAlbums failed:', err);
       }
     }
     void loadAllAlbums();
@@ -516,15 +519,51 @@ export function FullPlayer() {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            gap: 12,
+            gap: 8,
             marginBottom: 20,
           }}
         >
+          {/* Autoplay toggle */}
+          <button
+            onClick={() => setAutoplayEnabled(!autoplayEnabled)}
+            style={{
+              width: 36,
+              height: 36,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              background: 'transparent',
+              border: 'none',
+              cursor: 'pointer',
+              borderRadius: 'var(--radius-full)',
+              color: isAutoplaying || autoplayEnabled ? 'var(--color-accent)' : 'var(--color-text-muted)',
+              transition: 'all var(--transition-fast) ease',
+              position: 'relative',
+            }}
+            onMouseEnter={(e) => { if (!autoplayEnabled) e.currentTarget.style.color = 'var(--color-text-primary)'; }}
+            onMouseLeave={(e) => { if (!autoplayEnabled) e.currentTarget.style.color = 'var(--color-text-muted)'; }}
+            title={autoplayEnabled ? 'Mode Radio activé — Lecture continue' : 'Mode Radio désactivé'}
+          >
+            <Radio size={16} />
+            {isAutoplaying && (
+              <span style={{
+                position: 'absolute',
+                top: -2,
+                right: -2,
+                width: 8,
+                height: 8,
+                borderRadius: '50%',
+                background: 'var(--color-accent)',
+                animation: 'pulse 1.5s ease infinite',
+              }} />
+            )}
+          </button>
+
           <button
             onClick={toggleQueueMode}
             style={{
-              width: 40,
-              height: 40,
+              width: 36,
+              height: 36,
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -538,15 +577,15 @@ export function FullPlayer() {
             onMouseEnter={(e) => { if (queueMode !== 'shuffle') e.currentTarget.style.color = 'var(--color-text-primary)'; }}
             onMouseLeave={(e) => { if (queueMode !== 'shuffle') e.currentTarget.style.color = 'var(--color-text-muted)'; }}
           >
-            <Shuffle size={18} />
+            <Shuffle size={16} />
           </button>
 
           <button
             onClick={() => hasPrev && void previous()}
             disabled={!hasPrev}
             style={{
-              width: 40,
-              height: 40,
+              width: 36,
+              height: 36,
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -559,14 +598,14 @@ export function FullPlayer() {
               transition: 'all var(--transition-fast) ease',
             }}
           >
-            <SkipBack size={22} />
+            <SkipBack size={20} />
           </button>
 
           <button
             onClick={togglePlayPause}
             style={{
-              width: 56,
-              height: 56,
+              width: 52,
+              height: 52,
               borderRadius: 'var(--radius-full)',
               background: 'var(--color-accent)',
               display: 'flex',
@@ -584,9 +623,9 @@ export function FullPlayer() {
             {isLoading ? (
               <div className="loader-spinner" style={{ width: 20, height: 20, borderWidth: 2, borderColor: 'rgba(255,255,255,0.2)', borderTopColor: '#fff' }} />
             ) : isPlaying ? (
-              <Pause size={24} color="#fff" />
+              <Pause size={22} color="#fff" />
             ) : (
-              <Play size={24} color="#fff" style={{ marginLeft: 2 }} />
+              <Play size={22} color="#fff" style={{ marginLeft: 2 }} />
             )}
           </button>
 
@@ -594,8 +633,8 @@ export function FullPlayer() {
             onClick={() => hasNext && void next()}
             disabled={!hasNext}
             style={{
-              width: 40,
-              height: 40,
+              width: 36,
+              height: 36,
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -608,14 +647,14 @@ export function FullPlayer() {
               transition: 'all var(--transition-fast) ease',
             }}
           >
-            <SkipForward size={22} />
+            <SkipForward size={20} />
           </button>
 
           <button
             onClick={toggleRepeat}
             style={{
-              width: 40,
-              height: 40,
+              width: 36,
+              height: 36,
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -630,7 +669,7 @@ export function FullPlayer() {
             onMouseEnter={(e) => { if (repeatMode === 'off') e.currentTarget.style.color = 'var(--color-text-primary)'; }}
             onMouseLeave={(e) => { if (repeatMode === 'off') e.currentTarget.style.color = 'var(--color-text-muted)'; }}
           >
-            {React.createElement(repeatIcon, { size: 18 })}
+            {React.createElement(repeatIcon, { size: 16 })}
           </button>
         </div>
 
@@ -867,9 +906,30 @@ export function FullPlayer() {
         {/* Up next */}
         {upcomingTracks.length > 0 && (
           <div style={{ marginTop: 24, marginBottom: 12 }}>
-            <h3 style={{ color: 'var(--color-text-muted)', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px', margin: '0 0 12px' }}>
-              À suivre ({upcomingTracks.length})
-            </h3>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+              <h3 style={{ color: 'var(--color-text-muted)', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px', margin: 0 }}>
+                À suivre ({upcomingTracks.length})
+              </h3>
+              {isAutoplaying && (
+                <span style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  padding: '2px 8px',
+                  borderRadius: 'var(--radius-full)',
+                  background: 'var(--color-accent-soft)',
+                  border: '1px solid var(--color-accent)',
+                  fontSize: 9,
+                  fontWeight: 700,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.3px',
+                  color: 'var(--color-accent)',
+                }}>
+                  <Radio size={10} />
+                  Radio
+                </span>
+              )}
+            </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               {upcomingTracks.slice(0, 10).map((item, index) => {
                 const originalIndex = currentIdx + 1 + index;

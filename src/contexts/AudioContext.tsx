@@ -14,7 +14,7 @@ import {
 } from 'react';
 
 import { isAlbumOwnedByDevice, resolveAlbumDecryptionKey } from '@/services/albumOwnership';
-import { getAlbum, getApiBaseUrl, listOwnedAlbums, unwrapAlbumDetails } from '@/services/api';
+import { getAlbum, getApiBaseUrl, listAlbums, listOwnedAlbums, unwrapAlbumDetails } from '@/services/api';
 import { getCloudflareAudioUrl } from '@/config/urls';
 import {
     seekTo as audioSeekTo,
@@ -61,6 +61,8 @@ export interface SavedAudioSession {
 export interface AudioPlaybackState {
   queueScope: QueueScope;
   album: PublicAlbumDetails | null;
+  autoplayEnabled: boolean;
+  isAutoplaying: boolean;
   queue: PublicTrack[];
   currentIndex: number;
   currentTrack: PublicTrack | null;
@@ -107,6 +109,7 @@ export interface AudioActions {
   seekTo: (position: number) => void;
   playDeviceTrackAtIndex: (tracks: DeviceTrack[], index: number) => Promise<void>;
   clearPlaybackError: () => void;
+  setAutoplayEnabled: (v: boolean) => void;
   volume: number;
   setVolume: (v: number) => void;
   toggleMute: () => void;
@@ -115,7 +118,16 @@ export interface AudioActions {
 
 interface AudioPlaybackContextValue extends AudioPlaybackState, AudioActions {}
 
-const DEFAULT_VOLUME = 1;
+const DEFAULT_VOLUME = (() => {
+  try {
+    const saved = localStorage.getItem('passio_volume');
+    if (saved) {
+      const parsed = parseFloat(saved);
+      if (!isNaN(parsed) && parsed >= 0 && parsed <= 1) return parsed;
+    }
+  } catch { /* ignore */ }
+  return 1;
+})();
 
 const AudioPlaybackContext = createContext<AudioPlaybackContextValue | null>(null);
 const AudioProgressContext = createContext<AudioProgressState | null>(null);
@@ -148,6 +160,16 @@ export function AudioProvider({ children }: { children: ReactNode }) {
   const [volume, setVolumeState] = useState(DEFAULT_VOLUME);
   const [isMuted, setIsMuted] = useState(false);
   const [lyricsAutoOpen, setLyricsAutoOpen] = useState(false);
+  const volumeRef = useRef(DEFAULT_VOLUME);
+
+  // Garder le ref synchronisé avec l'état du volume
+  useEffect(() => { volumeRef.current = volume; }, [volume]);
+
+  // Persister le volume dans localStorage à chaque changement
+  useEffect(() => {
+    try { localStorage.setItem('passio_volume', String(volume)); }
+    catch { /* QuotaExceededError — ignore */ }
+  }, [volume]);
 
   const currentIndexRef = useRef(-1);
   const deviceQueueRef = useRef<DeviceTrack[]>([]);
@@ -174,6 +196,101 @@ export function AudioProvider({ children }: { children: ReactNode }) {
   const lastProgressRef = useRef(0);
   const lastDurationRef = useRef(0);
   const prefetchTriggeredRef = useRef(false);
+
+  const sequentialBackupRef = useRef<{
+    tracks: PublicTrack[];
+    albums: PublicAlbumDetails[];
+    keys: (string | null)[];
+  } | null>(null);
+  const deviceBackupRef = useRef<DeviceTrack[] | null>(null);
+  const autoplayEnabledRef = useRef(true);
+  const recentlyPlayedRef = useRef<Set<string>>(new Set());
+  const isAutoplayingRef = useRef(false);
+  const [autoplayEnabled, setAutoplayEnabledState] = useState(true);
+  const [isAutoplaying, setIsAutoplaying] = useState(false);
+
+  // 🎯 Algorithme Radio : générer des recommandations quand la file est terminée
+  async function handleAutoplay() {
+    if (isDevicePlaybackRef.current) return; // Pas d'autoplay en mode device
+    if (!autoplayEnabledRef.current) return; // Désactivé par l'utilisateur
+
+    const currentAlb = albumRef.current;
+    const finishedTrackIds = recentlyPlayedRef.current;
+    if (!currentAlb) return;
+
+    try {
+      const allAlbums = await listAlbums();
+
+      // 🎯 Priorité 1 : Même artiste — autres albums du même artiste
+      //    Priorité 2 : Même type/style — albums de même type (single/album/ep) et même gratuité
+      const sameArtistAlbums: PublicAlbumSummary[] = [];
+      const sameTypeAlbums: PublicAlbumSummary[] = [];
+
+      for (const a of allAlbums) {
+        if (a.id === currentAlb.id) continue; // Exclure l'album courant
+        const aArtistId = a.artist_id || a.artist?.id || '';
+        const curArtistId = currentAlb.artist_id || currentAlb.artist?.id || '';
+        const sameArtist = aArtistId && curArtistId && aArtistId === curArtistId;
+        if (sameArtist) {
+          sameArtistAlbums.push(a);
+        } else if (a.is_free === currentAlb.is_free && a.type === currentAlb.type) {
+          sameTypeAlbums.push(a);
+        }
+      }
+
+      // Mélanger et prendre max 15 albums candidats
+      const candidateAlbums = [...sameArtistAlbums, ...sameTypeAlbums];
+      for (let i = candidateAlbums.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [candidateAlbums[i], candidateAlbums[j]] = [candidateAlbums[j], candidateAlbums[i]];
+      }
+      const topCandidates = candidateAlbums.slice(0, 15);
+
+      // Charger les détails des albums candidats en parallèle (Promise.all) pour minimiser le blanc
+      const recommended: { track: PublicTrack; album: PublicAlbumDetails }[] = [];
+      const detailsList = await Promise.all(
+        topCandidates.map((c) => getAlbum(c.id).catch(() => null)),
+      );
+      for (const details of detailsList) {
+        if (!details) continue;
+        const sorted = sortTracksByPosition(details.tracks || []);
+        for (const track of sorted) {
+          if (!finishedTrackIds.has(track.id)) {
+            recommended.push({ track, album: details });
+          }
+        }
+      }
+
+      // Mélanger les recommandations pour un effet radio
+      for (let i = recommended.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [recommended[i], recommended[j]] = [recommended[j], recommended[i]];
+      }
+
+      const autoTracks = recommended.slice(0, 20);
+      if (autoTracks.length === 0) return;
+
+      const newTracks = autoTracks.map((t) => t.track);
+      const newAlbums = autoTracks.map((t) => t.album);
+
+      // 🎯 Marquer qu'on est en mode autoplay (pour l'affichage UI)
+      isAutoplayingRef.current = true;
+      setIsAutoplaying(true);
+      setQueueMode('sequential');
+      queueModeRef.current = 'sequential';
+      setQueueScope('trackList');
+      queueScopeRef.current = 'trackList';
+
+      queueRef.current = [...newTracks];
+      setQueue([...newTracks]);
+      setParallelQueue(newAlbums, []);
+
+      console.log('[Autoplay] 🎵 Mode Radio activé —', newTracks.length, 'recommandations injectées');
+      await playAtIndexRef.current(0);
+    } catch (err) {
+      console.warn('[Autoplay] ❌ Erreur lors de la génération des recommandations:', err);
+    }
+  }
 
   /**
    * Solution C: Précharge immédiatement la piste suivante dans la file.
@@ -402,8 +519,36 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     const order = shuffleIndexOrder(tailTracks.length);
     const shuffledTail = order.map((i) => tailTracks[i]!);
     queueRef.current = [...q.slice(0, headEnd), ...shuffledTail];
-
     setQueue([...queueRef.current]);
+
+    // 🎯 Synchroniser les tableaux parallèles (albums + keys) avec le nouvel ordre mélangé
+    const parallel = queueParallelRef.current;
+    if (parallel && parallel.albums.length === q.length) {
+      const tailAlbums = parallel.albums.slice(headEnd);
+      const tailKeys = parallel.keys.slice(headEnd);
+      const shuffledAlbums = order.map((i) => tailAlbums[i]!);
+      const shuffledKeys = order.map((i) => tailKeys[i]!);
+      queueParallelRef.current = {
+        albums: [...parallel.albums.slice(0, headEnd), ...shuffledAlbums],
+        keys: [...parallel.keys.slice(0, headEnd), ...shuffledKeys],
+      };
+      setQueueAlbums([...queueParallelRef.current.albums]);
+    }
+  }
+
+  function shuffleRemainingDeviceQueue() {
+    const currentIdx = deviceCurrentIndexRef.current;
+    const q = deviceQueueRef.current;
+    if (currentIdx < 0 || currentIdx >= q.length - 1) return;
+
+    const headEnd = currentIdx + 1;
+    const tailTracks = q.slice(headEnd);
+    if (tailTracks.length < 2) return;
+
+    const order = shuffleIndexOrder(tailTracks.length);
+    const shuffledTail = order.map((i) => tailTracks[i]!);
+    deviceQueueRef.current = [...q.slice(0, headEnd), ...shuffledTail];
+    setDeviceQueue([...deviceQueueRef.current]);
   }
 
   async function advanceToNextTrack() {
@@ -429,6 +574,10 @@ export function AudioProvider({ children }: { children: ReactNode }) {
         if (queueRef.current.length > 0) await playAtIndexRef.current(0);
         return;
       }
+      // 🎯 Autoplay : lancer les recommandations avant d'arrêter
+      isAutoplayingRef.current = false;
+      await handleAutoplay();
+      if (isAutoplayingRef.current) return; // handleAutoplay a lancé une nouvelle piste
       setIsPlaying(false);
       setProgress(0);
       isPlayingRef.current = false;
@@ -511,6 +660,9 @@ export function AudioProvider({ children }: { children: ReactNode }) {
               console.log('[AudioContext] ✅ Success with direct URL!');
               currentIndexRef.current = index;
               setCurrentIndex(index);
+              // 🎯 Synchroniser le volume après la création du nouvel élément audio direct
+              setAudioVolume(volumeRef.current);
+              if (isMuted) setAudioMuted(true);
               return;
             }
           } catch (err) {
@@ -543,6 +695,9 @@ export function AudioProvider({ children }: { children: ReactNode }) {
         console.log('[AudioContext] ✅ Succès playback with backend proxy!');
         currentIndexRef.current = index;
         setCurrentIndex(index);
+        // 🎯 Synchroniser le volume après la création du nouvel élément audio
+        setAudioVolume(volumeRef.current);
+        if (isMuted) setAudioMuted(true);
         return;
       }
       
@@ -636,6 +791,13 @@ export function AudioProvider({ children }: { children: ReactNode }) {
       decryptionKeyRef.current = key;
       setDecryptionKey(key);
     }
+    // 🎯 Tracker les pistes jouées pour l'autoplay (ne pas répéter)
+    recentlyPlayedRef.current.add(q[index].id);
+    // Limiter à 50 entrées pour éviter la dérive mémoire
+    if (recentlyPlayedRef.current.size > 50) {
+      const entries = Array.from(recentlyPlayedRef.current);
+      recentlyPlayedRef.current = new Set(entries.slice(entries.length - 50));
+    }
     await startPlayback(q[index], index, alb, key);
   }, []);
 
@@ -643,6 +805,11 @@ export function AudioProvider({ children }: { children: ReactNode }) {
 
   const loadAlbum = useCallback((albumData: PublicAlbumDetails, key?: string | null) => {
     const sorted = sortTracksByPosition(albumData.tracks || []);
+    // Réinitialiser le tracking autoplay quand l'utilisateur choisit un nouvel album
+    recentlyPlayedRef.current = new Set();
+    isAutoplayingRef.current = false;
+    setIsAutoplaying(false);
+    sequentialBackupRef.current = null;
     queueScopeRef.current = 'album';
     setQueueScope('album');
     clearParallelQueue();
@@ -721,6 +888,11 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     let startIndex = tracks.findIndex((t) => t.id === startTrackId);
     if (startIndex < 0) startIndex = 0;
 
+    // Réinitialiser le tracking autoplay quand l'utilisateur lance une nouvelle liste
+    recentlyPlayedRef.current = new Set();
+    isAutoplayingRef.current = false;
+    setIsAutoplaying(false);
+    sequentialBackupRef.current = null;
     queueScopeRef.current = 'trackList';
     setQueueScope('trackList');
     queueModeRef.current = 'sequential';
@@ -790,7 +962,15 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     let nextIdx = currentIndexRef.current + 1;
     if (nextIdx >= len) {
       if (repeatModeRef.current === 'all') nextIdx = 0;
-      else return;
+      else {
+        // 🎯 Déclencher l'autoplay si on est sur la dernière piste
+        if (!isDevicePlaybackRef.current && autoplayEnabledRef.current) {
+          isAutoplayingRef.current = false;
+          await handleAutoplay();
+          if (isAutoplayingRef.current) return;
+        }
+        return;
+      }
     }
     await playAtIndex(nextIdx);
   }, [playAtIndex]);
@@ -831,16 +1011,73 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     const newMode = queueModeRef.current === 'sequential' ? 'shuffle' : 'sequential';
     queueModeRef.current = newMode;
     setQueueMode(newMode);
-    if (newMode === 'shuffle') shuffleRemainingQueue();
-    else if (newMode === 'sequential' && queueScopeRef.current === 'album' && albumRef.current) {
-      const currentTrackId = queueRef.current[currentIndexRef.current]?.id;
-      clearParallelQueue();
-      const sorted = sortTracksByPosition(albumRef.current.tracks || []);
-      queueRef.current = sorted;
-      setQueue(sorted);
-      if (currentTrackId) {
-        const newIdx = sorted.findIndex((t) => t.id === currentTrackId);
-        if (newIdx >= 0) { currentIndexRef.current = newIdx; setCurrentIndex(newIdx); }
+    if (newMode === 'shuffle') {
+      // ── Mode device : sauvegarder + mélanger la queue device ──
+      if (isDevicePlaybackRef.current) {
+        if (deviceQueueRef.current.length > 1) {
+          deviceBackupRef.current = [...deviceQueueRef.current];
+          shuffleRemainingDeviceQueue();
+        }
+        return;
+      }
+      // ── Mode online : sauvegarder + mélanger la queue online ──
+      if (queueScopeRef.current === 'trackList' && queueParallelRef.current) {
+        sequentialBackupRef.current = {
+          tracks: [...queueRef.current],
+          albums: [...queueParallelRef.current.albums],
+          keys: [...queueParallelRef.current.keys],
+        };
+      }
+      shuffleRemainingQueue();
+    } else if (newMode === 'sequential') {
+      // ── Mode device : restaurer la queue device ──
+      if (isDevicePlaybackRef.current) {
+        const backup = deviceBackupRef.current;
+        if (backup) {
+          const currentTrackId = deviceQueueRef.current[deviceCurrentIndexRef.current]?.id;
+          deviceQueueRef.current = backup;
+          setDeviceQueue([...backup]);
+          if (currentTrackId) {
+            const newIdx = backup.findIndex((t) => t.id === currentTrackId);
+            if (newIdx >= 0) {
+              deviceCurrentIndexRef.current = newIdx;
+              setDeviceCurrentIndex(newIdx);
+            }
+          }
+          deviceBackupRef.current = null;
+        }
+        return;
+      }
+      // ── Mode online : restaurer la queue online ──
+      const backup = sequentialBackupRef.current;
+      if (backup) {
+        const currentTrackId = queueRef.current[currentIndexRef.current]?.id;
+        queueRef.current = backup.tracks;
+        setQueue([...backup.tracks]);
+        queueParallelRef.current = {
+          albums: backup.albums,
+          keys: backup.keys,
+        };
+        setQueueAlbums([...backup.albums]);
+        if (currentTrackId) {
+          const newIdx = backup.tracks.findIndex((t) => t.id === currentTrackId);
+          if (newIdx >= 0) {
+            currentIndexRef.current = newIdx;
+            setCurrentIndex(newIdx);
+          }
+        }
+        sequentialBackupRef.current = null;
+      } else if (queueScopeRef.current === 'album' && albumRef.current) {
+        // Fallback album scope : re-lire depuis les données de l'album
+        const currentTrackId = queueRef.current[currentIndexRef.current]?.id;
+        clearParallelQueue();
+        const sorted = sortTracksByPosition(albumRef.current.tracks || []);
+        queueRef.current = sorted;
+        setQueue(sorted);
+        if (currentTrackId) {
+          const newIdx = sorted.findIndex((t) => t.id === currentTrackId);
+          if (newIdx >= 0) { currentIndexRef.current = newIdx; setCurrentIndex(newIdx); }
+        }
       }
     }
   }, []);
@@ -874,11 +1111,18 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     const clamped = Math.max(0, Math.min(1, v));
     setVolumeState(clamped);
     setAudioVolume(clamped);
+    volumeRef.current = clamped;
     if (clamped > 0 && isMuted) {
       setIsMuted(false);
       setAudioMuted(false);
     }
   }, [isMuted]);
+
+  const setAutoplayEnabled = useCallback((v: boolean) => {
+    autoplayEnabledRef.current = v;
+    setAutoplayEnabledState(v);
+    if (!v) { isAutoplayingRef.current = false; setIsAutoplaying(false); }
+  }, []);
 
   const toggleMute = useCallback(() => {
     if (isMuted) {
@@ -897,6 +1141,12 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     deviceQueueRef.current = tracks;
     setDeviceQueue(tracks);
     isDevicePlaybackRef.current = true;
+    // 🎯 Si le shuffle est déjà actif, sauvegarder et mélanger les nouvelles tracks immédiatement
+    if (queueModeRef.current === 'shuffle' && tracks.length > 1) {
+      deviceBackupRef.current = [...tracks];
+      deviceCurrentIndexRef.current = safeIndex;
+      shuffleRemainingDeviceQueue();
+    }
     const track = tracks[safeIndex];
     if (!track) return;
     await playDeviceFile(track.uri, (status) => {
@@ -905,6 +1155,9 @@ export function AudioProvider({ children }: { children: ReactNode }) {
       if (dur > 0) updateProgressThrottled(currentTime, dur);
       if (status.playing !== undefined) { setIsPlaying(Boolean(status.playing)); isPlayingRef.current = Boolean(status.playing); }
     });
+    // 🎯 Synchroniser le volume après la création de l'élément audio du device
+    setAudioVolume(volumeRef.current);
+    if (isMuted) setAudioMuted(true);
     setDeviceCurrentIndex(safeIndex);
     deviceCurrentIndexRef.current = safeIndex;
   }, [updateProgressThrottled]);
@@ -913,11 +1166,11 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     album, queue, currentIndex, currentTrack, isPlaying, isLoading, playMode,
     decryptionKey, isFullPlayerVisible, queueMode, repeatMode, library, libraryIndex,
     isLibraryLoaded, queueScope, deviceQueue, deviceCurrentIndex, deviceCurrentTrack,
-    queueAlbums, playbackError, lyricsAutoOpen,
+    queueAlbums, playbackError, lyricsAutoOpen, isAutoplaying,
     loadAlbum, playFromTrackList, playTrackAtIndex, togglePlayPause, next, previous, stop,
     setFullPlayerVisible, setLyricsAutoOpen, toggleQueueMode, toggleRepeat, loadLibrary, seekTo,
     playDeviceTrackAtIndex, clearPlaybackError,
-    volume, setVolume, toggleMute, isMuted,
+    volume, setVolume, toggleMute, isMuted, autoplayEnabled, setAutoplayEnabled,
   }), [album, queue, currentIndex, currentTrack, isPlaying, isLoading, playMode,
     decryptionKey, isFullPlayerVisible, queueMode, repeatMode, library, libraryIndex,
     isLibraryLoaded, queueScope, deviceQueue, deviceCurrentIndex, deviceCurrentTrack,
@@ -925,7 +1178,7 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     togglePlayPause, next, previous, stop, setFullPlayerVisible, setLyricsAutoOpen,
     toggleQueueMode, toggleRepeat, loadLibrary,
     seekTo, playDeviceTrackAtIndex, clearPlaybackError,
-    volume, setVolume, toggleMute, isMuted]);
+    volume, setVolume, toggleMute, isMuted, autoplayEnabled, setAutoplayEnabled, isAutoplaying]);
 
   const progressValue = useMemo<AudioProgressState>(() => ({ progress, duration }), [progress, duration]);
 

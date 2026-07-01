@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowUpDown, ChevronLeft, ChevronRight, ListMusic, Search, ArrowLeft } from 'lucide-react';
+import { ArrowUpDown, ListMusic, Search, ArrowLeft } from 'lucide-react';
 import { Screen } from '@/components/Screen';
 import { TrackListItem, type TrackWithAlbum } from '@/components/TrackListItem';
 import { getAlbum, listAlbums, unwrapAlbumDetails } from '@/services/api';
@@ -10,7 +10,8 @@ import { resolveOfflinePlayback } from '@/services/offlineAccess';
 import { useAudioPlayback } from '@/contexts/AudioContext';
 import type { PublicAlbumDetails, PublicAlbumSummary } from '@/types/backend';
 
-const TRACKS_PER_PAGE = 20;
+const BATCH_SIZE = 30;
+const INITIAL_DISPLAY = 30;
 const SORT_OPTIONS = ['Plus récent', 'Plus ancien', 'A-Z', 'Z-A'] as const;
 
 export function TracksScreen() {
@@ -21,8 +22,10 @@ export function TracksScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  const [debouncedQuery, setDebouncedQuery] = useState('');
   const [sortBy, setSortBy] = useState<string>('Plus récent');
-  const [page, setPage] = useState(0);
+  const [displayCount, setDisplayCount] = useState(INITIAL_DISPLAY);
+  const sentinelRef = useRef<HTMLDivElement>(null);
   const albumCacheRef = useRef<Map<string, PublicAlbumDetails>>(new Map());
 
   function populateCache(detailsMap: Map<string, PublicAlbumDetails>) {
@@ -105,11 +108,20 @@ export function TracksScreen() {
     }
   }, []);
 
+  // ✨ Debounce la recherche (250ms)
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedQuery(query), 250);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  // Reset infinite scroll quand la recherche change
+  useEffect(() => { setDisplayCount(INITIAL_DISPLAY); }, [debouncedQuery]);
+
   useEffect(() => { void loadData(); }, [loadData]);
 
-  // Filter + sort
+  // Filter + sort (utilise debouncedQuery pour éviter les re-renders coûteux)
   const filteredTracks = useMemo(() => {
-    const search = query.trim().toLowerCase();
+    const search = debouncedQuery.trim().toLowerCase();
     let result = tracks.filter((t) => {
       if (!search) return true;
       return (
@@ -132,9 +144,25 @@ export function TracksScreen() {
     return result;
   }, [tracks, query, sortBy]);
 
-  const totalPages = Math.max(1, Math.ceil(filteredTracks.length / TRACKS_PER_PAGE));
-  const safePage = Math.min(page, totalPages - 1);
-  const paginatedTracks = filteredTracks.slice(safePage * TRACKS_PER_PAGE, (safePage + 1) * TRACKS_PER_PAGE);
+  // Infinite scroll IntersectionObserver
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting) {
+          setDisplayCount((prev) =>
+            Math.min(prev + BATCH_SIZE, filteredTracks.length),
+          );
+        }
+      },
+      { rootMargin: '400px' },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [filteredTracks.length]);
+
+  const displayTracks = filteredTracks.slice(0, displayCount);
 
   function handleTrackPress(track: TrackWithAlbum) {
     playFromTrackList(tracks, albumCacheRef.current, track.id).catch(() => {});
@@ -190,7 +218,7 @@ export function TracksScreen() {
           <Search size={16} color="var(--color-text-muted)" />
           <input
             value={query}
-            onChange={(e) => { setQuery(e.target.value); setPage(0); }}
+            onChange={(e) => setQuery(e.target.value)}
             placeholder="Rechercher un titre, artiste ou album…"
           />
         </div>
@@ -198,7 +226,7 @@ export function TracksScreen() {
           onClick={() => {
             const idx = SORT_OPTIONS.indexOf(sortBy as typeof SORT_OPTIONS[number]);
             setSortBy(SORT_OPTIONS[(idx + 1) % SORT_OPTIONS.length]);
-            setPage(0);
+            setDisplayCount(INITIAL_DISPLAY);
           }}
           title={`Tri : ${sortBy}`}
           style={{
@@ -241,10 +269,17 @@ export function TracksScreen() {
             gridTemplateColumns: 'repeat(2, 1fr)',
             gap: '4px 24px',
           }}>
-            {paginatedTracks.map((track) => {
+            {displayTracks.map((track, index) => {
               const isThisCurrent = currentTrack?.id === track.id;
               return (
-                <div key={track.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div
+                  key={track.id}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 8,
+                    animation: 'slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) both',
+                    animationDelay: `${(index % 4) * 0.05}s`,
+                  }}
+                >
                   <TrackListItem
                     track={track}
                     isPlaying={isThisCurrent && isPlaying}
@@ -255,68 +290,29 @@ export function TracksScreen() {
             })}
           </div>
 
-          {/* Pagination */}
-          {totalPages > 1 && (
-            <div style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              gap: 12, marginTop: 24, padding: '12px 0',
-            }}>
-              <button
-                onClick={() => setPage((p) => Math.max(0, p - 1))}
-                disabled={safePage === 0}
-                style={{
-                  display: 'inline-flex', alignItems: 'center', gap: 6,
-                  padding: '8px 18px', borderRadius: 'var(--radius-full)',
-                  background: safePage === 0 ? 'var(--color-surface)' : 'var(--color-surface-elevated)',
-                  border: '1px solid var(--color-border-subtle)',
-                  cursor: safePage === 0 ? 'default' : 'pointer',
-                  color: safePage === 0 ? 'var(--color-text-muted)' : 'var(--color-text-secondary)',
-                  fontSize: 13, fontWeight: 600,
-                  transition: 'all var(--transition-fast) ease',
-                  opacity: safePage === 0 ? 0.4 : 1,
-                }}
-                onMouseEnter={(e) => {
-                  if (safePage > 0) { e.currentTarget.style.background = 'var(--color-surface-hover)'; e.currentTarget.style.color = 'var(--color-text-primary)'; }
-                }}
-                onMouseLeave={(e) => {
-                  if (safePage > 0) { e.currentTarget.style.background = 'var(--color-surface-elevated)'; e.currentTarget.style.color = 'var(--color-text-secondary)'; }
-                }}
-              >
-                <ChevronLeft size={15} />
-                Précédent
-              </button>
-
-              <span style={{
-                color: 'var(--color-text-muted)', fontSize: 13, fontWeight: 600,
-                fontVariantNumeric: 'tabular-nums',
-              }}>
-                {safePage + 1} / {totalPages}
+          {/* Infinite scroll sentinel + loader */}
+          {displayCount < filteredTracks.length && (
+            <div
+              ref={sentinelRef}
+              style={{
+                display: 'flex',
+                justifyContent: 'center',
+                alignItems: 'center',
+                padding: '20px 0',
+                gap: 10,
+              }}
+            >
+              <div style={{
+                width: 18,
+                height: 18,
+                border: '2px solid var(--color-border-subtle)',
+                borderTopColor: 'var(--color-accent)',
+                borderRadius: '50%',
+                animation: 'spin 0.8s linear infinite',
+              }} />
+              <span style={{ color: 'var(--color-text-muted)', fontSize: 13, fontWeight: 500 }}>
+                Chargement…
               </span>
-
-              <button
-                onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
-                disabled={safePage >= totalPages - 1}
-                style={{
-                  display: 'inline-flex', alignItems: 'center', gap: 6,
-                  padding: '8px 18px', borderRadius: 'var(--radius-full)',
-                  background: safePage >= totalPages - 1 ? 'var(--color-surface)' : 'var(--color-surface-elevated)',
-                  border: '1px solid var(--color-border-subtle)',
-                  cursor: safePage >= totalPages - 1 ? 'default' : 'pointer',
-                  color: safePage >= totalPages - 1 ? 'var(--color-text-muted)' : 'var(--color-text-secondary)',
-                  fontSize: 13, fontWeight: 600,
-                  transition: 'all var(--transition-fast) ease',
-                  opacity: safePage >= totalPages - 1 ? 0.4 : 1,
-                }}
-                onMouseEnter={(e) => {
-                  if (safePage < totalPages - 1) { e.currentTarget.style.background = 'var(--color-surface-hover)'; e.currentTarget.style.color = 'var(--color-text-primary)'; }
-                }}
-                onMouseLeave={(e) => {
-                  if (safePage < totalPages - 1) { e.currentTarget.style.background = 'var(--color-surface-elevated)'; e.currentTarget.style.color = 'var(--color-text-secondary)'; }
-                }}
-              >
-                Suivant
-                <ChevronRight size={15} />
-              </button>
             </div>
           )}
         </>

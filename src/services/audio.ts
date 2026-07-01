@@ -7,6 +7,7 @@ import { getApiBaseUrl } from './api';
 import { getOrCreateDeviceId } from './device';
 import { secureAudioPlayer } from './secureAudioPlayer';
 import { mseSecurePlayer, MSESecurePlayer } from './mseSecurePlayer';
+import { logger } from '@/utils/logger';
 
 type StatusCallback = (status: {
   currentTime?: number;
@@ -56,10 +57,10 @@ export async function ensureStreamDeviceId(): Promise<string | null> {
     // Propager aux deux lecteurs audio
     mseSecurePlayer.setDeviceId(id);
     secureAudioPlayer.setDeviceId(id);
-    console.log('[Audio] 🆔 Device ID initialisé pour le streaming:', id.slice(0, 8) + '…');
+    logger.info('[Audio] 🆔 Device ID initialisé pour le streaming:', id.slice(0, 8) + '…');
     return id;
   }).catch(err => {
-    console.warn('[Audio] Impossible de récupérer deviceId:', err);
+    logger.warn('[Audio] Impossible de récupérer deviceId:', err);
     return null;
   });
   return deviceIdInitPromise;
@@ -145,11 +146,11 @@ export async function prefetchSecureTrack(url: string, trackId: string): Promise
       credentials: 'include',
     });
     if (!probeResp.ok) {
-      console.warn('[Audio] ⚠️ Prefetch probe failed for', trackId, ':', probeResp.status, probeResp.statusText);
+      logger.warn('[Audio] ⚠️ Prefetch probe failed for', trackId, ':', probeResp.status, probeResp.statusText);
       return false;
     }
   } catch (probeErr) {
-    console.warn('[Audio] ⚠️ Prefetch probe error for', trackId, ':', probeErr);
+    logger.warn('[Audio] ⚠️ Prefetch probe error for', trackId, ':', probeErr);
     return false;
   }
 
@@ -163,12 +164,12 @@ export async function prefetchSecureTrack(url: string, trackId: string): Promise
       if (controller.signal.aborted) return false;
       securePrefetchBuffer = buffer;
       securePrefetchTrackId = trackId;
-      console.log('[Audio] ⚡ Secure prefetch (2 chunks) for track:', trackId, 'size:', buffer.length);
+      logger.info('[Audio] ⚡ Secure prefetch (2 chunks) for track:', trackId, 'size:', buffer.length);
       return true;
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return false;
       // Log détaillé pour diagnostiquer les erreurs 404/403
-      console.warn('[Audio] ❌ Secure prefetch failed:', trackId, err);
+      logger.warn('[Audio] ❌ Secure prefetch failed:', trackId, err);
       return false;
     } finally {
       if (securePrefetchController === controller) {
@@ -412,7 +413,7 @@ export async function playTrack(
     const proxyUrl = `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(trackId)}/audio`;
     return playStream(proxyUrl, onStatusUpdate);
   } catch (err) {
-    console.error('[Audio] Failed to play track:', err);
+    logger.error('[Audio] Failed to play track:', err);
     return null;
   }
 }
@@ -438,11 +439,11 @@ export async function prefetchTrackBlob(url: string, trackId: string): Promise<b
       const blob = await response.blob();
       const objectUrl = URL.createObjectURL(blob);
       prefetchEntry = { trackId, objectUrl };
-      console.log('[Audio] Prefetched blob for track:', trackId);
+      logger.info('[Audio] Prefetched blob for track:', trackId);
       return true;
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return false;
-      console.warn('[Audio] Prefetch failed for track:', trackId, err);
+      logger.warn('[Audio] Prefetch failed for track:', trackId, err);
       return false;
     } finally {
       if (prefetchAbortController === controller) {
@@ -479,7 +480,7 @@ export async function playRemoteTrack(
     (audio as any).playsInline = true; // Important pour iOS pour éviter le plein écran
     (audio as any).disableRemotePlayback = false; // Permet la lecture sur appareils externes
     
-    console.log('[Audio] Loading audio from:', audioUrl);
+    logger.info('[Audio] Loading audio from:', audioUrl);
     
     // Wait for canplay or error with timeout
     await new Promise<void>((resolve, reject) => {
@@ -509,7 +510,7 @@ export async function playRemoteTrack(
               errorMessage = 'Audio format not supported';
               break;
           }
-          console.error('[Audio] Audio error details:', { code: error.code, message: error.message, event: e });
+          logger.error('[Audio] Audio error details:', { code: error.code, message: error.message, event: e });
         }
         reject(new Error(errorMessage));
       };
@@ -530,9 +531,9 @@ export async function playRemoteTrack(
     // Tentative de lecture avec gestion des erreurs d'autoplay
     try {
       await audio.play();
-      console.log('[Audio] Lecture démarrée avec succès');
+      logger.info('[Audio] Lecture démarrée avec succès');
     } catch (playErr) {
-      console.warn('[Audio] Autoplay bloqué, audio en pause:', playErr);
+      logger.warn('[Audio] Autoplay bloqué, audio en pause:', playErr);
       // Ne pas rejeter, l'utilisateur devra cliquer sur play
       if (onStatusUpdate) {
         onStatusUpdate({ playing: false });
@@ -548,17 +549,17 @@ export async function playRemoteTrack(
     // Skip secure player entirely, use HTML5 audio directly
     // Try main URL
     try {
-      console.log('[Audio] Trying main URL:', resolvedUrl);
+      logger.info('[Audio] Trying main URL:', resolvedUrl);
       return await playWithHtmlAudio(resolvedUrl);
     } catch (err) {
-      console.warn('[Audio] Main URL failed, trying fallbacks:', err);
+      logger.warn('[Audio] Main URL failed, trying fallbacks:', err);
     }
     
     // Try fallback URLs
     for (const fallback of fallbackUrls) {
       try {
         const resolved = resolvePlaybackUrl(fallback);
-        console.log('[Audio] Trying fallback URL:', resolved);
+        logger.info('[Audio] Trying fallback URL:', resolved);
         return await playWithHtmlAudio(resolved);
       } catch {
         continue;
@@ -568,7 +569,7 @@ export async function playRemoteTrack(
     // All attempts failed, throw error
     throw new Error('All playback attempts failed');
   } catch (err) {
-    console.error('[Audio] Failed to play remote track:', err);
+    logger.error('[Audio] Failed to play remote track:', err);
     throw err; // Re-throw so caller can handle it
   }
 }
@@ -604,7 +605,7 @@ export async function playSecureTrackMSE(
     }
 
     // 1. Lancer le streaming MSE (télécharge + append progressif)
-    console.log('[MSE] 🎯 Streaming MSE sécurisé:', proxyUrl);
+    logger.info('[MSE] 🎯 Streaming MSE sécurisé:', proxyUrl);
     const audio = await mseSecurePlayer.loadAndPlay(proxyUrl);
 
     // 2. Définir currentAudio pour que togglePlayPause / seekTo / progress marchent
@@ -632,7 +633,7 @@ export async function playSecureTrackMSE(
       await audio.play();
     } catch (playErr) {
       // Si autoplay bloqué, on attend une interaction utilisateur
-      console.warn('[MSE] ⚠️ autoplay may be blocked, retrying...');
+      logger.warn('[MSE] ⚠️ autoplay may be blocked, retrying...');
       await audio.play();
     }
 
@@ -642,7 +643,7 @@ export async function playSecureTrackMSE(
     }
     startProgressInterval(onStatusUpdate || (() => {}));
 
-    console.log('[MSE] ✅ Streaming MSE démarré !');
+    logger.info('[MSE] ✅ Streaming MSE démarré !');
     return true;
 
   } catch (err) {
@@ -653,7 +654,7 @@ export async function playSecureTrackMSE(
       currentAudio.src = '';
       currentAudio = null;
     }
-    console.warn('[MSE] ❌ Échec, fallback nécessaire:', err);
+    logger.warn('[MSE] ❌ Échec, fallback nécessaire:', err);
     throw err;
   }
 }
@@ -684,12 +685,12 @@ export async function playSecureTrack(
     const prefetched = consumeSecurePrefetch(trackId);
 
     if (prefetched) {
-      console.log('[SecureAudio] ⚡ Utilisation du buffer préchargé pour:', trackId);
+      logger.info('[SecureAudio] ⚡ Utilisation du buffer préchargé pour:', trackId);
       try {
         await secureAudioPlayer.loadFromBuffer(prefetched);
       } catch {
         // Buffer partiel (prefetch 2 chunks seulement) → full download
-        console.warn('[SecureAudio] ⚠️ Buffer partiel, fallback download complet');
+        logger.warn('[SecureAudio] ⚠️ Buffer partiel, fallback download complet');
         await secureAudioPlayer.loadTrack(proxyUrl, (progress) => {
           if (onStatusUpdate) {
             onStatusUpdate({ playbackState: progress < 100 ? 'loading' : 'loaded' });
@@ -698,7 +699,7 @@ export async function playSecureTrack(
       }
     } else {
       // 2. Téléchargement chunké + décodage
-      console.log('[SecureAudio] 🔒 Téléchargement sécurisé (chunks + Range):', proxyUrl);
+      logger.info('[SecureAudio] 🔒 Téléchargement sécurisé (chunks + Range):', proxyUrl);
       await secureAudioPlayer.loadTrack(proxyUrl, (progress) => {
         if (onStatusUpdate) {
           onStatusUpdate({ playbackState: progress < 100 ? 'loading' : 'loaded' });
@@ -727,7 +728,7 @@ export async function playSecureTrack(
     const started = await secureAudioPlayer.play();
 
     if (started) {
-      console.log('[SecureAudio] ✅ Lecture démarrée via Web Audio API');
+      logger.info('[SecureAudio] ✅ Lecture démarrée via Web Audio API');
       if (onStatusUpdate) onStatusUpdate({ playing: true });
       startProgressInterval(onStatusUpdate || (() => {}));
       return true;
@@ -736,7 +737,7 @@ export async function playSecureTrack(
     throw new Error('Échec du démarrage de la lecture AudioContext');
   } catch (err) {
     isSecureAudio = false;
-    console.error('[SecureAudio] ❌ Échec:', err);
+    logger.error('[SecureAudio] ❌ Échec:', err);
     throw err;
   }
 }
@@ -763,7 +764,7 @@ export async function playWebOptimizedTrack(
   onStatusUpdate?: StatusCallback,
   skipStopCurrent: boolean = false
 ): Promise<boolean> {
-  console.log('[WebAudio] 🔧 Stratégie MAXIMALE STABILITÉ');
+  logger.info('[WebAudio] 🔧 Stratégie MAXIMALE STABILITÉ');
   
   await ensureStreamDeviceId();
   
@@ -771,33 +772,33 @@ export async function playWebOptimizedTrack(
     // Try MSE first on desktop
     if (MSESecurePlayer.isSupported()) {
       try {
-        console.log('[WebAudio] 🎯 Tentative MSE Secure Player');
+        logger.info('[WebAudio] 🎯 Tentative MSE Secure Player');
         const mseSuccess = await playSecureTrackMSE(proxyUrl, onStatusUpdate, skipStopCurrent);
         if (mseSuccess) {
           return true;
         }
       } catch (mseErr) {
-        console.warn('[WebAudio] ❌ Échec MSE:', mseErr);
+        logger.warn('[WebAudio] ❌ Échec MSE:', mseErr);
       }
     }
     
     // Try secure audio player (web audio api)
     try {
-      console.log('[WebAudio] 🔒 Tentative Secure Audio Player');
+      logger.info('[WebAudio] 🔒 Tentative Secure Audio Player');
       const secureSuccess = await playSecureTrack(trackId, proxyUrl, onStatusUpdate, skipStopCurrent);
       if (secureSuccess) {
         return true;
       }
     } catch (secureErr) {
-      console.warn('[WebAudio] ❌ Échec Secure Player:', secureErr);
+      logger.warn('[WebAudio] ❌ Échec Secure Player:', secureErr);
     }
     
     // Fallback to plain HTML5 audio
-    console.log('[WebAudio] 🎵 Fallback HTML5 Audio');
+    logger.info('[WebAudio] 🎵 Fallback HTML5 Audio');
     await playStream(proxyUrl, onStatusUpdate, skipStopCurrent);
     return true;
   } catch (err) {
-    console.error('[WebAudio] ❌ Toutes les méthodes ont échoué:', err);
+    logger.error('[WebAudio] ❌ Toutes les méthodes ont échoué:', err);
     throw err;
   }
 }
@@ -830,7 +831,7 @@ export async function playDeviceFile(
     await audio.play();
     return audio;
   } catch (err) {
-    console.error('[Audio] Failed to play device file:', err);
+    logger.error('[Audio] Failed to play device file:', err);
     return null;
   }
 }
@@ -852,7 +853,7 @@ export async function playStream(
     currentAudio = audio;
     isSecureAudio = false;
     
-    console.log('[Audio] 🔧 Chargement stream (simplifié) depuis:', audioUrl);
+    logger.info('[Audio] 🔧 Chargement stream (simplifié) depuis:', audioUrl);
     
     if (onStatusUpdate) setupAudioEvents(audio, onStatusUpdate);
     audio.crossOrigin = 'anonymous';
@@ -878,7 +879,7 @@ export async function playStream(
             case error.MEDIA_ERR_DECODE: errorMsg = 'Erreur décodage'; break;
             case error.MEDIA_ERR_SRC_NOT_SUPPORTED: errorMsg = 'Format non supporté'; break;
           }
-          console.error('[Audio] Détails erreur:', { code: error.code, message: error.message, event: e });
+          logger.error('[Audio] Détails erreur:', { code: error.code, message: error.message, event: e });
         }
         reject(new Error(errorMsg));
       };
@@ -891,9 +892,9 @@ export async function playStream(
     // On peut lancer la lecture (clic utilisateur = interaction valide !)
     try {
       await audio.play();
-      console.log('[Audio] ✅ Lecture démarrée (interaction utilisateur)');
+      logger.info('[Audio] ✅ Lecture démarrée (interaction utilisateur)');
     } catch (playErr) {
-      console.warn('[Audio] ⚠️ Autoplay bloqué (même après interaction ?!), en pause:', playErr);
+      logger.warn('[Audio] ⚠️ Autoplay bloqué (même après interaction ?!), en pause:', playErr);
       if (onStatusUpdate) onStatusUpdate({ playing: false, isLoaded: true });
     }
     
@@ -903,7 +904,7 @@ export async function playStream(
   // Try HLS.js first if the URL is an HLS stream
   if (Hls.isSupported() && (resolvedUrl.includes('.m3u8') || resolvedUrl.includes('hls'))) {
     try {
-      console.log('[Audio] Trying HLS.js for stream:', resolvedUrl);
+      logger.info('[Audio] Trying HLS.js for stream:', resolvedUrl);
       const audio = new Audio();
       currentAudio = audio;
       isSecureAudio = false;
@@ -923,21 +924,21 @@ export async function playStream(
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
           manifestParsed = true;
           if (timeoutId) clearTimeout(timeoutId);
-          console.log('[Audio] HLS manifest parsed');
+          logger.info('[Audio] HLS manifest parsed');
           resolve();
         });
         
         hls.on(Hls.Events.ERROR, (event, data) => {
           if (data.fatal) {
-            console.error('[Audio] HLS fatal error:', data);
+            logger.error('[Audio] HLS fatal error:', data);
             if (timeoutId) clearTimeout(timeoutId);
             switch (data.type) {
               case Hls.ErrorTypes.NETWORK_ERROR:
-                console.warn('[Audio] HLS network error, trying to recover...');
+                logger.warn('[Audio] HLS network error, trying to recover...');
                 hls.startLoad();
                 break;
               case Hls.ErrorTypes.MEDIA_ERROR:
-                console.warn('[Audio] HLS media error, trying to recover...');
+                logger.warn('[Audio] HLS media error, trying to recover...');
                 hls.recoverMediaError();
                 break;
               default:
@@ -945,7 +946,7 @@ export async function playStream(
                 break;
             }
           } else {
-            console.warn('[Audio] HLS non-fatal error (will try to recover):', data.details);
+            logger.warn('[Audio] HLS non-fatal error (will try to recover):', data.details);
           }
         });
         
@@ -960,10 +961,10 @@ export async function playStream(
       });
       
       await audio.play();
-      console.log('[Audio] Started playing HLS stream');
+      logger.info('[Audio] Started playing HLS stream');
       return audio;
     } catch (hlsErr) {
-      console.warn('[Audio] HLS failed, falling back to HTML5 audio:', hlsErr);
+      logger.warn('[Audio] HLS failed, falling back to HTML5 audio:', hlsErr);
       // Clean up HLS
       if (currentHls) {
         currentHls.destroy();
@@ -973,7 +974,7 @@ export async function playStream(
   }
 
   // Fallback to HTML5 audio
-  console.log('[Audio] Fallback: HTML5 Audio direct');
+  logger.info('[Audio] Fallback: HTML5 Audio direct');
   return await playWithHtmlAudio(resolvedUrl);
 }
 
@@ -983,7 +984,7 @@ export async function playStream(
  */
 export function unlockAudioContext(): void {
   // Plus besoin! On utilise UNIQUEMENT HTML5 Audio, pas de Web Audio API !
-  console.log('[Audio] unlockAudioContext ignoré (pas de Web Audio utilisé)');
+  logger.info('[Audio] unlockAudioContext ignoré (pas de Web Audio utilisé)');
 }
 
 export function setTrackEndHandler(handler: () => void) {
