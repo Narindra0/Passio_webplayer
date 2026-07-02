@@ -5,7 +5,7 @@ import obfuscator from 'vite-plugin-javascript-obfuscator';
 import { visualizer } from 'rollup-plugin-visualizer';
 import { VitePWA } from 'vite-plugin-pwa';
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [
     react(),
     visualizer({
@@ -16,17 +16,19 @@ export default defineConfig({
     }),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.ico', 'apple-touch-icon.png'],
+      includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'apple-touch-icon-180x180.png'],
       manifest: {
-        name: "Pass'io Web",
+        name: "Pass'io Web Player — Lecteur de musique sécurisé",
         short_name: 'Passio',
-        description: "Lecteur de musique sécurisé Pass'io",
+        description: "Écoutez votre musique en toute sécurité avec Pass'io Web Player. Streaming haute qualité, mode hors-ligne, et bibliothèque personnelle.",
         theme_color: '#000000',
         background_color: '#0A0A0A',
         display: 'standalone',
         orientation: 'portrait',
         scope: '/',
         start_url: '/',
+        lang: 'fr-FR',
+        categories: ['music', 'entertainment'],
         icons: [
           {
             src: '/assets/images/passio-icon-round.png',
@@ -37,7 +39,12 @@ export default defineConfig({
             src: '/assets/images/passio-icon-round.png',
             sizes: '512x512',
             type: 'image/png',
-            purpose: 'any maskable',
+          },
+          {
+            src: '/assets/images/passio-icon-round.png',
+            sizes: '512x512',
+            type: 'image/png',
+            purpose: 'maskable',
           },
         ],
       },
@@ -45,13 +52,57 @@ export default defineConfig({
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
         runtimeCaching: [
           {
-            urlPattern: /^https?:\/\/.*/i,
+            urlPattern: /^https?:\/\/res\.cloudinary\.com\/.*/i,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'passio-cloudinary-cache',
+              expiration: {
+                maxEntries: 200,
+                maxAgeSeconds: 60 * 60 * 24 * 30, // 30 jours
+              },
+            },
+          },
+          {
+            urlPattern: /^https?:\/\/fonts\.googleapis\.com\/.*/i,
+            handler: 'StaleWhileRevalidate',
+            options: {
+              cacheName: 'passio-fonts-cache',
+              expiration: {
+                maxEntries: 10,
+                maxAgeSeconds: 60 * 60 * 24 * 60, // 60 jours
+              },
+            },
+          },
+          {
+            urlPattern: /^https?:\/\/fonts\.gstatic\.com\/.*/i,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'passio-font-files-cache',
+              expiration: {
+                maxEntries: 20,
+                maxAgeSeconds: 60 * 60 * 24 * 60, // 60 jours
+              },
+            },
+          },
+          {
+            urlPattern: /^https?:\/\/.*backblazeb2\.com\/.*/i,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'passio-cover-cache',
+              expiration: {
+                maxEntries: 300,
+                maxAgeSeconds: 60 * 60 * 24 * 14, // 14 jours
+              },
+            },
+          },
+          {
+            urlPattern: /^https?:\/\/(api\.passiio\.shop|pass-io\.onrender\.com)\/.*/i,
             handler: 'NetworkFirst',
             options: {
               cacheName: 'passio-api-cache',
               expiration: {
-                maxEntries: 100,
-                maxAgeSeconds: 60 * 60 * 24 * 7, // 7 days
+                maxEntries: 200,
+                maxAgeSeconds: 60 * 60 * 24 * 7, // 7 jours
               },
               networkTimeoutSeconds: 10,
             },
@@ -59,7 +110,27 @@ export default defineConfig({
         ],
       },
     }),
-  ],
+    // Protection du bundle : obfuscation activée UNIQUEMENT en production
+    mode === 'production' && obfuscator({
+      options: {
+        compact: true,
+        controlFlowFlattening: false,
+        deadCodeInjection: false,
+        disableConsoleOutput: false,
+        identifierNamesGenerator: 'mangled',
+        renameGlobals: false,
+        stringArray: true,
+        stringArrayEncoding: ['base64'],
+        stringArrayThreshold: 0.75,
+        transformObjectKeys: false,
+        unicodeEscapeSequence: false,
+        splitStrings: true,
+        splitStringsChunkLength: 10,
+        debugProtection: false,
+        selfDefending: false, // Désactivé pour compatibilité avec terser (minification post-obfuscation)
+      },
+    }),
+  ].filter(Boolean),
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
@@ -71,7 +142,7 @@ export default defineConfig({
   },
   build: {
     chunkSizeWarningLimit: 600,
-    sourcemap: true,
+    sourcemap: false, // Désactivé en prod : pas de source maps exposées
     minify: 'terser',
     terserOptions: {
       compress: {
@@ -116,4 +187,4 @@ export default defineConfig({
       },
     },
   },
-});
+}));

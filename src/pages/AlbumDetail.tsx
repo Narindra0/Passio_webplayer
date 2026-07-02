@@ -4,13 +4,14 @@ import { useCachedImage } from '@/hooks/useCachedImage';
 import { useAudioPlayback, useAudioProgress } from '@/contexts/AudioContext';
 import { useLibraryMode } from '@/contexts/LibraryModeContext';
 import { albumHasStreamableTracks, loadOwnedAlbumForPlayback, resolveAlbumDecryptionKey } from '@/services/albumOwnership';
-import { isAlbumReadyOffline } from '@/services/downloadManager';
+import { isAlbumReadyOffline, downloadAlbumWithStreaming, subscribeToDownloadProgress, getDownloadProgress, deleteAlbumOffline, cancelDownload } from '@/services/downloadManager';
 import { resolveOfflinePlayback } from '@/services/offlineAccess';
 import type { PublicAlbumDetails, PublicTrack } from '@/types/backend';
 import { useAlbumColors } from '@/hooks/useAlbumColors';
 import {
   ChevronLeft, Crown, Download, Lock, Pause, Play, Share2,
-  ShieldCheck, ShoppingBag, Sparkles, Clock,
+  ShieldCheck, ShoppingBag, Sparkles, Clock, CloudOff,
+  Trash2, Check, X,
 } from 'lucide-react';
 import { ShareCard } from '@/components/ShareCard';
 import { useCallback, useEffect, useState } from 'react';
@@ -19,6 +20,16 @@ import { getApiBaseUrl } from '@/services/api';
 import { prefetchTrackBlob } from '@/services/audio';
 import { logger } from '@/utils/logger';
 import { hasFeatArtists, parseFeatArtists, normalizeArtistName } from '@/utils/featArtists';
+import { formatTitle } from '@/utils/formatTitle';
+import { isPreorder, formatPublicationDate } from '@/utils/preorder';
+import { PreorderCountdown } from '@/components/PreorderCountdown';
+import {
+  getPrimaryTextColor,
+  getSecondaryTextColor,
+  getMutedTextColor,
+  getBadgeBackground,
+  getBadgeBorder,
+} from '@/services/colorExtractor';
 
 function formatDuration(seconds: number | null | undefined): string {
   if (!seconds || isNaN(seconds)) return '--:--';
@@ -41,6 +52,9 @@ export function AlbumDetailScreen() {
   const [isOfflineReady, setIsOfflineReady] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [shareModalVisible, setShareModalVisible] = useState(false);
+  const [downloadStatus, setDownloadStatus] = useState<'idle' | 'downloading' | 'completed' | 'error'>('idle');
+  const [downloadProgress, setDownloadProgress] = useState(0);
+  const [showCompletedToast, setShowCompletedToast] = useState(false);
 
   // Call all hooks BEFORE any early returns
   const cachedCover = useCachedImage(album?.cover_url);
@@ -74,14 +88,166 @@ export function AlbumDetailScreen() {
     void loadAlbumData();
   }, [id, loadAlbumData]);
 
+  // ⚡ Vérifier l'état du téléchargement au chargement
+  useEffect(() => {
+    if (!album?.id) return;
+    const existing = getDownloadProgress(album.id);
+    if (existing?.status === 'downloading') {
+      setDownloadStatus('downloading');
+      setDownloadProgress(existing.progress);
+    }
+    void isAlbumReadyOffline(album.id).then((ready) => {
+      if (ready) {
+        setDownloadStatus('completed');
+        setDownloadProgress(100);
+      }
+    });
+  }, [album?.id]);
+
+  // ⚡ Souscrire aux événements de progression (gère aussi la complétion)
+  useEffect(() => {
+    if (!album?.id || downloadStatus !== 'downloading') return;
+    const unsub = subscribeToDownloadProgress(album.id, (p) => {
+      setDownloadProgress(p.progress);
+      if (p.status === 'completed') {
+        setDownloadStatus('completed');
+        setDownloadProgress(100);
+        setIsOfflineReady(true);
+        setShowCompletedToast(true);
+        setTimeout(() => setShowCompletedToast(false), 4000);
+      } else if (p.status === 'error') {
+        setDownloadStatus('error');
+        setActionError(p.error || 'Échec du téléchargement');
+      } else if (p.status === 'idle') {
+        setDownloadStatus('idle');
+        setDownloadProgress(0);
+      }
+    });
+    return () => unsub();
+  }, [album?.id, downloadStatus]);
+
+  const handleDownload = useCallback(async () => {
+    if (!album || downloadStatus === 'downloading') return;
+    // Si déjà téléchargé → supprimer
+    if (downloadStatus === 'completed') {
+      await deleteAlbumOffline(album.id);
+      setDownloadStatus('idle');
+      setDownloadProgress(0);
+      setIsOfflineReady(false);
+      return;
+    }
+    // Lancer le téléchargement — la progression/complétion est gérée par le subscription
+    setActionError(null);
+    setDownloadStatus('downloading');
+    setDownloadProgress(0);
+    const result = await downloadAlbumWithStreaming(album, decryptionKey);
+    if (result === 'cancelled') {
+      // L'utilisateur a annulé — la subscription va déjà gérer le reset vers 'idle'
+      return;
+    }
+    if (result === 'error') {
+      setDownloadStatus('error');
+      setActionError('Échec du téléchargement. Vérifiez votre connexion.');
+    }
+  }, [album, decryptionKey, downloadStatus]);
+
+  // ⚡ Mode offline : si l'album n'est pas en cache, afficher un écran fallback premium
+  const isOfflineAndUnavailable = !loading && effectiveMode === 'offline' && !album;
+
   if (loading) return <Screen><div className="flex justify-center items-center" style={{ minHeight: 300 }}><div className="loader-spinner" /></div></Screen>;
-  if (!album) return <Screen><div className="flex flex-col items-center gap-4 p-10"><p className="text-muted">Album introuvable</p><button onClick={() => navigate(-1)} className="btn-secondary">Retour</button></div></Screen>;
+  if (!album) return (
+    <Screen>
+      {isOfflineAndUnavailable ? (
+        <div className="offline-fallback"
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            minHeight: '90dvh',
+            padding: '40px 24px',
+            textAlign: 'center',
+            gap: 12,
+          }}
+        >
+          <div
+            style={{
+              width: 72,
+              height: 72,
+              borderRadius: 'var(--radius-full)',
+              background: 'rgba(220,20,60,0.08)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              marginBottom: 8,
+            }}
+          >
+            <CloudOff size={36} color="var(--color-accent)" style={{ opacity: 0.7 }} />
+          </div>
+          <h2
+            style={{
+              fontSize: 'clamp(22px, 3vw, 28px)',
+              fontWeight: 800,
+              color: 'var(--color-text-primary)',
+              margin: 0,
+              letterSpacing: '-0.5px',
+            }}
+          >
+            Album non disponible hors-ligne
+          </h2>
+          <p
+            style={{
+              color: 'var(--color-text-muted)',
+              fontSize: 15,
+              lineHeight: '22px',
+              maxWidth: 420,
+              margin: '0 0 8px',
+            }}
+          >
+            Cet album n'a pas été téléchargé sur votre appareil.
+            Activez le mode en ligne ou téléchargez-le depuis le catalogue
+            pour y accéder sans connexion.
+          </p>
+          <button
+            onClick={() => navigate(-1)}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '12px 28px',
+              borderRadius: 'var(--radius-full)',
+              background: 'var(--color-surface-elevated)',
+              border: '1px solid var(--color-border-subtle)',
+              cursor: 'pointer',
+              color: 'var(--color-text-primary)',
+              fontSize: 14,
+              fontWeight: 600,
+              transition: 'all var(--transition-fast) ease',
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-surface-hover)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--color-surface-elevated)'; }}
+          >
+            <ChevronLeft size={18} />
+            Retour
+          </button>
+        </div>
+      ) : (
+        <div className="flex flex-col items-center gap-4 p-10">
+          <p className="text-muted">Album introuvable</p>
+          <button onClick={() => navigate(-1)} className="btn-secondary">Retour</button>
+        </div>
+      )}
+    </Screen>
+  );
 
   const isFreeRelease = Boolean(album.is_free);
   const streamReady = Boolean(isFreeRelease && album.stream_status === 'ready' && album.stream_url);
   const isOwned = ownedByDevice || Boolean(decryptionKey);
   const isPaidNotOwned = !isFreeRelease && !isOwned;
-  const canPlay = (isFreeRelease && streamReady) || isOwned;
+  const preordered = isPreorder(album.publication_date);
+  const canPlay = !preordered && ((isFreeRelease && streamReady) || isOwned);
+  const preorderReleaseDate = preordered && album.publication_date ? album.publication_date : null;
+  const formattedReleaseDate = preorderReleaseDate ? formatPublicationDate(preorderReleaseDate) : null;
   const sortedTracks = [...(album.tracks || [])].sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
   const artistName = album.artist_name || album.artist?.name || 'Artiste inconnu';
 
@@ -137,295 +303,532 @@ export function AlbumDetailScreen() {
           gap: 40,
           alignItems: 'flex-end',
         }}
+      >
+        {/* Back button */}
+        <button className="album-back"
+          onClick={() => navigate(-1)}
+          style={{
+            position: 'absolute',
+            top: 20,
+            left: 24,
+            width: 36,
+            height: 36,
+            borderRadius: 'var(--radius-full)',
+            background: 'rgba(0,0,0,0.5)',
+            backdropFilter: 'blur(8px)',
+            border: 'none',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer',
+            zIndex: 2,
+            color: 'var(--color-text-primary)',
+            transition: 'all var(--transition-fast) ease',
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(0,0,0,0.7)'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(0,0,0,0.5)'; }}
         >
-          {/* Back button */}
-          <button className="album-back"
-            onClick={() => navigate(-1)}
-            style={{
-              position: 'absolute',
-              top: 20,
-              left: 24,
-              width: 36,
-              height: 36,
-              borderRadius: 'var(--radius-full)',
-              background: 'rgba(0,0,0,0.5)',
-              backdropFilter: 'blur(8px)',
-              border: 'none',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              cursor: 'pointer',
-              zIndex: 2,
-              color: 'var(--color-text-primary)',
-              transition: 'all var(--transition-fast) ease',
-            }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(0,0,0,0.7)'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(0,0,0,0.5)'; }}
-          >
-            <ChevronLeft size={22} />
-          </button>
+          <ChevronLeft size={22} />
+        </button>
 
-          {/* Album Cover */}
-          <div className="album-cover"
-            style={{
-              width: 260,
-              height: 260,
-              minWidth: 260,
-              borderRadius: 'var(--radius-sm)',
-              overflow: 'hidden',
-              boxShadow: '0 8px 40px rgba(0,0,0,0.5)',
-              marginTop: 20,
-            }}
-          >
-            {album.cover_url ? (
-              <img src={cachedCover || album.cover_url} alt={album.title} loading="lazy" decoding="async" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-            ) : (
+        {/* Album Cover */}
+        <div className="album-cover"
+          style={{
+            width: 260,
+            height: 260,
+            minWidth: 260,
+            borderRadius: 'var(--radius-sm)',
+            overflow: 'hidden',
+            boxShadow: '0 8px 40px rgba(0,0,0,0.5)',
+            marginTop: 20,
+          }}
+        >
+          {album.cover_url ? (
+            <img src={cachedCover || album.cover_url} alt={album.title} loading="lazy" decoding="async" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          ) : (
+            <div style={{
+              width: '100%', height: '100%',
+              background: 'var(--color-surface-elevated)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+              <span style={{ fontSize: 48, color: 'var(--color-text-muted)' }}>♪</span>
+            </div>
+          )}
+        </div>
+
+        {/* Album Info + CTA */}
+        <div className="album-info" style={{ flex: 1, paddingBottom: 8 }}>
+          {/* Type badge + premium/free — with dynamic colors */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+            <span style={{
+              color: getPrimaryTextColor(coverColors.colors, 'var(--color-text-secondary)'),
+              fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px',
+              opacity: 0.7,
+            }}>
+              {album.type === 'single' ? 'Single' : 'Album'}
+            </span>
+            {!isFreeRelease && (
               <div style={{
-                width: '100%', height: '100%',
-                background: 'var(--color-surface-elevated)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                display: 'inline-flex', alignItems: 'center', gap: 4,
+                padding: '2px 10px',
+                borderRadius: 'var(--radius-full)',
+                background: getBadgeBackground(coverColors.colors, coverColors.colors?.isDark ?? true, true),
+                border: `1px solid ${getBadgeBorder(coverColors.colors, coverColors.colors?.isDark ?? true, true)}`,
               }}>
-                <span style={{ fontSize: 48, color: 'var(--color-text-muted)' }}>♪</span>
+                <Crown size={10} color="#FFD700" />
+                <span style={{ color: '#FFD700', fontSize: 10, fontWeight: 700, letterSpacing: '0.3px', textTransform: 'uppercase' }}>Premium</span>
+              </div>
+            )}
+            {isFreeRelease && (
+              <div style={{
+                display: 'inline-flex', alignItems: 'center', gap: 4,
+                padding: '2px 10px',
+                borderRadius: 'var(--radius-full)',
+                background: coverColors.colors?.isDark === false
+                  ? 'rgba(29,185,84,0.08)'
+                  : 'rgba(29,185,84,0.1)',
+                border: `1px solid ${coverColors.colors?.isDark === false ? 'rgba(29,185,84,0.15)' : 'rgba(29,185,84,0.2)'}`,
+              }}>
+                <Sparkles size={10} color="#1DB954" />
+                <span style={{ color: '#1DB954', fontSize: 10, fontWeight: 700, letterSpacing: '0.3px', textTransform: 'uppercase' }}>Gratuit</span>
               </div>
             )}
           </div>
 
-          {/* Album Info + CTA */}
-          <div className="album-info" style={{ flex: 1, paddingBottom: 8 }}>
-            {/* Type badge + premium/free */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
-              <span style={{ color: 'var(--color-text-secondary)', fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px' }}>
-                {album.type === 'single' ? 'Single' : 'Album'}
-              </span>
-              {!isFreeRelease && (
-                <div style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 4,
-                  padding: '2px 10px',
-                  borderRadius: 'var(--radius-full)',
-                  background: 'rgba(255,215,0,0.12)',
-                  border: '1px solid rgba(255,215,0,0.2)',
-                }}>
-                  <Crown size={10} color="#FFD700" />
-                  <span style={{ color: '#FFD700', fontSize: 10, fontWeight: 700, letterSpacing: '0.3px', textTransform: 'uppercase' }}>
-                    Premium
-                  </span>
-                </div>
-              )}
-              {isFreeRelease && (
-                <div style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 4,
-                  padding: '2px 10px',
-                  borderRadius: 'var(--radius-full)',
-                  background: 'rgba(29, 185, 84, 0.1)',
-                  border: '1px solid rgba(29, 185, 84, 0.2)',
-                }}>
-                  <Sparkles size={10} color="#1DB954" />
-                  <span style={{ color: '#1DB954', fontSize: 10, fontWeight: 700, letterSpacing: '0.3px', textTransform: 'uppercase' }}>
-                    Gratuit
-                  </span>
-                </div>
-              )}
-            </div>
+          <h1 style={{
+            color: getPrimaryTextColor(coverColors.colors, 'var(--color-text-primary)'),
+            fontSize: 'clamp(28px, 4vw, 56px)',
+            fontWeight: 800,
+            letterSpacing: '-1.5px',
+            lineHeight: 1.08,
+            margin: '0 0 12px',
+          }}>
+            {formatTitle(album.title)}
+          </h1>
 
-            <h1 style={{
-              color: 'var(--color-text-primary)',
-              fontSize: 'clamp(28px, 4vw, 56px)',
-              fontWeight: 800,
-              letterSpacing: '-1.5px',
-              lineHeight: 1.08,
-              margin: '0 0 12px',
-            }}>
-              {album.title}
-            </h1>
-
-            {/* Artist + metadata */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 16 }}>
-              {(() => {
-                const artistId = artistIdMap[normalizeArtistName(artistName)];
-                const link = artistId ? `/artist/${artistId}` : null;
-                return (
-                  <span
-                    onClick={link ? (e) => { e.stopPropagation(); navigate(link); } : undefined}
-                    style={{
-                      color: 'var(--color-text-secondary)',
-                      fontSize: 16,
-                      fontWeight: 600,
-                      whiteSpace: 'nowrap',
-                      letterSpacing: '-0.3px',
-                      cursor: link ? 'pointer' : 'default',
-                      transition: 'color 0.15s ease',
-                    }}
-                    onMouseEnter={link ? (e) => { e.currentTarget.style.color = 'var(--color-text-primary)'; e.currentTarget.style.textDecoration = 'underline'; } : undefined}
-                    onMouseLeave={link ? (e) => { e.currentTarget.style.color = 'var(--color-text-secondary)'; e.currentTarget.style.textDecoration = 'none'; } : undefined}
-                  >
-                    {artistName}
-                  </span>
-                );
-              })()}
-              <span style={{ color: 'var(--color-text-muted)', fontSize: 14 }}>·</span>
-              <span style={{ color: 'var(--color-text-secondary)', fontSize: 15, fontWeight: 500 }}>
-                {album.tracks?.length ?? 0} titre{(album.tracks?.length ?? 0) > 1 ? 's' : ''}
-              </span>
-              {totalDuration > 0 && (
-                <>
-                  <span style={{ color: 'var(--color-text-muted)', fontSize: 14 }}>·</span>
-                  <span style={{ color: 'var(--color-text-secondary)', fontSize: 14, fontWeight: 500, fontVariantNumeric: 'tabular-nums' }}>
-                    {totalDurationLabel}
-                  </span>
-                </>
-              )}
-            </div>
-
-            {/* Status badges */}
-            <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
-              {isOwned && !isFreeRelease && (
-                <div style={{
-                  display: 'flex', alignItems: 'center', gap: 6,
-                  padding: '4px 12px',
-                  borderRadius: 'var(--radius-full)',
-                  background: 'rgba(29, 185, 84, 0.1)',
-                  border: '1px solid rgba(29, 185, 84, 0.2)',
-                }}>
-                  <ShieldCheck size={14} color="var(--color-success)" />
-                  <span style={{ color: 'var(--color-success)', fontSize: 12, fontWeight: 600 }}>
-                    {isOfflineReady ? 'Disponible hors-ligne' : 'Activé'}
-                  </span>
-                </div>
-              )}
-              {isOfflineReady && (
-                <div style={{
-                  display: 'flex', alignItems: 'center', gap: 6,
-                  padding: '4px 12px',
-                  borderRadius: 'var(--radius-full)',
-                  background: 'rgba(29, 185, 84, 0.1)',
-                  border: '1px solid rgba(29, 185, 84, 0.2)',
-                }}>
-                  <Download size={12} color="var(--color-success)" />
-                  <span style={{ color: 'var(--color-success)', fontSize: 12, fontWeight: 600 }}>
-                    Hors-ligne
-                  </span>
-                </div>
-              )}
-            </div>
-
-            {/* CTA Buttons — directement dans le hero */}
-            <div className="album-cta-row" style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-              {/* Play all */}
-              {canPlay && sortedTracks.length > 0 && (
-                <button
-                  onClick={() => void handlePressTrack(sortedTracks[0], 0)}
+          {/* Artist + metadata — with dynamic colors */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 16 }}>
+            {(() => {
+              const artistId = artistIdMap[normalizeArtistName(artistName)];
+              const link = artistId ? `/artist/${artistId}` : null;
+              const secColor = getSecondaryTextColor(coverColors.colors, 'var(--color-text-secondary)');
+              const priColor = getPrimaryTextColor(coverColors.colors, 'var(--color-text-primary)');
+              return (
+                <span
+                  onClick={link ? (e) => { e.stopPropagation(); navigate(link); } : undefined}
                   style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    padding: '12px 24px',
-                    borderRadius: 'var(--radius-full)',
-                    background: 'var(--color-accent)',
-                    border: 'none',
-                    cursor: 'pointer',
-                    color: '#fff',
-                    fontSize: 14,
-                    fontWeight: 700,
-                    transition: 'all var(--transition-fast) ease',
-                  }}
-                  onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.04)'; e.currentTarget.style.background = 'var(--color-accent-light)'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.background = 'var(--color-accent)'; }}
-                >
-                  <Play size={18} fill="#fff" />
-                  Tout écouter
-                </button>
-              )}
-
-              {/* Buy button — for paid & not owned */}
-              {isPaidNotOwned && priceDisplay && (
-                <a
-                  href={getPurchaseAlbumUrl(album.id)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    padding: '12px 24px',
-                    borderRadius: 'var(--radius-full)',
-                    background: 'linear-gradient(135deg, #FFD700, #FFA500)',
-                    border: 'none',
-                    cursor: 'pointer',
-                    color: '#000',
-                    fontSize: 14,
-                    fontWeight: 800,
-                    textDecoration: 'none',
-                    transition: 'all var(--transition-fast) ease',
-                    boxShadow: '0 4px 16px rgba(255,215,0,0.25)',
-                  }}
-                  onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.04)'; e.currentTarget.style.boxShadow = '0 6px 24px rgba(255,215,0,0.35)'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.boxShadow = '0 4px 16px rgba(255,215,0,0.25)'; }}
-                >
-                  <ShoppingBag size={18} />
-                  Acheter — {priceDisplay}
-                </a>
-              )}
-
-              {/* Already have a PassCode */}
-              {isPaidNotOwned && (
-                <button
-                  onClick={() => navigate('/activate')}
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 6,
-                    padding: '10px 20px',
-                    borderRadius: 'var(--radius-full)',
-                    background: 'rgba(255,255,255,0.06)',
-                    border: '1px solid rgba(255,255,255,0.1)',
-                    cursor: 'pointer',
-                    color: 'var(--color-text-secondary)',
-                    fontSize: 13,
+                    color: secColor,
+                    fontSize: 16,
                     fontWeight: 600,
-                    transition: 'all var(--transition-fast) ease',
+                    whiteSpace: 'nowrap',
+                    letterSpacing: '-0.3px',
+                    cursor: link ? 'pointer' : 'default',
+                    transition: 'color 0.15s ease',
                   }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; e.currentTarget.style.color = 'var(--color-text-primary)'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; e.currentTarget.style.color = 'var(--color-text-secondary)'; }}
+                  onMouseEnter={link ? (e) => { e.currentTarget.style.color = priColor; e.currentTarget.style.textDecoration = 'underline'; } : undefined}
+                  onMouseLeave={link ? (e) => { e.currentTarget.style.color = secColor; e.currentTarget.style.textDecoration = 'none'; } : undefined}
                 >
-                  <Lock size={14} />
-                  J'ai un PassCode
-                </button>
-              )}
+                  {artistName}
+                </span>
+              );
+            })()}
+            <span style={{ color: getMutedTextColor(coverColors.colors, 'var(--color-text-muted)'), fontSize: 14 }}>·</span>
+            <span style={{ color: getSecondaryTextColor(coverColors.colors, 'var(--color-text-secondary)'), fontSize: 15, fontWeight: 500 }}>
+              {album.tracks?.length ?? 0} titre{(album.tracks?.length ?? 0) > 1 ? 's' : ''}
+            </span>
+            {totalDuration > 0 && (
+              <>
+                <span style={{ color: getMutedTextColor(coverColors.colors, 'var(--color-text-muted)'), fontSize: 14 }}>·</span>
+                <span style={{ color: getSecondaryTextColor(coverColors.colors, 'var(--color-text-secondary)'), fontSize: 14, fontWeight: 500, fontVariantNumeric: 'tabular-nums' }}>
+                  {totalDurationLabel}
+                </span>
+              </>
+            )}
+          </div>
 
-              {/* Share button */}
-              <button
-                onClick={() => setShareModalVisible(true)}
+          {/* Status badges — dynamic on hero bg */}
+          <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+            {isOwned && !isFreeRelease && (
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '4px 12px',
+                borderRadius: 'var(--radius-full)',
+                background: coverColors.colors?.isDark === false
+                  ? 'rgba(29,185,84,0.08)'
+                  : 'rgba(29,185,84,0.1)',
+                border: `1px solid ${coverColors.colors?.isDark === false ? 'rgba(29,185,84,0.15)' : 'rgba(29,185,84,0.2)'}`,
+              }}>
+                <ShieldCheck size={14} color="var(--color-success)" />
+                <span style={{ color: 'var(--color-success)', fontSize: 12, fontWeight: 600 }}>
+                  {isOfflineReady ? 'Disponible hors-ligne' : 'Activé'}
+                </span>
+              </div>
+            )}
+            {isOfflineReady && (
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '4px 12px',
+                borderRadius: 'var(--radius-full)',
+                background: coverColors.colors?.isDark === false
+                  ? 'rgba(29,185,84,0.08)'
+                  : 'rgba(29,185,84,0.1)',
+                border: `1px solid ${coverColors.colors?.isDark === false ? 'rgba(29,185,84,0.15)' : 'rgba(29,185,84,0.2)'}`,
+              }}>
+                <Download size={12} color="var(--color-success)" />
+                <span style={{ color: 'var(--color-success)', fontSize: 12, fontWeight: 600 }}>
+                  Hors-ligne
+                </span>
+              </div>
+            )}
+          </div>
+
+          {/* CTA Buttons — directement dans le hero */}
+          <div className="album-cta-row" style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            {/* Play all / Disponible le — dynamic bg */}
+            {preordered ? (
+              <div
                 style={{
                   display: 'inline-flex',
                   alignItems: 'center',
                   gap: 8,
                   padding: '12px 24px',
                   borderRadius: 'var(--radius-full)',
-                  background: 'var(--color-surface-elevated)',
-                  border: '1px solid var(--color-border-subtle)',
+                  background: coverColors.colors?.isDark === false
+                    ? 'rgba(0,0,0,0.04)'
+                    : 'rgba(255,255,255,0.04)',
+                  border: `1px solid ${
+                    coverColors.colors?.isDark === false
+                      ? 'rgba(0,0,0,0.08)'
+                      : 'var(--color-border-subtle)'
+                  }`,
+                  color: getMutedTextColor(coverColors.colors, 'var(--color-text-muted)'),
+                  fontSize: 13,
+                  fontWeight: 600,
+                  cursor: 'default',
+                  opacity: 0.6,
+                }}
+              >
+                <Clock size={16} />
+                Disponible le {formattedReleaseDate}
+              </div>
+            ) : canPlay && sortedTracks.length > 0 && (
+              <button
+                onClick={() => void handlePressTrack(sortedTracks[0], 0)}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '12px 24px',
+                  borderRadius: 'var(--radius-full)',
+                  background: 'var(--color-accent)',
+                  border: 'none',
                   cursor: 'pointer',
-                  color: 'var(--color-text-secondary)',
+                  color: '#fff',
+                  fontSize: 14,
+                  fontWeight: 700,
+                  transition: 'all var(--transition-fast) ease',
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.04)'; e.currentTarget.style.background = 'var(--color-accent-light)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.background = 'var(--color-accent)'; }}
+              >
+                <Play size={18} fill="#fff" />
+                Tout écouter
+              </button>
+            )}
+
+            {/* Buy button — for paid & not owned */}
+            {isPaidNotOwned && priceDisplay && (
+              <a
+                href={getPurchaseAlbumUrl(album.id)}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '12px 24px',
+                  borderRadius: 'var(--radius-full)',
+                  background: preordered
+                    ? 'linear-gradient(135deg, #8B0000, #DC143C)'
+                    : 'linear-gradient(135deg, #FFD700, #FFA500)',
+                  border: 'none',
+                  cursor: 'pointer',
+                  color: preordered ? '#fff' : '#000',
+                  fontSize: 14,
+                  fontWeight: 800,
+                  textDecoration: 'none',
+                  transition: 'all var(--transition-fast) ease',
+                  boxShadow: preordered
+                    ? '0 4px 16px rgba(220,20,60,0.25)'
+                    : '0 4px 16px rgba(255,215,0,0.25)',
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.04)'; e.currentTarget.style.boxShadow = preordered ? '0 6px 24px rgba(220,20,60,0.35)' : '0 6px 24px rgba(255,215,0,0.35)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.boxShadow = preordered ? '0 4px 16px rgba(220,20,60,0.25)' : '0 4px 16px rgba(255,215,0,0.25)'; }}
+              >
+                <ShoppingBag size={18} />
+                {preordered ? `Précommander — ${priceDisplay}` : `Acheter — ${priceDisplay}`}
+              </a>
+            )}
+
+            {/* Already have a PassCode — dynamic bg */}
+            {isPaidNotOwned && (
+              <button
+                onClick={() => navigate('/activate')}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '10px 20px',
+                  borderRadius: 'var(--radius-full)',
+                  background: coverColors.colors?.isDark === false
+                    ? 'rgba(0,0,0,0.04)'
+                    : 'rgba(255,255,255,0.06)',
+                  border: `1px solid ${
+                    coverColors.colors?.isDark === false
+                      ? 'rgba(0,0,0,0.08)'
+                      : 'rgba(255,255,255,0.1)'
+                  }`,
+                  cursor: 'pointer',
+                  color: getSecondaryTextColor(coverColors.colors, 'var(--color-text-secondary)'),
+                  fontSize: 13,
+                  fontWeight: 600,
+                  transition: 'all var(--transition-fast) ease',
+                }}
+                onMouseEnter={(e) => {
+                  if (coverColors.colors?.isDark === false) {
+                    e.currentTarget.style.background = 'rgba(0,0,0,0.08)';
+                    e.currentTarget.style.color = '#111';
+                  } else {
+                    e.currentTarget.style.background = 'rgba(255,255,255,0.1)';
+                    e.currentTarget.style.color = 'var(--color-text-primary)';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (coverColors.colors?.isDark === false) {
+                    e.currentTarget.style.background = 'rgba(0,0,0,0.04)';
+                    e.currentTarget.style.color = 'rgba(0,0,0,0.6)';
+                  } else {
+                    e.currentTarget.style.background = 'rgba(255,255,255,0.06)';
+                    e.currentTarget.style.color = 'var(--color-text-secondary)';
+                  }
+                }}
+              >
+                <Lock size={14} />
+                J'ai un PassCode
+              </button>
+            )}
+
+            {/* Download button — owned or free, not yet offline */}
+            {!isOfflineReady && downloadStatus !== 'downloading' && (isOwned || isFreeRelease) && (
+              <button
+                onClick={() => void handleDownload()}
+                title="Télécharger l'album pour écoute hors-ligne"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '12px 24px',
+                  borderRadius: 'var(--radius-full)',
+                  background: 'rgba(29, 185, 84, 0.06)',
+                  border: '1px solid rgba(29, 185, 84, 0.15)',
+                  cursor: 'pointer',
+                  color: 'var(--color-success)',
                   fontSize: 14,
                   fontWeight: 600,
                   transition: 'all var(--transition-fast) ease',
                 }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-surface-hover)'; e.currentTarget.style.color = 'var(--color-text-primary)'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--color-surface-elevated)'; e.currentTarget.style.color = 'var(--color-text-secondary)'; }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(29, 185, 84, 0.12)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(29, 185, 84, 0.06)'; }}
               >
-                <Share2 size={18} />
-                Partager
+                <Download size={16} />
+                {preordered ? 'Pré-télécharger' : 'Télécharger'}
               </button>
-            </div>
+            )}
 
+            {/* Supprimer le téléchargement */}
+            {isOfflineReady && downloadStatus !== 'downloading' && (
+              <button
+                onClick={() => void handleDownload()}
+                title="Supprimer le téléchargement hors-ligne"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '12px 24px',
+                  borderRadius: 'var(--radius-full)',
+                  background: 'rgba(220,20,60,0.06)',
+                  border: '1px solid rgba(220,20,60,0.12)',
+                  cursor: 'pointer',
+                  color: 'var(--color-accent)',
+                  fontSize: 14,
+                  fontWeight: 600,
+                  transition: 'all var(--transition-fast) ease',
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(220,20,60,0.12)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(220,20,60,0.06)'; }}
+              >
+                <Trash2 size={15} />
+                Supprimer
+              </button>
+            )}
+
+            {/* Share button — dynamic for hero bg */}
+            <button
+              onClick={() => setShareModalVisible(true)}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '12px 24px',
+                borderRadius: 'var(--radius-full)',
+                background: coverColors.colors?.isDark === false
+                  ? 'rgba(0,0,0,0.04)'
+                  : 'var(--color-surface-elevated)',
+                border: `1px solid ${
+                  coverColors.colors?.isDark === false
+                    ? 'rgba(0,0,0,0.1)'
+                    : 'var(--color-border-subtle)'
+                }`,
+                cursor: 'pointer',
+                color: getSecondaryTextColor(coverColors.colors, 'var(--color-text-secondary)'),
+                fontSize: 14,
+                fontWeight: 600,
+                transition: 'all var(--transition-fast) ease',
+              }}
+              onMouseEnter={(e) => {
+                if (coverColors.colors?.isDark === false) {
+                  e.currentTarget.style.background = 'rgba(0,0,0,0.08)';
+                  e.currentTarget.style.color = '#111';
+                } else {
+                  e.currentTarget.style.background = 'var(--color-surface-hover)';
+                  e.currentTarget.style.color = 'var(--color-text-primary)';
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (coverColors.colors?.isDark === false) {
+                  e.currentTarget.style.background = 'rgba(0,0,0,0.04)';
+                  e.currentTarget.style.color = 'rgba(0,0,0,0.6)';
+                } else {
+                  e.currentTarget.style.background = 'var(--color-surface-elevated)';
+                  e.currentTarget.style.color = 'var(--color-text-secondary)';
+                }
+              }}
+            >
+              <Share2 size={18} />
+              Partager
+            </button>
           </div>
-        </div>
 
-        {/* ========== CONTENT (constrained width) ========== */}
-        <div style={{ maxWidth: 1200, margin: '0 auto', width: '100%' }}>
+          {/* Download progress bar + cancel */}
+          {downloadStatus === 'downloading' && (
+            <div style={{ marginTop: 16, maxWidth: 400 }}>
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+              }}>
+                <div style={{
+                  flex: 1,
+                  height: 4,
+                  borderRadius: 2,
+                  background: 'rgba(255,255,255,0.08)',
+                  overflow: 'hidden',
+                }}>
+                  <div style={{
+                    height: '100%',
+                    width: `${Math.round(downloadProgress)}%`,
+                    borderRadius: 2,
+                    background: 'linear-gradient(90deg, var(--color-accent), #FF6B6B)',
+                    transition: 'width 0.3s ease',
+                  }} />
+                </div>
+                <span style={{
+                  color: 'var(--color-text-muted)',
+                  fontSize: 12,
+                  fontWeight: 700,
+                  fontVariantNumeric: 'tabular-nums',
+                  minWidth: 42,
+                  textAlign: 'right',
+                }}>
+                  {Math.round(downloadProgress)}%
+                </span>
+                <button
+                  onClick={() => { cancelDownload(album.id); }}
+                  title="Annuler"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    width: 24,
+                    height: 24,
+                    borderRadius: 'var(--radius-full)',
+                    background: 'rgba(255,255,255,0.04)',
+                    border: 'none',
+                    cursor: 'pointer',
+                    color: 'var(--color-text-muted)',
+                    flexShrink: 0,
+                    transition: 'all 0.15s ease',
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; e.currentTarget.style.color = 'var(--color-text-primary)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; e.currentTarget.style.color = 'var(--color-text-muted)'; }}
+                >
+                  <X size={14} />
+                </button>
+              </div>
+              <p style={{
+                color: 'var(--color-text-muted)',
+                fontSize: 12,
+                margin: '6px 0 0',
+              }}>
+                {downloadProgress < 100 ? (
+                  <>
+                    <span style={{ color: 'var(--color-text-muted)', fontWeight: 600 }}>
+                      {(() => {
+                        const p = getDownloadProgress(album.id);
+                        return p?.currentTrack || '';
+                      })()}
+                    </span>
+                    <span style={{ color: 'var(--color-text-muted)' }}> · </span>
+                  </>
+                ) : null}
+                Téléchargement…
+              </p>
+            </div>
+          )}
+
+          {/* Success toast */}
+          {downloadStatus === 'completed' && showCompletedToast && (
+            <div style={{ marginTop: 12 }}>
+              <div style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '8px 16px',
+                borderRadius: 'var(--radius-full)',
+                background: 'rgba(29, 185, 84, 0.1)',
+                border: '1px solid rgba(29, 185, 84, 0.2)',
+                animation: 'fadeIn 0.3s ease',
+              }}>
+                <Check size={14} color="var(--color-success)" />
+                <span style={{ color: 'var(--color-success)', fontSize: 13, fontWeight: 600 }}>
+                  Album téléchargé · disponible hors-ligne
+                </span>
+              </div>
+            </div>
+          )}
+
+        </div>
+      </div>
+
+      {/* ========== CONTENT (constrained width) ========== */}
+      <div style={{ maxWidth: 1200, margin: '0 auto', width: '100%' }}>
+
+        {/* Pre-order countdown banner */}
+        {preorderReleaseDate && (
+          <div style={{ padding: '16px 48px 0' }}>
+            <PreorderCountdown publicationDate={preorderReleaseDate} />
+          </div>
+        )}
 
         {/* ========== ALBUM DESCRIPTION ========== */}
         {album.description && (
@@ -488,18 +891,18 @@ export function AlbumDetailScreen() {
             const isThisPlaying = isCurrent && audio.isPlaying;
             const featResult = hasFeatArtists(track.title) ? parseFeatArtists(track.title) : null;
             // Solution C: Préchargement de la piste au survol pour une lecture instantanée
-        const prefetchOnHover = () => {
-          if (album.is_free) {
-            const directUrl = track.encrypted_audio_url || track.preview_url;
-            if (directUrl) {
-              logger.info('[AlbumDetail] Préchargement piste gratuite via Cloudflare:', directUrl);
-              fetch(directUrl, { method: 'HEAD' }).catch(() => {});
-              return;
-            }
-          }
-          const trackProxyUrl = `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(track.id)}/audio`;
-          prefetchTrackBlob(trackProxyUrl, track.id);
-        };
+            const prefetchOnHover = () => {
+              if (album.is_free) {
+                const directUrl = track.encrypted_audio_url || track.preview_url;
+                if (directUrl) {
+                  logger.info('[AlbumDetail] Préchargement piste gratuite via Cloudflare:', directUrl);
+                  fetch(directUrl, { method: 'HEAD' }).catch(() => { });
+                  return;
+                }
+              }
+              const trackProxyUrl = `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(track.id)}/audio`;
+              prefetchTrackBlob(trackProxyUrl, track.id);
+            };
             return (
               <button className="album-track"
                 key={track.id}
@@ -521,7 +924,7 @@ export function AlbumDetailScreen() {
                 }}
                 onMouseEnter={(e) => {
                   prefetchOnHover();
-                  if (!isCurrent && (canPlay || isPaidNotOwned)) e.currentTarget.style.background = 'var(--color-surface-hover)';
+                  if (!preordered && !isCurrent && (canPlay || isPaidNotOwned)) e.currentTarget.style.background = 'var(--color-surface-hover)';
                 }}
                 onMouseLeave={(e) => {
                   if (!isCurrent) e.currentTarget.style.background = 'transparent';
@@ -564,7 +967,7 @@ export function AlbumDetailScreen() {
                   }}
                     title={track.title}
                   >
-                    {featResult ? featResult.cleanTitle : track.title}
+                    {formatTitle(featResult ? featResult.cleanTitle : track.title)}
                   </p>
                 </div>
 
@@ -607,7 +1010,9 @@ export function AlbumDetailScreen() {
 
                 {/* Duration + status */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
-                  {isPaidNotOwned ? (
+                  {preordered ? (
+                    <Lock size={13} color="var(--color-accent)" style={{ opacity: 0.45 }} />
+                  ) : isPaidNotOwned ? (
                     <Lock size={13} color="var(--color-text-muted)" style={{ opacity: 0.5 }} />
                   ) : isThisPlaying ? (
                     <Pause size={14} color="var(--color-accent)" />

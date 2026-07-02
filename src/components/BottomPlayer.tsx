@@ -5,6 +5,7 @@ import { buildVibrantWithAlpha } from '@/services/colorExtractor';
 import { AlertCircle, Pause, Play, Share2, SkipBack, SkipForward, TextQuote, Volume2, Volume1, Volume, VolumeX, X } from 'lucide-react';
 import { hasFeatArtists, parseFeatArtists, normalizeArtistName } from '@/utils/featArtists';
 import { FeatArtistLinks } from './FeatArtistLinks';
+import { formatTitle } from '@/utils/formatTitle';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useBottomInset } from '@/hooks/useBottomInset';
 import { ShareCard } from './ShareCard';
@@ -289,7 +290,7 @@ export function BottomPlayer() {
                   }}
                   title={rawTitle}
                 >
-                  {trackTitle}
+                  {formatTitle(trackTitle)}
                 </div>
                 <div
                   style={{

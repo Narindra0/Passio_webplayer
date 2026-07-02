@@ -147,3 +147,16 @@ export async function fetchLyricsByUrl(lyricsUrl: string): Promise<string> {
 export async function getAudioToken(trackId: string): Promise<{ token: string; trackId: string }> {
   return request<{ token: string; trackId: string }>(`/api/stream/tracks/${encodeURIComponent(trackId)}/token`, { method: 'GET' });
 }
+
+/**
+ * Récupère une URL signée (HMAC + timestamp) pour le streaming d'une piste.
+ * L'URL est valide 1 heure et ne peut pas être partagée.
+ * Nécessite que le backend soit configuré avec CLOUDFLARE_TOKEN_SECRET
+ * et que Cloudflare WAF valide la signature via is_timed_hmac_valid_v0().
+ */
+export async function getSignedStreamUrl(trackId: string): Promise<{ url: string; expiresAt: number }> {
+  return request<{ url: string; expiresAt: number }>(
+    `/api/stream/signed/${encodeURIComponent(trackId)}`,
+    { method: 'POST' },
+  );
+}

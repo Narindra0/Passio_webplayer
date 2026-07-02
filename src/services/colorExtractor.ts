@@ -127,3 +127,64 @@ export function buildVibrantWithAlpha(
 export function clearColorCache(): void {
   colorCache.clear();
 }
+
+/**
+ * Retourne la couleur de texte primaire (blanc ou noir) selon si le fond est sombre ou clair.
+ */
+export function getPrimaryTextColor(colors: ExtractedColors | null, fallback: string = '#fff'): string {
+  if (!colors) return fallback;
+  return colors.isDark ? '#fff' : '#111';
+}
+
+/**
+ * Retourne la couleur de texte secondaire/muted selon la luminosité du fond.
+ */
+export function getSecondaryTextColor(colors: ExtractedColors | null, fallback: string = 'rgba(255,255,255,0.65)'): string {
+  if (!colors) return fallback;
+  return colors.isDark ? 'rgba(255,255,255,0.65)' : 'rgba(0,0,0,0.6)';
+}
+
+/**
+ * Retourne la couleur pour les séparateurs / dots.
+ */
+export function getMutedTextColor(colors: ExtractedColors | null, fallback: string = 'rgba(255,255,255,0.35)'): string {
+  if (!colors) return fallback;
+  return colors.isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.3)';
+}
+
+/**
+ * Retourne une couleur d'accent dérivée du vibrant pour les badges et éléments interactifs,
+ * avec un fallback vers le rouge Pass'io.
+ */
+export function getAccentColor(colors: ExtractedColors | null, fallback: string = 'var(--color-accent)'): string {
+  if (!colors) return fallback;
+  return colors.vibrant;
+}
+
+/**
+ * Retourne le background avec opacité pour un badge, adapté à la luminosité.
+ */
+export function getBadgeBackground(colors: ExtractedColors | null, isDarkBg: boolean, isPremium: boolean = false): string {
+  if (isPremium) {
+    return 'rgba(255,215,0,0.12)';
+  }
+  if (!colors) return isDarkBg ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)';
+  if (isDarkBg) {
+    return `${colors.vibrant}15`;
+  }
+  return `${colors.vibrant}0C`;
+}
+
+/**
+ * Retourne la couleur de bordure pour un badge, adaptée à la luminosité.
+ */
+export function getBadgeBorder(colors: ExtractedColors | null, isDarkBg: boolean, isPremium: boolean = false): string {
+  if (isPremium) {
+    return 'rgba(255,215,0,0.2)';
+  }
+  if (!colors) return isDarkBg ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)';
+  if (isDarkBg) {
+    return `${colors.vibrant}25`;
+  }
+  return `${colors.vibrant}15`;
+}

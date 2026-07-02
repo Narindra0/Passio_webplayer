@@ -21,6 +21,7 @@ import { PlayerWaveform } from './PlayerWaveform';
 import { ShareCard } from './ShareCard';
 import { hasFeatArtists, parseFeatArtists, normalizeArtistName } from '@/utils/featArtists';
 import { FeatArtistLinks } from './FeatArtistLinks';
+import { formatTitle } from '@/utils/formatTitle';
 import { listAlbums } from '@/services/api';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { logger } from '@/utils/logger';
@@ -434,7 +435,7 @@ export function FullPlayer() {
                 }}
                 title={rawTitle}
               >
-                {trackTitle}
+                {formatTitle(trackTitle)}
               </div>
               <div
                 style={{
@@ -967,7 +968,7 @@ export function FullPlayer() {
                     </span>
                     <div style={{ minWidth: 0, flex: 1 }}>
                       <p style={{ color: isActive ? 'var(--color-accent)' : 'var(--color-text-primary)', fontSize: 13, fontWeight: 600, margin: 0, lineHeight: '18px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {(item as { title: string }).title}
+                        {formatTitle((item as { title: string }).title)}
                       </p>
                       <p style={{ color: 'var(--color-text-muted)', fontSize: 12, fontWeight: 500, margin: '2px 0 0', lineHeight: '16px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {rowArtist}
@@ -1038,8 +1039,7 @@ export function FullPlayer() {
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', borderRadius: 'var(--radius-sm)', backgroundColor: 'var(--color-surface-elevated)' }}>
                 <Volume2 size={16} color="var(--color-accent)" />
                 <div style={{ minWidth: 0, flex: 1 }}>
-                  <p style={{ color: 'var(--color-text-primary)', fontSize: 14, fontWeight: 600, margin: 0, lineHeight: '18px' }}>
-                    {isDeviceMode ? deviceCurrentTrack!.title : currentTrack!.title}
+                  <p style={{ color: 'var(--color-text-primary)', fontSize: 14, fontWeight: 600, margin: 0, lineHeight: '18px' }}>                      {formatTitle(isDeviceMode ? deviceCurrentTrack!.title : currentTrack!.title)}
                   </p>
                   <p style={{ color: 'var(--color-text-secondary)', fontSize: 12, fontWeight: 500, margin: '2px 0 0' }}>
                     {isDeviceMode ? deviceCurrentTrack!.artist : formatAlbumArtist(queueAlbums[currentIdx] ?? album ?? undefined)}
@@ -1091,7 +1091,7 @@ export function FullPlayer() {
                     </span>
                     <div style={{ minWidth: 0, flex: 1 }}>
                       <p style={{ color: 'var(--color-text-primary)', fontSize: 14, fontWeight: 600, margin: 0, lineHeight: '18px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {(item as { title: string }).title}
+                        {formatTitle((item as { title: string }).title)}
                       </p>
                       <p style={{ color: 'var(--color-text-muted)', fontSize: 12, fontWeight: 500, margin: '2px 0 0', lineHeight: '16px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {rowArtist}
@@ -1157,7 +1157,7 @@ export function FullPlayer() {
             >
               <div style={{ minWidth: 0, flex: 1 }}>
                 <p style={{ color: '#fff', fontSize: 16, fontWeight: 700, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {trackTitle}
+                  {formatTitle(trackTitle)}
                 </p>
                 <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: 13, fontWeight: 500, margin: '2px 0 0' }}>
                   {artistName}

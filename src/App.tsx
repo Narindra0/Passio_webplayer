@@ -1,4 +1,4 @@
-import React, { Suspense } from 'react';
+import React, { Suspense, useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAudioPlayback } from './contexts/AudioContext';
 import { AppErrorBoundary } from './components/AppErrorBoundary';
@@ -34,6 +34,48 @@ function PageLoader() {
 
 export function App() {
   const { isFullPlayerVisible } = useAudioPlayback();
+
+  // 🔒 Protection anti-exfiltration : bloque le clic droit, le drag & drop
+  //    et le copier-coller sur l'ensemble de l'application pour décourager
+  //    l'extraction de contenu (titres, artistes, URLs de flux).
+  //    Ne bloque pas la saisie dans les champs de texte (input/textarea).
+  useEffect(() => {
+    const handleContextMenu = (e: MouseEvent) => {
+      // Autoriser le clic droit sur les champs de formulaire (pratique)
+      const target = e.target as HTMLElement;
+      if (target?.closest('input, textarea, [contenteditable]')) return;
+      e.preventDefault();
+    };
+
+    const handleDragStart = (e: DragEvent) => {
+      // Autoriser le drag sur les champs de formulaire (sélection de texte)
+      const target = e.target as HTMLElement;
+      if (target?.closest('input, textarea, [contenteditable]')) return;
+      e.preventDefault();
+    };
+
+    const handleCopy = (e: ClipboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (target?.closest('input, textarea, [contenteditable]')) return;
+      e.preventDefault();
+    };
+
+    const handleDrop = (e: DragEvent) => {
+      e.preventDefault();
+    };
+
+    document.addEventListener('contextmenu', handleContextMenu);
+    document.addEventListener('dragstart', handleDragStart);
+    document.addEventListener('copy', handleCopy);
+    document.addEventListener('drop', handleDrop);
+
+    return () => {
+      document.removeEventListener('contextmenu', handleContextMenu);
+      document.removeEventListener('dragstart', handleDragStart);
+      document.removeEventListener('copy', handleCopy);
+      document.removeEventListener('drop', handleDrop);
+    };
+  }, []);
 
   return (
     <AppErrorBoundary>

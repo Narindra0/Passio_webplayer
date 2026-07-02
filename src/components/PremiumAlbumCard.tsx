@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ShoppingBag, CheckCircle, Sparkles, Music } from 'lucide-react';
+import { ShoppingBag, CheckCircle, Clock, Sparkles, Music } from 'lucide-react';
+import { formatTitle } from '@/utils/formatTitle';
+import { isPreorder } from '@/utils/preorder';
 import { useAlbumColors } from '@/hooks/useAlbumColors';
 import { useCachedImage } from '@/hooks/useCachedImage';
 import { getPurchaseAlbumUrl } from '@/config/urls';
@@ -17,6 +19,8 @@ export function PremiumAlbumCard({ album, isOwned = false, onPress }: PremiumAlb
   const coverColors = useAlbumColors(album.cover_url);
   const cachedCover = useCachedImage(album.cover_url);
   const [isHovered, setIsHovered] = useState(false);
+
+  const preordered = isPreorder(album.publication_date);
 
   const artistName = album.artist_name || album.artist?.name || 'Artiste inconnu';
   const albumType = album.type === 'single' ? 'Single' : album.type === 'ep' ? 'EP' : 'Album';
@@ -51,7 +55,7 @@ export function PremiumAlbumCard({ album, isOwned = false, onPress }: PremiumAlb
       onMouseLeave={() => setIsHovered(false)}
       role="button"
       tabIndex={0}
-      aria-label={`${albumType} ${album.title} par ${artistName}${priceDisplay ? ` — ${priceDisplay}` : ''}`}
+      aria-label={`${albumType} ${formatTitle(album.title)} par ${artistName}${priceDisplay ? ` — ${priceDisplay}` : ''}`}
       className="premium-card group"
       style={{
         position: 'relative',
@@ -105,7 +109,7 @@ export function PremiumAlbumCard({ album, isOwned = false, onPress }: PremiumAlb
         }}
       />
 
-      {/* Premium badge */}
+      {/* Pre-order / Premium badge */}
       <div
         style={{
           position: 'absolute',
@@ -117,14 +121,28 @@ export function PremiumAlbumCard({ album, isOwned = false, onPress }: PremiumAlb
           gap: 5,
           padding: '5px 12px',
           borderRadius: 'var(--radius-full)',
-          background: 'linear-gradient(135deg, rgba(255,215,0,0.2), rgba(255,165,0,0.15))',
+          background: preordered
+            ? 'linear-gradient(135deg, rgba(220,20,60,0.25), rgba(139,0,0,0.2))'
+            : 'linear-gradient(135deg, rgba(255,215,0,0.2), rgba(255,165,0,0.15))',
           backdropFilter: 'blur(8px)',
-          border: '1px solid rgba(255,215,0,0.25)',
+          border: preordered
+            ? '1px solid rgba(220,20,60,0.3)'
+            : '1px solid rgba(255,215,0,0.25)',
         }}
       >
-        <Sparkles size={12} color="#FFD700" />
-        <span style={{ color: '#FFD700', fontSize: 10, fontWeight: 700, letterSpacing: '0.5px', textTransform: 'uppercase' }}>
-          Premium
+        {preordered ? (
+          <Clock size={12} color="var(--color-accent)" />
+        ) : (
+          <Sparkles size={12} color="#FFD700" />
+        )}
+        <span style={{
+          color: preordered ? 'var(--color-accent)' : '#FFD700',
+          fontSize: 10,
+          fontWeight: 700,
+          letterSpacing: '0.5px',
+          textTransform: 'uppercase',
+        }}>
+          {preordered ? 'Précommande' : 'Premium'}
         </span>
       </div>
 
@@ -186,7 +204,7 @@ export function PremiumAlbumCard({ album, isOwned = false, onPress }: PremiumAlb
           textOverflow: 'ellipsis',
           whiteSpace: 'nowrap',
         }}>
-          {album.title}
+          {formatTitle(album.title)}
         </h3>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 8 }}>
@@ -256,22 +274,29 @@ export function PremiumAlbumCard({ album, isOwned = false, onPress }: PremiumAlb
           ) : priceDisplay ? (
             <button
               onClick={handleBuy}
-              title="Acheter"
+              title={preordered ? 'Précommander' : 'Acheter'}
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                width: 32,
+                gap: 4,
+                padding: preordered ? '5px 12px' : undefined,
+                width: preordered ? undefined : 32,
                 height: 32,
                 borderRadius: 'var(--radius-full)',
-                background: isHovered ? 'var(--color-accent)' : 'rgba(255,255,255,0.08)',
-                border: `1px solid ${isHovered ? 'var(--color-accent)' : 'rgba(255,255,255,0.1)'}`,
+                background: preordered
+                  ? 'var(--color-accent)'
+                  : isHovered ? 'var(--color-accent)' : 'rgba(255,255,255,0.08)',
+                border: `1px solid ${isHovered || preordered ? 'var(--color-accent)' : 'rgba(255,255,255,0.1)'}`,
                 cursor: 'pointer',
                 color: '#fff',
+                fontSize: 11,
+                fontWeight: 700,
                 transition: 'all var(--transition-fast) ease',
               }}
             >
               <ShoppingBag size={14} />
+              {preordered && <span>Précommander</span>}
             </button>
           ) : (
             <span style={{

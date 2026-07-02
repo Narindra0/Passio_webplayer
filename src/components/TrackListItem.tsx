@@ -6,6 +6,7 @@ import { prefetchTrackBlob } from '@/services/audio';
 import { isTrackInDB } from '../services/indexedDB';
 import { FeatArtistLinks } from './FeatArtistLinks';
 import { hasFeatArtists, parseFeatArtists } from '@/utils/featArtists';
+import { formatTitle } from '@/utils/formatTitle';
 
 export interface TrackWithAlbum {
   id: string;
@@ -139,7 +140,7 @@ export function TrackListItem({ track, onPress, isPlaying = false }: TrackListIt
           }}
           title={track.title}
         >
-          {cleanTitle}
+          {formatTitle(cleanTitle)}
         </div>
         <div
           style={{

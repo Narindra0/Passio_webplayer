@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Search } from 'lucide-react';
 import { AlbumCard } from '@/components/AlbumCard';
 import { Screen } from '@/components/Screen';
+import { StorageQuotaBar } from '@/components/StorageQuotaBar';
 import { useLibraryMode } from '@/contexts/LibraryModeContext';
 import { listAlbums } from '@/services/api';
 import { listVaultAlbums } from '@/services/downloadManager';
@@ -154,6 +155,9 @@ export function CatalogScreen() {
           </p>
         </div>
       </div>
+
+      {/* Storage quota */}
+      <StorageQuotaBar onRefresh={() => void loadAlbums()} />
 
       {/* Search */}
       <div className="search-bar" style={{ marginBottom: 24 }}>

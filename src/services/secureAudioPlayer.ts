@@ -1,6 +1,6 @@
 import { getTrackFromDB } from './indexedDB';
 import { fetchWithRetry, getRetryDelay } from './networkUtils';
-import { getAudioToken } from './api';
+import { getAudioToken, getSignedStreamUrl } from './api';
 import { logger } from '@/utils/logger';
 
 export class SecureAudioPlayer {
@@ -123,9 +123,10 @@ export class SecureAudioPlayer {
    * Utilise fetchWithRetry pour gérer les erreurs QUIC/HTTP3 avec
    * keepalive: true et exponential backoff.
    */
-  public async downloadInChunks(url: string, onProgress?: (progress: number) => void, maxBytes?: number): Promise<Uint8Array> {
-    this.abortController = new AbortController();
-    const signal = this.abortController.signal;
+  public async downloadInChunks(url: string, onProgress?: (progress: number) => void, maxBytes?: number, externalSignal?: AbortSignal): Promise<Uint8Array> {
+    // Créer un AbortController interne SEULEMENT si aucun signal externe n'est fourni
+    this.abortController = externalSignal ? null : new AbortController();
+    const signal = externalSignal || this.abortController!.signal;
 
     const MAX_RETRIES = 3;
     let totalLength = 0;
@@ -188,13 +189,11 @@ export class SecureAudioPlayer {
               if (!fullResp.ok) throw new Error(`HTTP ${fullResp.status}`);
               const fullBuffer = await fullResp.arrayBuffer();
               const uint8 = new Uint8Array(fullBuffer);
-              // --- XOR DECHIFFREMENT TEMPORAIREMENT DÉSACTIVÉ ---
-              // if (this.currentTrackId) {
-              //   const seed = await this.getXorSeed(this.currentTrackId);
-              //   const seedHex = Array.from(seed).map(b => b.toString(16).padStart(2, '0')).join('');
-              //   console.log(`[XOR Secure (Full)] Track: ${this.currentTrackId}, Seed Hash (hex): ${seedHex}, Buffer Size: ${uint8.length}`);
-              //   this.applyXor(uint8, seed, 0);
-              // }
+              // XOR deobfuscation : applique le masque dérivé du trackId
+              if (this.currentTrackId) {
+                const seed = await this.getXorSeed(this.currentTrackId);
+                this.applyXor(uint8, seed, 0);
+              }
               if (onProgress) onProgress(100);
               return uint8;
             }
@@ -242,15 +241,11 @@ export class SecureAudioPlayer {
       offset += chunk.length;
     }
 
-    // --- XOR DECHIFFREMENT TEMPORAIREMENT DÉSACTIVÉ ---
-    // if (this.currentTrackId) {
-    //   const seed = await this.getXorSeed(this.currentTrackId);
-    //   const seedHex = Array.from(seed).map(b => b.toString(16).padStart(2, '0')).join('');
-    //   console.log(`[XOR Secure (Chunks)] Track: ${this.currentTrackId}, Seed Hash (hex): ${seedHex}, Buffer Size: ${fullBuffer.length}`);
-    //   console.log(`[XOR Secure (Chunks)] Before De-XOR (first 16 bytes): ${Array.from(fullBuffer.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join('')}`);
-    //   this.applyXor(fullBuffer, seed, 0);
-    //   console.log(`[XOR Secure (Chunks)] After De-XOR (first 16 bytes): ${Array.from(fullBuffer.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join('')}`);
-    // }
+    // XOR deobfuscation : applique le masque dérivé du trackId
+    if (this.currentTrackId) {
+      const seed = await this.getXorSeed(this.currentTrackId);
+      this.applyXor(fullBuffer, seed, 0);
+    }
 
     // Efface les chunks intermédiaires de la RAM après assemblage
     for (const chunk of chunks) {
@@ -291,6 +286,9 @@ export class SecureAudioPlayer {
   /**
    * Loads the audio from a URL using the chunking strategy and decodes it.
    * If trackId is provided or parsable from URL, it checks IndexedDB first.
+   * 
+   * 🔒 Utilise une URL signée (HMAC + expiration) si le trackId est disponible,
+   *    empêchant le partage des URLs de flux.
    */
   public async loadTrack(url: string, onProgress?: (progress: number) => void, trackId?: string): Promise<void> {
     this.stop(); // Stop current playback if any
@@ -306,6 +304,19 @@ export class SecureAudioPlayer {
       }
       this.currentTrackId = id || null;
 
+      // 🔒 Récupérer une URL signée (valide 1h) pour empêcher le partage de flux
+      let signedUrl: string | null = null;
+      if (id) {
+        try {
+          const signed = await getSignedStreamUrl(id);
+          signedUrl = signed.url;
+          logger.info('[SecureAudioPlayer] 🔐 URL signée obtenue pour:', id, '- expire dans 1h');
+        } catch (e) {
+          logger.warn('[SecureAudioPlayer] ⚠️ Impossible d\'obtenir une URL signée, fallback URL originale:', e);
+        }
+      }
+      const effectiveUrl = signedUrl || url;
+
       let fileData: Uint8Array | ArrayBuffer | undefined;
 
       // Check IndexedDB first
@@ -313,12 +324,12 @@ export class SecureAudioPlayer {
         fileData = await getTrackFromDB(id);
       }
 
-      // If not in DB, download in chunks
+      // If not in DB, download in chunks (via URL signée si disponible)
       if (!fileData) {
         if (id) {
           await this.fetchToken(id);
         }
-        fileData = await this.downloadInChunks(url, onProgress);
+        fileData = await this.downloadInChunks(effectiveUrl, onProgress);
       } else {
         if (onProgress) onProgress(100);
       }

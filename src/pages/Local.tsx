@@ -3,6 +3,7 @@ import { Music, Play } from 'lucide-react';
 import { Screen, PageHeader } from '@/components/Screen';
 import { SectionTitle } from '@/components/SectionTitle';
 import { PrimaryButton } from '@/components/PrimaryButton';
+import { formatTitle } from '@/utils/formatTitle';
 import { useAudioPlayback } from '@/contexts/AudioContext';
 import type { DeviceTrack } from '@/types/localLibrary';
 
@@ -104,7 +105,7 @@ export function LocalScreen() {
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <p style={{ color: '#fff', fontSize: 16, fontWeight: 600, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {track.title}
+                    {formatTitle(track.title)}
                   </p>
                   <p style={{ color: 'rgba(255,255,255,0.75)', fontSize: 14, margin: '4px 0 0 0' }}>
                     {track.artist}

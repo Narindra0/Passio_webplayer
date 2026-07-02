@@ -38,6 +38,9 @@ import { getTrackIndexInQueue, sortTracksByPosition } from '@/utils/tracks';
 import { getOrCreateDeviceId } from '@/services/device';
 import { secureAudioPlayer } from '@/services/secureAudioPlayer';
 import { mseSecurePlayer } from '@/services/mseSecurePlayer';
+import { recordArtistPlay } from '@/services/listeningHistory';
+import { cacheFreeTrack, getCachedFreeTrackUrl, touchAlbumAccess } from '@/services/downloadManager';
+import { isPreorder } from '@/utils/preorder';
 
 export type PlayMode = 'hls' | 'stream' | 'local' | 'remote' | 'device';
 export type QueueMode = 'sequential' | 'shuffle';
@@ -206,6 +209,7 @@ export function AudioProvider({ children }: { children: ReactNode }) {
   const autoplayEnabledRef = useRef(true);
   const recentlyPlayedRef = useRef<Set<string>>(new Set());
   const isAutoplayingRef = useRef(false);
+  const previousTrackTitleRef = useRef<string | null>(null);
   const [autoplayEnabled, setAutoplayEnabledState] = useState(true);
   const [isAutoplaying, setIsAutoplaying] = useState(false);
 
@@ -285,10 +289,10 @@ export function AudioProvider({ children }: { children: ReactNode }) {
       setQueue([...newTracks]);
       setParallelQueue(newAlbums, []);
 
-      console.log('[Autoplay] 🎵 Mode Radio activé —', newTracks.length, 'recommandations injectées');
+      logger.info('[Autoplay] 🎵 Mode Radio activé —', newTracks.length, 'recommandations injectées');
       await playAtIndexRef.current(0);
     } catch (err) {
-      console.warn('[Autoplay] ❌ Erreur lors de la génération des recommandations:', err);
+      logger.warn('[Autoplay] ❌ Erreur lors de la génération des recommandations:', err);
     }
   }
 
@@ -309,14 +313,12 @@ export function AudioProvider({ children }: { children: ReactNode }) {
         const isFreeAlbum = Boolean(albumRef.current?.is_free);
         if (!isFreeAlbum) {
           const nextUrl = `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(nextTrack.id)}/audio`;
-          console.log('[AudioContext] ⚡ Préchargement sécurisé pour piste suivante:', nextTrack.title);
           prefetchSecureTrack(nextUrl, nextTrack.id);
         } else {
           // Pour les pistes gratuites : préchargement simple via le navigateur
           let directUrl = getCloudflareAudioUrl(nextTrack.audio_storage_key || '');
           if (!directUrl) directUrl = (nextTrack.encrypted_audio_url || nextTrack.preview_url) ?? null;
           if (directUrl) {
-            console.log('[AudioContext] ⚡ Préchargement simple pour piste gratuite suivante:', nextTrack.title);
             // Juste une requête HEAD pour mettre en cache
             fetch(directUrl, { method: 'HEAD' }).catch(() => {});
           }
@@ -325,13 +327,35 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  const currentTrack =
-    currentIndex >= 0 && currentIndex < queue.length ? queue[currentIndex] : null;
+  const currentTrack = useMemo(
+    () => currentIndex >= 0 && currentIndex < queue.length ? queue[currentIndex] ?? null : null,
+    [currentIndex, queue],
+  );
 
-  const deviceCurrentTrack =
-    deviceCurrentIndex >= 0 && deviceCurrentIndex < deviceQueue.length
-      ? deviceQueue[deviceCurrentIndex]
-      : null;
+  const deviceCurrentTrack = useMemo(
+    () => deviceCurrentIndex >= 0 && deviceCurrentIndex < deviceQueue.length
+      ? deviceQueue[deviceCurrentIndex] ?? null
+      : null,
+    [deviceCurrentIndex, deviceQueue],
+  );
+
+  // 🎵 Mettre à jour le titre de l'onglet avec la musique en cours de lecture
+  useEffect(() => {
+    const track = currentTrack;
+    const label = track?.title || 'Piste inconnue';
+    const artist = album?.artist_name || album?.artist?.name || '';
+    const fullLabel = artist ? `${label} — ${artist}` : label;
+
+    if (track && isPlaying) {
+      document.title = `🎵 ${fullLabel} | Pass'io Web`;
+      previousTrackTitleRef.current = fullLabel;
+    } else if (track && !isPlaying && previousTrackTitleRef.current === fullLabel) {
+      document.title = `⏸ ${fullLabel} | Pass'io Web`;
+    } else if (!track) {
+      document.title = "Pass'io Web";
+      previousTrackTitleRef.current = null;
+    }
+  }, [currentTrack, isPlaying, album]);
 
   const reportPlaybackError = useCallback((scope: string, err: unknown) => {
     const message = err instanceof Error ? err.message : 'Erreur de lecture inconnue';
@@ -408,7 +432,7 @@ export function AudioProvider({ children }: { children: ReactNode }) {
             // Auto-play de la session restaurée
             resumePlayback();
           }).catch(err => {
-             console.warn('Failed to restore audio session', err);
+             logger.warn('Failed to restore audio session', err);
              localStorage.removeItem('passio_audio_session');
           });
         } else {
@@ -441,7 +465,7 @@ export function AudioProvider({ children }: { children: ReactNode }) {
   async function resolveKeyForAlbum(albumData: PublicAlbumDetails, keyHint?: string | null): Promise<string | null> {
     // Skip key resolution entirely for FREE albums
     if (Boolean(albumData.is_free)) {
-      console.log('[ResolveKey] Album FREE, skip key checks');
+      logger.info('[ResolveKey] Album FREE, skip key checks');
       return null;
     }
     const fromHint = keyHint ?? (albumData as PublicAlbumDetails & { decryption_key?: string }).decryption_key;
@@ -611,14 +635,26 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     albumData: PublicAlbumDetails,
     key: string | null,
     isRetry: boolean = false,
-  ) {
-    console.log('[AudioContext] 🎵 Démarrage playback', track.title);
-    console.log('[AudioContext] Track details:', track);
-    console.log('[AudioContext] Album details:', albumData);
+  ) {    logger.info('[AudioContext] 🎵 Démarrage playback:', track.title);
     
     if (!track || !albumData) {
-      console.error('[AudioContext] ❌ Track ou album manquant');
+      logger.error('[AudioContext] ❌ Track ou album manquant');
       reportPlaybackError('AudioContext.playback', new Error('Track ou album manquant'));
+      return;
+    }
+
+    // 🚫 Bloquer la lecture des albums en précommande (publication_date dans le futur)
+    if (isPreorder(albumData.publication_date)) {
+      const pubDate = new Date(albumData.publication_date!);
+      const formattedDate = pubDate.toLocaleDateString('fr-FR', {
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric',
+      });
+      const msg = `Cet album sera disponible à l'écoute le ${formattedDate}.`;
+      logger.warn('[AudioContext] 🚫 Lecture bloquée — album en précommande:', albumData.title);
+      reportPlaybackError('AudioContext.playback', new Error(msg));
+      setIsLoading(false);
       return;
     }
 
@@ -641,11 +677,26 @@ export function AudioProvider({ children }: { children: ReactNode }) {
         }
       };
 
-      const isFreeAlbum = Boolean(albumData.is_free);
-
-      // First, try direct Cloudflare URLs if track is free!
+      const isFreeAlbum = Boolean(albumData.is_free);      // First, try direct Cloudflare URLs if track is free!
       if (isFreeAlbum) {
-        console.log('[AudioContext] 🎵 Trying direct Cloudflare URLs first (free track)...');
+        // ⚡ Vérifier le cache IndexedDB avant de streamer
+        const cachedUrl = await getCachedFreeTrackUrl(track.id);
+        if (cachedUrl) {
+          try {
+            const audio = await playStream(cachedUrl, handleStatus, true);
+            if (audio) {
+              currentIndexRef.current = index;
+              setCurrentIndex(index);
+              setAudioVolume(volumeRef.current);
+              if (isMuted) setAudioMuted(true);
+              logger.info('[AudioContext] ⚡ Lecture depuis le cache IndexedDB:', track.title);
+              return;
+            }
+          } catch {
+            logger.warn('[AudioContext] Cache URL invalide, fallback réseau');
+          }
+        }
+
         const directUrls: string[] = [];
         const cfUrl = getCloudflareAudioUrl(track.audio_storage_key || '');
         if (cfUrl) directUrls.push(cfUrl);
@@ -654,27 +705,25 @@ export function AudioProvider({ children }: { children: ReactNode }) {
         
         for (const directUrl of directUrls) {
           try {
-            console.log('[AudioContext] 🎧 Trying direct URL:', directUrl);
             const audio = await playStream(directUrl, handleStatus, true);
             if (audio) {
-              console.log('[AudioContext] ✅ Success with direct URL!');
               currentIndexRef.current = index;
               setCurrentIndex(index);
               // 🎯 Synchroniser le volume après la création du nouvel élément audio direct
               setAudioVolume(volumeRef.current);
               if (isMuted) setAudioMuted(true);
+              // ⚡ Mettre en cache la piste gratuite en arrière-plan (pas de await)
+              cacheFreeTrack(track.id, directUrl);
               return;
             }
           } catch (err) {
-            console.warn('[AudioContext] ❌ Failed with direct URL:', err);
+            logger.warn('[AudioContext] ❌ Failed with direct URL:', err);
           }
         }
-        console.log('[AudioContext] 🔄 Direct URLs failed, falling back to backend proxy...');
       }
       
       // Fallback to backend proxy
       const url = `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(track.id)}/audio`;
-      console.log('[AudioContext] 🎧 Trying backend proxy:', url);
       
       // Fetch the audio token and set it on the secure players
       await secureAudioPlayer.fetchToken(track.id);
@@ -692,7 +741,6 @@ export function AudioProvider({ children }: { children: ReactNode }) {
       );
       
       if (success) {
-        console.log('[AudioContext] ✅ Succès playback with backend proxy!');
         currentIndexRef.current = index;
         setCurrentIndex(index);
         // 🎯 Synchroniser le volume après la création du nouvel élément audio
@@ -704,7 +752,7 @@ export function AudioProvider({ children }: { children: ReactNode }) {
       throw new Error('All playback methods failed');
 
     } catch (err) {
-      console.error('[AudioContext] ❌ Échec playback:', err);
+      logger.error('[AudioContext] ❌ Échec playback:', err);
       reportPlaybackError('AudioContext.playback', err);
     } finally {
       setIsLoading(false);
@@ -798,6 +846,17 @@ export function AudioProvider({ children }: { children: ReactNode }) {
       const entries = Array.from(recentlyPlayedRef.current);
       recentlyPlayedRef.current = new Set(entries.slice(entries.length - 50));
     }
+    // 🎯 Enregistrer l'artiste dans l'historique d'écoute pour les recommandations
+    const currentAlb = albumRef.current;
+    if (currentAlb?.artist_id) {
+      const artistName = currentAlb.artist_name || currentAlb.artist?.name || 'Artiste';
+      recordArtistPlay(currentAlb.artist_id, artistName);
+    }
+    // 🎯 Enregistrer l'accès à l'album pour le LRU cache
+    if (currentAlb?.id) {
+      touchAlbumAccess(currentAlb.id);
+    }
+
     await startPlayback(q[index], index, alb, key);
   }, []);
 
@@ -825,13 +884,11 @@ export function AudioProvider({ children }: { children: ReactNode }) {
       
       if (!isFreeAlbum) {
         const firstUrl = `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(firstTrack.id)}/audio`;
-        console.log('[AudioContext] Préchargement sécurisé pour première piste:', firstTrack.title);
         prefetchSecureTrack(firstUrl, firstTrack.id);
       } else {
         let directUrl = getCloudflareAudioUrl(firstTrack.audio_storage_key || '');
         if (!directUrl) directUrl = (firstTrack.encrypted_audio_url || firstTrack.preview_url) ?? null;
         if (directUrl) {
-          console.log('[AudioContext] Préchargement simple pour première piste gratuite:', firstTrack.title);
           fetch(directUrl, { method: 'HEAD' }).catch(() => {});
         }
       }
@@ -925,7 +982,7 @@ export function AudioProvider({ children }: { children: ReactNode }) {
       
       // Vérifier que la piste existe bien avant de démarrer la lecture
       if (!track) {
-        console.warn('[AudioContext] resumePlayback: track not found at index', index);
+        logger.warn('[AudioContext] resumePlayback: track not found at index', index);
         return;
       }
       

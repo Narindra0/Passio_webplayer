@@ -197,30 +197,46 @@ export function consumeSecurePrefetch(trackId: string): Uint8Array | null {
   return null;
 }
 
+let progressIntervalActive = false;
+
 function startProgressInterval(callback: StatusCallback) {
+  if (progressIntervalActive) return;
+  progressIntervalActive = true;
   stopProgressInterval();
+
   const tick = () => {
-    if (isSecureAudio) {
-      if (secureAudioPlayer.isCurrentlyPlaying()) {
+    // Vérifier si la lecture est toujours active avant de continuer le RAF
+    const isActuallyPlaying = isSecureAudio
+      ? secureAudioPlayer.isCurrentlyPlaying()
+      : currentAudio !== null && !currentAudio.paused;
+
+    if (isActuallyPlaying) {
+      if (isSecureAudio) {
         callback({
           currentTime: secureAudioPlayer.getCurrentTime(),
           duration: secureAudioPlayer.getDuration(),
           playing: true,
         });
+      } else if (currentAudio) {
+        callback({
+          currentTime: currentAudio.currentTime,
+          duration: currentAudio.duration || 0,
+          playing: true,
+        });
       }
-    } else if (currentAudio && !currentAudio.paused) {
-      callback({
-        currentTime: currentAudio.currentTime,
-        duration: currentAudio.duration || 0,
-        playing: !currentAudio.paused,
-      });
+      animationFrameId = requestAnimationFrame(tick);
+    } else {
+      // Musique en pause ou arrêtée → ne pas lancer le prochain RAF
+      progressIntervalActive = false;
+      animationFrameId = null;
     }
-    animationFrameId = requestAnimationFrame(tick);
   };
+
   animationFrameId = requestAnimationFrame(tick);
 }
 
 function stopProgressInterval() {
+  progressIntervalActive = false;
   if (animationFrameId !== null) {
     cancelAnimationFrame(animationFrameId);
     animationFrameId = null;

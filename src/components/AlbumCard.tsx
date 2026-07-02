@@ -1,6 +1,7 @@
 import type { Album } from '@/types/album';
 import { useCachedImage } from '@/hooks/useCachedImage';
 import { Download, Play } from 'lucide-react';
+import { formatTitle } from '@/utils/formatTitle';
 
 type AlbumCardProps = {
   album: Album;
@@ -152,7 +153,7 @@ export function AlbumCard({ album, variant = 'row', onPress, isOffline = false, 
               marginBottom: 2,
             }}
           >
-            {album.title}
+            {formatTitle(album.title)}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
             <span style={{
@@ -254,7 +255,7 @@ export function AlbumCard({ album, variant = 'row', onPress, isOffline = false, 
             marginBottom: 2,
           }}
         >
-          {album.title}
+          {formatTitle(album.title)}
         </div>
         <div
           style={{

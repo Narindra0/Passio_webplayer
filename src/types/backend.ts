@@ -48,6 +48,7 @@ export type PublicAlbumSummary = {
     name: string;
     profile_picture_url?: string | null;
   }[];
+  publication_date?: string | null;
   created_at?: string;
   updated_at?: string;
 };

@@ -3,7 +3,7 @@ import { readEncryptedValue, saveEncryptedValue } from '@/services/storage';
 import { logger } from '@/utils/logger';
 import type { PublicAlbumDetails } from '@/types/backend';
 
-const ACTIVATION_SNAPSHOT_PREFIX = 'passio_album_snap_';
+const ACTIVATION_SNAPSHOT_KEY_PREFIX = 'album_snap_';
 
 export function isRestrictedAlbumPayload(raw: unknown): boolean {
   return Boolean(raw && typeof raw === 'object' && 'message' in raw && 'album' in raw && (raw as { album?: unknown }).album);
@@ -16,19 +16,35 @@ export function albumHasStreamableTracks(album: PublicAlbumDetails): boolean {
 export async function saveActivationSnapshot(album: PublicAlbumDetails, decryptionKey: string | null): Promise<void> {
   try {
     const payload = { album, decryption_key: decryptionKey, saved_at: new Date().toISOString() };
-    localStorage.setItem(ACTIVATION_SNAPSHOT_PREFIX + album.id, JSON.stringify(payload));
+    await saveEncryptedValue(ACTIVATION_SNAPSHOT_KEY_PREFIX + album.id, JSON.stringify(payload));
   } catch (error) {
     logger.warn('Failed to save activation snapshot:', error);
   }
 }
 
+const LEGACY_SNAPSHOT_PREFIX = 'passio_album_snap_';
+
 export async function readActivationSnapshot(albumId: string): Promise<{ album: PublicAlbumDetails; decryption_key: string | null } | null> {
   try {
-    const raw = localStorage.getItem(ACTIVATION_SNAPSHOT_PREFIX + albumId);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as { album: PublicAlbumDetails; decryption_key?: string | null };
-    if (!parsed?.album?.id) return null;
-    return { album: parsed.album, decryption_key: parsed.decryption_key ?? null };
+    // 1. Nouveau format (chiffré)
+    const raw = await readEncryptedValue(ACTIVATION_SNAPSHOT_KEY_PREFIX + albumId);
+    if (raw) {
+      const parsed = JSON.parse(raw) as { album: PublicAlbumDetails; decryption_key?: string | null };
+      if (parsed?.album?.id) return { album: parsed.album, decryption_key: parsed.decryption_key ?? null };
+    }
+    // 2. Fallback : ancien format (clair) — migration silencieuse
+    const legacyRaw = localStorage.getItem(LEGACY_SNAPSHOT_PREFIX + albumId);
+    if (legacyRaw) {
+      const parsed = JSON.parse(legacyRaw) as { album: PublicAlbumDetails; decryption_key?: string | null };
+      if (parsed?.album?.id) {
+        // Re-sauvegarde chiffrée + nettoyage
+        const payload = { album: parsed.album, decryption_key: parsed.decryption_key ?? null, saved_at: new Date().toISOString() };
+        await saveEncryptedValue(ACTIVATION_SNAPSHOT_KEY_PREFIX + albumId, JSON.stringify(payload));
+        localStorage.removeItem(LEGACY_SNAPSHOT_PREFIX + albumId);
+        return { album: parsed.album, decryption_key: parsed.decryption_key ?? null };
+      }
+    }
+    return null;
   } catch {
     return null;
   }

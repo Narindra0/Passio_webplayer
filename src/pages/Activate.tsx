@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AlertCircle, CheckCircle, CloudOff } from 'lucide-react';
 import { useAudioPlayback } from '@/contexts/AudioContext';
@@ -27,6 +27,20 @@ export function ActivateScreen() {
   const [feedback, setFeedback] = useState('Entrez votre code au format XXXX-XXXX (ex : L4WE-YC42).');
   const [feedbackType, setFeedbackType] = useState<'none' | 'success' | 'error'>('none');
   const [activatedAlbum, setActivatedAlbum] = useState<PublicAlbumDetails | null>(null);
+
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  // 🧹 Efface le code 10s après une erreur pour faciliter la resaisie
+  useEffect(() => {
+    if (feedbackType !== 'error') return;
+    const timer = setTimeout(() => {
+      setPassCode('');
+      setFeedback('Entrez votre code au format XXXX-XXXX (ex : L4WE-YC42).');
+      setFeedbackType('none');
+      inputRef.current?.focus();
+    }, 10_000);
+    return () => clearTimeout(timer);
+  }, [feedbackType]);
 
   const canSubmit = passCode.length === 8 && !loading;
 
@@ -97,7 +111,15 @@ export function ActivateScreen() {
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 32, opacity: isOfflineMode ? 0.45 : 1 }}>
           {/* PassCode Input */}
-          <div style={{ backgroundColor: 'var(--color-surface-elevated)', padding: 16, borderRadius: 24, boxShadow: '0 0 20px rgba(0,0,0,0.2)' }}>
+          <div
+            onClick={(e) => {
+              // Focus l'input caché quand on clique sur le conteneur
+              const input = e.currentTarget.querySelector('input');
+              if (input) input.focus();
+            }}
+            className={feedbackType === 'error' ? 'shake' : ''}
+            style={{ position: 'relative', backgroundColor: 'var(--color-surface-elevated)', padding: 16, borderRadius: 24, boxShadow: `0 0 20px rgba(0,0,0,0.2)${feedbackType === 'error' ? ', 0 0 0 1.5px rgba(220,20,60,0.5)' : ''}`, cursor: 'text' }}
+          >
             <div style={{ display: 'flex', justifyContent: 'center', gap: 8, padding: '10px 0' }}>
               {Array.from({ length: 8 }).map((_, i) => (
                 <div key={i} style={{
@@ -112,6 +134,11 @@ export function ActivateScreen() {
               ))}
             </div>
             <input
+              ref={(el) => {
+                inputRef.current = el;
+                // Auto-focus au montage
+                if (el && !isOfflineMode) setTimeout(() => el.focus(), 100);
+              }}
               value={passCode}
               onChange={(e) => setPassCode(normalizePassCode(e.target.value))}
               maxLength={8}

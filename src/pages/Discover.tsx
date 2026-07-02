@@ -2,24 +2,27 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Sparkles, ChevronLeft, ChevronRight,
-  ShoppingBag, Filter, Music, Users, Disc, Play,
+  ShoppingBag, Filter, Music, Disc, Play, Clock,
   Crown, Store, User, ArrowUpDown,
 } from 'lucide-react';
 import { AlbumCard } from '@/components/AlbumCard';
 import { PremiumAlbumCard } from '@/components/PremiumAlbumCard';
-import { ArtistCard } from '@/components/ArtistCard';
 import { TrackListItem, type TrackWithAlbum } from '@/components/TrackListItem';
+import { formatTitle } from '@/utils/formatTitle';
 import { Screen } from '@/components/Screen';
 import { getAlbum, listAlbums, listOwnedAlbums, unwrapAlbumDetails } from '@/services/api';
-import { isAlbumReadyOffline } from '@/services/downloadManager';
+import { isAlbumReadyOffline, listVaultAlbums } from '@/services/downloadManager';
 import { freeCatalogDetailsMap, readFreeCatalogCache, writeFreeCatalogCache, staleWhileRevalidate } from '@/services/freeCatalogCache';
 import { buildArtistsFromAlbums, mapTracksFromAlbum } from '@/services/freeCatalogSearch';
 import { resolveOfflinePlayback } from '@/services/offlineAccess';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useAlbumColors } from '@/hooks/useAlbumColors';
 import { useAudioPlayback } from '@/contexts/AudioContext';
+import { ArtistRecommendations } from '@/components/ArtistRecommendations';
 import { useLayout } from '@/contexts/LayoutContext';
+import { useLibraryMode } from '@/contexts/LibraryModeContext';
 import { getPurchaseAlbumUrl } from '@/config/urls';
+import { isPreorder, formatPublicationDate } from '@/utils/preorder';
 import type { PublicAlbumDetails, PublicAlbumSummary } from '@/types/backend';
 
 interface FilterState {
@@ -37,6 +40,8 @@ const TITRES_SCROLL_INCREMENT = 10;
 export function DiscoverScreen() {
   const navigate = useNavigate();
   const { playFromTrackList, currentTrack, isPlaying, isFullPlayerVisible } = useAudioPlayback();
+  const { effectiveMode } = useLibraryMode();
+  const isOfflineMode = effectiveMode === 'offline';
 
   const [newAlbums, setNewAlbums] = useState<PublicAlbumSummary[]>([]);
   const [paidAlbums, setPaidAlbums] = useState<PublicAlbumSummary[]>([]);
@@ -60,7 +65,6 @@ export function DiscoverScreen() {
   const [titresDisplayCount, setTitresDisplayCount] = useState(TITRES_INITIAL_PAGE_SIZE);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const albumCacheRef = useRef<Map<string, PublicAlbumDetails>>(new Map());
-  const scrollRefs = useRef<{ [key: string]: HTMLDivElement | null }>({});
   const isMobile = useMediaQuery('(max-width: 768px)');
   const { isSidebarCollapsed } = useLayout();
   // Layout adaptatif : si sidebar ouverte + player visible → affichage réduit
@@ -82,7 +86,7 @@ export function DiscoverScreen() {
   }, [bannerAlbums.length]);
 
   const loadOwnershipStatus = useCallback(async (albums: PublicAlbumSummary[]) => {
-    const paid = albums.filter((a) => !a.is_free && a.status === 'published');
+    const paid = albums.filter((a) => !a.is_free && ['published', 'scheduled'].includes(a.status));
     const map = new Map<string, boolean>();
     try {
       // 🎯 Un SEUL appel API au lieu de N appels individuels
@@ -132,14 +136,14 @@ export function DiscoverScreen() {
         setNewAlbums(sorted);
 
         // Banner: prioritize paid albums, fallback to free
-        const paidWithCover = albums.filter((a) => !a.is_free && a.cover_url && a.status === 'published');
-        const freeWithCover = albums.filter((a) => a.is_free && a.cover_url && a.status === 'published');
+        const paidWithCover = albums.filter((a) => !a.is_free && a.cover_url && ['published', 'scheduled'].includes(a.status));
+        const freeWithCover = albums.filter((a) => a.is_free && a.cover_url && ['published', 'scheduled'].includes(a.status));
         setBannerAlbums(
           paidWithCover.length >= 2 ? paidWithCover.slice(0, 3)
             : [...paidWithCover, ...freeWithCover].slice(0, 3),
         );
 
-        const paid = albums.filter((a) => !a.is_free && a.status === 'published');
+        const paid = albums.filter((a) => !a.is_free && ['published', 'scheduled'].includes(a.status));
         setPaidAlbums(paid);
 
         // Load ownership for paid albums
@@ -186,14 +190,14 @@ export function DiscoverScreen() {
       });
       setNewAlbums(sorted);
 
-      const paidWithCover = albums.filter((a) => !a.is_free && a.cover_url && a.status === 'published');
-      const freeWithCover = albums.filter((a) => a.is_free && a.cover_url && a.status === 'published');
+      const paidWithCover = albums.filter((a) => !a.is_free && a.cover_url && ['published', 'scheduled'].includes(a.status));
+      const freeWithCover = albums.filter((a) => a.is_free && a.cover_url && ['published', 'scheduled'].includes(a.status));
       setBannerAlbums(
         paidWithCover.length >= 2 ? paidWithCover.slice(0, 3)
           : [...paidWithCover, ...freeWithCover].slice(0, 3),
       );
 
-      const paid = albums.filter((a) => !a.is_free && a.status === 'published');
+      const paid = albums.filter((a) => !a.is_free && ['published', 'scheduled'].includes(a.status));
       setPaidAlbums(paid);
 
       // Load ownership
@@ -230,7 +234,7 @@ export function DiscoverScreen() {
           return db - da;
         });
         setNewAlbums(sorted);
-        const paid = offlineAlbums.filter((a) => !a.is_free && a.status === 'published');
+        const paid = offlineAlbums.filter((a) => !a.is_free && ['published', 'scheduled'].includes(a.status));
         setPaidAlbums(paid);
         // In cache fallback, all offline albums are owned
         const fallbackOwnedMap = new Map<string, boolean>();
@@ -238,7 +242,7 @@ export function DiscoverScreen() {
         setOwnedMap(fallbackOwnedMap);
         setArtists(buildArtistsFromAlbums(offlineAlbums));
         const bannerAlbums = offlineAlbums
-          .filter((a) => a.cover_url && a.status === 'published')
+          .filter((a) => a.cover_url && ['published', 'scheduled'].includes(a.status))
           .slice(0, 3);
         setBannerAlbums(bannerAlbums);
         const tracks = offlineAlbums.flatMap((album) => {
@@ -261,9 +265,55 @@ export function DiscoverScreen() {
     }
   }, [loadOwnershipStatus]);
 
+  // ⚡ Mode offline : charger UNIQUEMENT les albums du vault local
+  const loadOfflineData = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const vaultAlbums = await listVaultAlbums();
+      if (vaultAlbums.length === 0) {
+        setLoading(false);
+        return;
+      }
+
+      const sorted = [...vaultAlbums].sort((a, b) => {
+        const da = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const db = b.created_at ? new Date(b.created_at).getTime() : 0;
+        return db - da;
+      });
+      setNewAlbums(sorted);
+
+      const paidWithCover = vaultAlbums.filter((a) => !a.is_free && a.cover_url);
+      const freeWithCover = vaultAlbums.filter((a) => a.is_free && a.cover_url);
+      setBannerAlbums(
+        paidWithCover.length >= 2 ? paidWithCover.slice(0, 3)
+          : [...paidWithCover, ...freeWithCover].slice(0, 3),
+      );
+
+      const paid = vaultAlbums.filter((a) => !a.is_free && ['published', 'scheduled'].includes(a.status));
+      setPaidAlbums(paid);
+
+      // En offline, tous les albums du vault sont considérés possédés
+      const ownedMap = new Map<string, boolean>();
+      paid.forEach((a) => ownedMap.set(a.id, true));
+      setOwnedMap(ownedMap);
+
+      setArtists([]); // Pas de chargement artistes en offline
+      setFreeTracks([]); // Pas de titres gratuits streamables
+    } catch {
+      setError('Aucun album disponible hors-ligne.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
-    void loadData();
-  }, [loadData]);
+    if (isOfflineMode) {
+      void loadOfflineData();
+    } else {
+      void loadData();
+    }
+  }, [isOfflineMode, loadData, loadOfflineData]);
 
   // IntersectionObserver pour l'infinite scroll des titres mobile
   useEffect(() => {
@@ -290,16 +340,6 @@ export function DiscoverScreen() {
   useEffect(() => {
     setTitresDisplayCount(TITRES_INITIAL_PAGE_SIZE);
   }, [catalogSortBy]);
-
-  const scrollSection = (key: string, direction: 'left' | 'right') => {
-    const ref = scrollRefs.current[key];
-    if (!ref) return;
-    const scrollAmount = 380;
-    ref.scrollBy({
-      left: direction === 'left' ? -scrollAmount : scrollAmount,
-      behavior: 'smooth',
-    });
-  };
 
   async function handleTrackPress(track: TrackWithAlbum) {
     try { await playFromTrackList(freeTracks, albumCacheRef.current, track.id); }
@@ -350,14 +390,16 @@ export function DiscoverScreen() {
             width: 40,
             height: 40,
             borderRadius: 'var(--radius-full)',
-            background: 'var(--color-accent-gradient)',
+            background: isOfflineMode
+              ? 'linear-gradient(135deg, #555, #333)'
+              : 'var(--color-accent-gradient)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             flexShrink: 0,
-            boxShadow: '0 0 16px rgba(220,20,60,0.25)',
+            boxShadow: isOfflineMode ? 'none' : '0 0 16px rgba(220,20,60,0.25)',
           }}>
-            <Sparkles size={20} color="#fff" />
+            <Sparkles size={20} color={isOfflineMode ? 'var(--color-text-muted)' : '#fff'} />
           </div>
           <div>
             <h1 style={{
@@ -368,34 +410,64 @@ export function DiscoverScreen() {
               margin: 0,
               lineHeight: 1.15,
             }}>
-              Découverte
+              {isOfflineMode ? 'Bibliothèque' : 'Découverte'}
             </h1>
             <p className="desktop-only" style={{
               color: 'var(--color-text-secondary)',
               fontSize: 14,
               margin: '2px 0 0',
               lineHeight: 1.4,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
             }}>
-              Nouveautés, collections et tendances
+              {isOfflineMode ? (
+                <>
+                  <span style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 4,
+                    padding: '2px 8px',
+                    borderRadius: 'var(--radius-full)',
+                    background: 'rgba(220,20,60,0.08)',
+                    border: '1px solid rgba(220,20,60,0.12)',
+                    fontSize: 11,
+                    fontWeight: 700,
+                    color: 'var(--color-accent)',
+                  }}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                      <line x1="12" y1="9" x2="12" y2="13"/>
+                      <line x1="12" y1="17" x2="12.01" y2="17"/>
+                    </svg>
+                    Hors-ligne
+                  </span>
+                  Vos albums téléchargés
+                </>
+              ) : (
+                'Nouveautés, collections et tendances'
+              )}
             </p>
           </div>
         </div>
-        <button
-          onClick={() => setShowFilters(!showFilters)}
-          className="btn-ghost desktop-only"
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            padding: '10px 16px',
-            borderRadius: 'var(--radius-full)',
-            background: showFilters ? 'var(--color-surface-elevated)' : 'transparent',
-            border: showFilters ? '1px solid var(--color-border-highlight)' : '1px solid var(--color-border-subtle)',
-          }}
-        >
-          <Filter size={18} />
-          <span style={{ fontSize: 14, fontWeight: 600 }}>Filtres</span>
-        </button>
+        {!isOfflineMode && (
+          <button
+            onClick={() => setShowFilters(!showFilters)}
+            className="btn-ghost desktop-only"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '10px 16px',
+              borderRadius: 'var(--radius-full)',
+              background: showFilters ? 'var(--color-surface-elevated)' : 'transparent',
+              border: showFilters ? '1px solid var(--color-border-highlight)' : '1px solid var(--color-border-subtle)',
+            }}
+          >
+            <Filter size={18} />
+            <span style={{ fontSize: 14, fontWeight: 600 }}>Filtres</span>
+          </button>
+        )}
       </div>
 
       {/* Filters */}
@@ -621,7 +693,7 @@ export function DiscoverScreen() {
                           textOverflow: 'ellipsis',
                           whiteSpace: 'nowrap',
                         }}>
-                          {album.title}
+                          {formatTitle(album.title)}
                         </h2>
                         <p style={{
                           color: 'rgba(255,255,255,0.9)',
@@ -632,60 +704,103 @@ export function DiscoverScreen() {
                         </p>
 
                         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                          <button
-                            className="btn-primary"
-                            style={{
-                              padding: '14px 32px',
-                              fontSize: 16,
-                              fontWeight: 700,
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: 8,
-                            }}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              navigate(`/album/${album.id}`);
-                            }}
-                          >
-                            <Play size={20} fill="#fff" />
-                            Découvrir
-                          </button>
+                          {(() => {
+                            const preordered = isPreorder(album.publication_date);
+                            if (!isPremium && preordered) {
+                              return (
+                                <div
+                                  style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: 8,
+                                    padding: '14px 32px',
+                                    borderRadius: 'var(--radius-full)',
+                                    background: 'rgba(255,255,255,0.04)',
+                                    border: '1px solid rgba(255,255,255,0.08)',
+                                    color: 'rgba(255,255,255,0.45)',
+                                    fontSize: 14,
+                                    fontWeight: 700,
+                                    cursor: 'default',
+                                    backdropFilter: 'blur(8px)',
+                                  }}
+                                >
+                                  <Clock size={18} />
+                                  Disponible le {formatPublicationDate(album.publication_date!)}
+                                </div>
+                              );
+                            }
+                            return (
+                              <button
+                                className="btn-primary"
+                                style={{
+                                  padding: '14px 32px',
+                                  fontSize: 16,
+                                  fontWeight: 700,
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: 8,
+                                }}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  navigate(`/album/${album.id}`);
+                                }}
+                              >
+                                <Play size={20} fill="#fff" />
+                                Découvrir
+                              </button>
+                            );
+                          })()}
 
-                          {isPremium && price && (
-                            <a
-                              href={getPurchaseAlbumUrl(album.id)}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              onClick={(e) => e.stopPropagation()}
-                              style={{
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: 8,
-                                padding: '12px 24px',
-                                borderRadius: 'var(--radius-full)',
-                                background: 'rgba(255,255,255,0.08)',
-                                border: '1px solid rgba(255,255,255,0.15)',
-                                cursor: 'pointer',
-                                color: '#fff',
-                                fontSize: 14,
-                                fontWeight: 700,
-                                textDecoration: 'none',
-                                backdropFilter: 'blur(8px)',
-                                transition: 'all var(--transition-fast) ease',
-                              }}
-                              onMouseEnter={(e) => {
-                                e.currentTarget.style.background = 'rgba(255,215,0,0.15)';
-                                e.currentTarget.style.borderColor = '#FFD700';
-                              }}
-                              onMouseLeave={(e) => {
-                                e.currentTarget.style.background = 'rgba(255,255,255,0.08)';
-                                e.currentTarget.style.borderColor = 'rgba(255,255,255,0.15)';
-                              }}
-                            >
-                              <ShoppingBag size={16} />
-                              Acheter — {price}
-                            </a>
-                          )}
+                          {isPremium && price && (() => {
+                            const preordered = isPreorder(album.publication_date);
+                            return (
+                              <a
+                                href={getPurchaseAlbumUrl(album.id)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: 8,
+                                  padding: '12px 24px',
+                                  borderRadius: 'var(--radius-full)',
+                                  background: preordered
+                                    ? 'rgba(220,20,60,0.2)'
+                                    : 'rgba(255,255,255,0.08)',
+                                  border: preordered
+                                    ? '1px solid rgba(220,20,60,0.3)'
+                                    : '1px solid rgba(255,255,255,0.15)',
+                                  cursor: 'pointer',
+                                  color: '#fff',
+                                  fontSize: 14,
+                                  fontWeight: 700,
+                                  textDecoration: 'none',
+                                  backdropFilter: 'blur(8px)',
+                                  transition: 'all var(--transition-fast) ease',
+                                }}
+                                onMouseEnter={(e) => {
+                                  if (preordered) {
+                                    e.currentTarget.style.background = 'rgba(220,20,60,0.3)';
+                                  } else {
+                                    e.currentTarget.style.background = 'rgba(255,215,0,0.15)';
+                                    e.currentTarget.style.borderColor = '#FFD700';
+                                  }
+                                }}
+                                onMouseLeave={(e) => {
+                                  if (preordered) {
+                                    e.currentTarget.style.background = 'rgba(220,20,60,0.2)';
+                                  } else {
+                                    e.currentTarget.style.background = 'rgba(255,255,255,0.08)';
+                                    e.currentTarget.style.borderColor = 'rgba(255,255,255,0.15)';
+                                  }
+                                }}
+                              >
+                                {preordered ? <Clock size={16} /> : <ShoppingBag size={16} />}
+                                {preordered ? `Précommander — ${price}` : `Acheter — ${price}`}
+                              </a>
+                            );
+                          })()}
                         </div>
                       </div>
                     </div>
@@ -809,84 +924,12 @@ export function DiscoverScreen() {
             </div>
           )}
 
-          {/* ──────── 3. ARTISTES — Top tendances + à découvrir ──────── */}
-          {artists.length > 0 && (
-            <div>
-              <div className="section-header">
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Users size={20} color="var(--color-accent)" />
-                  <h2 className="section-title">Artistes</h2>
-                </div>
-                <span className="section-link" onClick={() => navigate('/artists')} style={{ cursor: 'pointer' }}>
-                  Voir tout
-                </span>
-              </div>
-              <div style={{ position: 'relative' }}>
-                <div
-                  ref={(el) => { scrollRefs.current['artists'] = el; }}
-                  style={{
-                    display: 'flex',
-                    gap: 12,
-                    overflowX: 'auto',
-                    padding: '4px 0',
-                    scrollbarWidth: 'none',
-                    scrollBehavior: 'smooth',
-                  }}
-                >
-                  {artists.slice(0, 10).map((artist) => (
-                    <div key={artist.id} style={{ minWidth: 170, flexShrink: 0 }}>
-                      <ArtistCard
-                        artist={artist}
-                        onPress={() => navigate(`/artist/${artist.id}`)}
-                      />
-                    </div>
-                  ))}
-                </div>
-                {artists.length > 5 && (
-                  <>
-                    <button
-                      onClick={() => scrollSection('artists', 'left')}
-                      className="btn-ghost"
-                      style={{
-                        position: 'absolute',
-                        left: -10,
-                        top: '50%',
-                        transform: 'translateY(-50%)',
-                        width: 40,
-                        height: 40,
-                        borderRadius: 'var(--radius-full)',
-                        padding: 0,
-                        background: 'var(--color-bg-dark)',
-                        border: '1px solid var(--color-border-subtle)',
-                        zIndex: 10,
-                      }}
-                    >
-                      <ChevronLeft size={20} />
-                    </button>
-                    <button
-                      onClick={() => scrollSection('artists', 'right')}
-                      className="btn-ghost"
-                      style={{
-                        position: 'absolute',
-                        right: -10,
-                        top: '50%',
-                        transform: 'translateY(-50%)',
-                        width: 40,
-                        height: 40,
-                        borderRadius: 'var(--radius-full)',
-                        padding: 0,
-                        background: 'var(--color-bg-dark)',
-                        border: '1px solid var(--color-border-subtle)',
-                        zIndex: 10,
-                      }}
-                    >
-                      <ChevronRight size={20} />
-                    </button>
-                  </>
-                )}
-              </div>
-            </div>
-          )}
+          {/* ──────── 3. ARTISTES — Recommandations + catalogue (fusionné) ──────── */}
+          <ArtistRecommendations
+            sectionTitle="Artistes"
+            maxArtists={16}
+            discoveryCount={4}
+          />
 
           {/* ──────── 4. TITRES GRATUITS — Aperçu rapide avec lien vers le catalogue ──────── */}
           {freeTracks.length > 0 && (
@@ -1288,7 +1331,7 @@ export function DiscoverScreen() {
                             textOverflow: 'ellipsis',
                             whiteSpace: 'nowrap',
                           }}>
-                            {album.title}
+                            {formatTitle(album.title)}
                           </span>
                           <span style={{
                             color: 'var(--color-text-muted)',

@@ -2,11 +2,13 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search, ChevronLeft } from 'lucide-react';
 import { ArtistCard } from '@/components/ArtistCard';
+import { ArtistRecommendations } from '@/components/ArtistRecommendations';
 import { Screen } from '@/components/Screen';
 import { listAlbums } from '@/services/api';
 import { isAlbumReadyOffline } from '@/services/downloadManager';
 import { readFreeCatalogCache } from '@/services/freeCatalogCache';
 import { buildArtistsFromAlbums } from '@/services/freeCatalogSearch';
+import { getArtistPlayCount } from '@/services/listeningHistory';
 import type { PublicAlbumSummary } from '@/types/backend';
 
 export function ArtistsScreen() {
@@ -142,6 +144,17 @@ export function ArtistsScreen() {
         </div>
       )}
 
+      {/* Artist Recommendations (basé sur l'historique d'écoute) */}
+      {!loading && !error && (
+        <div style={{ marginBottom: 40 }}>
+          <ArtistRecommendations
+            maxArtists={8}
+            discoveryCount={2}
+            hideViewAll={true}
+          />
+        </div>
+      )}
+
       {/* Artists Grid */}
       {!loading && !error && artists.length > 0 && (
         <div
@@ -152,13 +165,44 @@ export function ArtistsScreen() {
             animation: 'fadeIn 0.4s ease',
           }}
         >
-          {artists.map((artist) => (
-            <ArtistCard
-              key={artist.id}
-              artist={artist}
-              onPress={() => navigate(`/artist/${artist.id}`)}
-            />
-          ))}
+          {artists.map((artist) => {
+            const playCount = getArtistPlayCount(artist.id);
+            return (
+              <div key={artist.id} style={{ position: 'relative' }}>
+                <ArtistCard
+                  artist={artist}
+                  onPress={() => navigate(`/artist/${artist.id}`)}
+                />
+                {playCount > 0 && (
+                  <div style={{
+                    position: 'absolute',
+                    top: 14,
+                    right: 16,
+                    background: playCount >= 5
+                      ? 'linear-gradient(135deg, #FF6B6B, #DC143C)'
+                      : 'var(--color-surface-elevated)',
+                    border: playCount >= 5
+                      ? '1px solid rgba(255,107,107,0.3)'
+                      : '1px solid var(--color-border-subtle)',
+                    borderRadius: 'var(--radius-full)',
+                    padding: '2px 8px',
+                    fontSize: 11,
+                    fontWeight: 800,
+                    color: playCount >= 5 ? '#fff' : 'var(--color-text-secondary)',
+                    lineHeight: '18px',
+                    backdropFilter: 'blur(4px)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 4,
+                    zIndex: 2,
+                  }}>
+                    <span style={{ fontSize: 10 }}>▶</span>
+                    {playCount}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
     </Screen>
