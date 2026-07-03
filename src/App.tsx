@@ -7,9 +7,9 @@ import { MobileNav } from './components/MobileNav';
 import { BottomPlayer } from './components/BottomPlayer';
 import { ArtistLookupProvider } from './contexts/ArtistLookupContext';
 import { LayoutProvider } from './contexts/LayoutContext';
+import { LoadingScreen } from './pages/Loading';
 
 // Lazy-loaded pages
-const LoadingScreen = React.lazy(() => import('./pages/Loading').then(m => ({ default: m.LoadingScreen })));
 const Explorer = React.lazy(() => import('./pages/Explorer').then(m => ({ default: m.ExplorerScreen })));
 const Catalog = React.lazy(() => import('./pages/Catalog').then(m => ({ default: m.CatalogScreen })));
 const Activate = React.lazy(() => import('./pages/Activate').then(m => ({ default: m.ActivateScreen })));

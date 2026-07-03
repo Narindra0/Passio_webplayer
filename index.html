@@ -13,11 +13,11 @@
     <meta name="application-name" content="Pass'io Web" />
     <meta http-equiv="Content-Security-Policy" content="
       default-src 'self';
-      script-src 'self' 'unsafe-inline' 'unsafe-eval';
+      script-src 'self' 'unsafe-inline' 'unsafe-eval' https://static.cloudflareinsights.com;
       style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
       font-src 'self' https://fonts.gstatic.com;
       img-src 'self' data: blob: https: http:;
-      connect-src 'self' ws: http://localhost:* https://pass-io.onrender.com https://api.passiio.shop https://passiio.shop https://*.backblazeb2.com https://res.cloudinary.com;
+      connect-src 'self' ws: http://localhost:* https://pass-io.onrender.com https://api.passiio.shop https://passiio.shop https://*.backblazeb2.com https://res.cloudinary.com https://static.cloudflareinsights.com https://cloudflareinsights.com;
       media-src 'self' blob: https: http:;
       worker-src 'self' blob:;
       manifest-src 'self';
