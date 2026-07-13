@@ -11,5 +11,25 @@
   },
   "compatibility_flags": [
     "nodejs_compat"
+  ],
+  "main": "src/workers/streams-api.ts",
+  "kv_namespaces": [
+    {
+      "binding": "STREAMS_KV",
+      "id": "ab3e8f5f4b6542dcbe191cbe06325afd"
+    }
+  ],
+  "d1_databases": [
+    {
+      "binding": "ANALYTICS_DB",
+      "database_name": "passio-analytics",
+      "database_id": "78fc1879-9e72-4ee7-b116-127733af492e"
+    }
+  ],
+  "triggers": {
+    "crons": ["0 3 * * *"]
+  },
+  "routes": [
+    "player.passiio.shop/*"
   ]
 }

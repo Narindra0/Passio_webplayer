@@ -48,6 +48,37 @@ interface FlatArtist {
   fallback_image_url?: string | null;
 }
 
+// ── PRNG seedé par la date (découverte stable sur la journée) ───────────────
+
+/**
+ * Générateur pseudo-aléatoire Mulberry32.
+ * Produit une séquence déterministe de nombres entre 0 et 1 à partir d'un seed.
+ */
+function mulberry32(seed: number): () => number {
+  return function () {
+    let t = (seed += 0x6d2b79f5);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * Calcule un seed numérique stable pour la journée en cours (YYYY-MM-DD).
+ * Le même seed est retourné toute la journée, et change automatiquement le lendemain.
+ */
+function getDailySeed(): number {
+  const today = new Date();
+  const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  let hash = 0;
+  for (let i = 0; i < dateStr.length; i++) {
+    const char = dateStr.charCodeAt(i);
+    hash = (hash << 5) - hash + char;
+    hash |= 0; // force 32-bit integer
+  }
+  return Math.abs(hash);
+}
+
 // ── Graphe de co-occurrences ───────────────────────────────────────────────
 
 /**
@@ -261,9 +292,10 @@ function computeRecommendations(
     const unheardArtists = allArtists.filter(
       (a) => !selectedIds.has(a.id) && !excluded.has(a.id) && !listenedIds.has(a.id),
     );
-    // Fisher-Yates shuffle
+    // Fisher-Yates shuffle avec seed journalier (mêmes artistes toute la journée)
+    const rng = mulberry32(getDailySeed());
     for (let i = unheardArtists.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
+      const j = Math.floor(rng() * (i + 1));
       [unheardArtists[i], unheardArtists[j]] = [unheardArtists[j], unheardArtists[i]];
     }
     const discoveryBudget = Math.min(discoveryCount, maxArtists - results.length, unheardArtists.length);

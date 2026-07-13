@@ -1,6 +1,6 @@
 import react from '@vitejs/plugin-react';
 import path from 'path';
-import { defineConfig, loadEnv } from 'vite';
+import { defineConfig } from 'vite';
 import obfuscator from 'vite-plugin-javascript-obfuscator';
 import { visualizer } from 'rollup-plugin-visualizer';
 import { VitePWA } from 'vite-plugin-pwa';
@@ -16,7 +16,7 @@ export default defineConfig(({ mode }) => ({
     }),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'apple-touch-icon-180x180.png'],
+
       manifest: {
         name: "Pass'io Web Player — Lecteur de musique sécurisé",
         short_name: 'Passio',
@@ -50,6 +50,13 @@ export default defineConfig(({ mode }) => ({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
+        // ⚡ Offline shell : l'app s'ouvre même sans connexion
+        navigateFallback: '/index.html',
+        navigateFallbackAllowlist: [
+          // Permet les routes de l'app (ex: /discover, /album/123, /artist/abc)
+          // mais bloque les requêtes API /api/*
+          /^\/[^/]+(\/.*)?$/,
+        ],
         runtimeCaching: [
           {
             urlPattern: /^https?:\/\/res\.cloudinary\.com\/.*/i,
@@ -92,6 +99,30 @@ export default defineConfig(({ mode }) => ({
               expiration: {
                 maxEntries: 300,
                 maxAgeSeconds: 60 * 60 * 24 * 14, // 14 jours
+              },
+            },
+          },
+          {
+            // ⚡ Audio Cloudflare CDN (pistes gratuites) : Cache-First
+            urlPattern: /^https?:\/\/api\.passiio\.shop\/audio\/.*/i,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'passio-audio-cache',
+              expiration: {
+                maxEntries: 500,
+                maxAgeSeconds: 60 * 60 * 24 * 365, // 1 an (fichiers statiques)
+              },
+            },
+          },
+          {
+            // ⚡ Audio proxy backend (pistes payantes) : Cache-First
+            urlPattern: /^https?:\/\/api\.passiio\.shop\/api\/stream\/tracks\/.*\/audio/i,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'passio-audio-cache',
+              expiration: {
+                maxEntries: 500,
+                maxAgeSeconds: 60 * 60 * 24 * 365,
               },
             },
           },

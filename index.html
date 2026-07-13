@@ -1,36 +1,53 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="fr">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/png" href="/assets/images/passio-icon-round.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+
+    <!-- Primary Meta Tags -->
+    <title>Pass'io Web Player</title>
+    <meta name="title" content="Pass'io Web Player — Lecteur de musique sécurisé" />
+    <meta
+      name="description"
+      content="Écoutez votre musique en toute sécurité avec Pass'io Web Player. Streaming haute qualité, mode hors-ligne, et bibliothèque personnelle."
+    />
+
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Pass'io Web Player" />
+    <meta
+      property="og:description"
+      content="Écoutez votre musique en toute sécurité avec Pass'io Web Player."
+    />
+
+    <!-- Twitter -->
+    <meta property="twitter:card" content="summary_large_image" />
+    <meta property="twitter:title" content="Pass'io Web Player" />
+
+    <!-- PWA / Theme -->
     <meta name="theme-color" content="#000000" />
-    <meta name="description" content="Pass'io — Lecteur de musique sécurisé" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
     <meta name="apple-mobile-web-app-title" content="Pass'io" />
-    <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="application-name" content="Pass'io Web" />
-    <meta http-equiv="Content-Security-Policy" content="
-      default-src 'self';
-      script-src 'self' 'unsafe-inline' 'unsafe-eval' https://static.cloudflareinsights.com;
-      style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
-      font-src 'self' https://fonts.gstatic.com;
-      img-src 'self' data: blob: https: http:;
-      connect-src 'self' ws: http://localhost:* https://pass-io.onrender.com https://api.passiio.shop https://passiio.shop https://*.backblazeb2.com https://res.cloudinary.com https://static.cloudflareinsights.com https://cloudflareinsights.com;
-      media-src 'self' blob: https: http:;
-      worker-src 'self' blob:;
-      manifest-src 'self';
-      frame-src 'none';
-      base-uri 'self';
-      form-action 'none';
-      object-src 'none';
-    ">
-    <title>Pass'io Web</title>
-    <link rel="preconnect" href="http://localhost:3001" />
+    <meta name="application-name" content="Pass'io" />
+
+    <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Hanken+Grotesk:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+
+    <!-- Icons -->
+    <link rel="icon" href="/assets/images/icon.png" sizes="32x32" />
+    <link rel="icon" href="/assets/images/icon.png" sizes="192x192" />
+    <link rel="apple-touch-icon" href="/assets/images/passio-icon-round.png" sizes="180x180" />
+
+    <!-- PWA manifest (injected by vite-plugin-pwa) -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+
+    <!-- Security headers are set by Cloudflare / public/_headers -->
   </head>
   <body>
     <div id="root"></div>

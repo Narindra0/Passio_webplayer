@@ -51,6 +51,18 @@ export function LibraryModeProvider({ children }: { children: ReactNode }) {
     // Initial check
     if (!navigator.onLine) {
       setEffectiveMode('offline');
+    } else {
+      // ⚡ Au démarrage en ligne : migration + validation des clés
+      // (fire & forget — ne bloque pas le rendu)
+      (async () => {
+        try {
+          const { migrateKeysFormat, validateAllKeysOnline } = await import('@/services/keyManager');
+          await migrateKeysFormat();
+          await validateAllKeysOnline();
+        } catch {
+          // Échec silencieux — les clés seront validées plus tard
+        }
+      })();
     }
 
     return () => {

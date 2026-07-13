@@ -92,7 +92,7 @@ export class SecureAudioPlayer {
    */
   public ensureContext(): boolean {
     if (!this.audioContext) {
-      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      const AudioContextClass = window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
       try {
         this.audioContext = new AudioContextClass();
         logger.info('[SecureAudioPlayer] AudioContext créé avec succès');
@@ -172,9 +172,9 @@ export class SecureAudioPlayer {
           } else {
             throw new Error(`HTTP ${resp.status}`);
           }
-        } catch (err: any) {
+        } catch (err: unknown) {
           // Si l'abortController.stop() a été appelé, on abandonne immédiatement
-          if (err.name === 'AbortError') throw err;
+          if (err instanceof Error && err.name === 'AbortError') throw err;
 
           retries++;
           if (retries > MAX_RETRIES) {

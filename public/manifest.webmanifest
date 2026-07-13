@@ -1,0 +1,31 @@
+{
+  "name": "Pass'io Web Player — Lecteur de musique sécurisé",
+  "short_name": "Passio",
+  "description": "Écoutez votre musique en toute sécurité avec Pass'io Web Player. Streaming haute qualité, mode hors-ligne, et bibliothèque personnelle.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0A0A0A",
+  "theme_color": "#000000",
+  "lang": "fr-FR",
+  "scope": "/",
+  "orientation": "portrait",
+  "categories": ["music", "entertainment"],
+  "icons": [
+    {
+      "src": "/assets/images/passio-icon-round.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/assets/images/passio-icon-round.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "/assets/images/passio-icon-round.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

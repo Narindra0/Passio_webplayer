@@ -17,6 +17,11 @@ type StatusCallback = (status: {
   isLoaded?: boolean;
 }) => void;
 
+type LegacyAudioElement = HTMLAudioElement & {
+  playsInline?: boolean;
+  disableRemotePlayback?: boolean;
+};
+
 let currentAudio: HTMLAudioElement | null = null;
 let currentHls: Hls | null = null;
 let currentStatusCallback: StatusCallback | null = null;
@@ -481,7 +486,7 @@ export async function playRemoteTrack(
   isEncrypted: boolean = true,
   onStatusUpdate?: StatusCallback,
   fallbackUrls: string[] = []
-): Promise<HTMLAudioElement | any> {
+): Promise<HTMLAudioElement> {
   cancelCurrentPrefetch();
   await stopCurrentTrack();
 
@@ -493,8 +498,9 @@ export async function playRemoteTrack(
     if (onStatusUpdate) setupAudioEvents(audio, onStatusUpdate);
     audio.crossOrigin = 'anonymous';
     audio.preload = 'auto';
-    (audio as any).playsInline = true; // Important pour iOS pour éviter le plein écran
-    (audio as any).disableRemotePlayback = false; // Permet la lecture sur appareils externes
+    const htmlAudio = audio as LegacyAudioElement;
+    htmlAudio.playsInline = true; // Important pour iOS pour éviter le plein écran
+    htmlAudio.disableRemotePlayback = false; // Permet la lecture sur appareils externes
     
     logger.info('[Audio] Loading audio from:', audioUrl);
     
@@ -856,7 +862,7 @@ export async function playStream(
   streamUrl: string,
   onStatusUpdate?: StatusCallback,
   skipStopCurrent: boolean = false
-): Promise<HTMLAudioElement | any> {
+): Promise<HTMLAudioElement> {
   if (!skipStopCurrent) {
     await stopCurrentTrack();
   }
@@ -874,8 +880,9 @@ export async function playStream(
     if (onStatusUpdate) setupAudioEvents(audio, onStatusUpdate);
     audio.crossOrigin = 'anonymous';
     audio.preload = 'metadata'; // Preload only metadata, not full file
-    (audio as any).playsInline = true; // Important pour iOS (non-standard property)
-    (audio as any).disableRemotePlayback = false;
+    const htmlAudio = audio as LegacyAudioElement;
+    htmlAudio.playsInline = true; // Important pour iOS (non-standard property)
+    htmlAudio.disableRemotePlayback = false;
     
     // Attendre que le média soit prêt, sans timeout problématique
     await new Promise<void>((resolve, reject) => {

@@ -3,7 +3,8 @@ import { getCloudflareAudioUrl } from '@/config/urls';
 import { logger } from '@/utils/logger';
 import type { PublicAlbumDetails, PublicAlbumSummary, PublicTrack } from '@/types/backend';
 import { secureAudioPlayer } from './secureAudioPlayer';
-import { saveTrackToDB, isTrackInDB, getTrackFromDB, deleteTrackFromDB } from './indexedDB';
+import { saveAudioToCache, isAudioInCache, getAudioBlobUrl, deleteAudioFromCache, getAllCachedTrackIds } from './offlineCache';
+import { isTrackInDB, getTrackFromDB } from './indexedDB';
 import { saveDownloadQueue, getDownloadQueue, clearDownloadQueue } from './storageQuota';
 
 export type DownloadStatus = 'idle' | 'downloading' | 'completed' | 'error' | 'cancelled';
@@ -153,8 +154,10 @@ export async function isAlbumReadyOffline(albumId: string): Promise<boolean> {
     const album = JSON.parse(metadata) as PublicAlbumDetails;
     if (!album.tracks) return false;
     for (const track of album.tracks) {
-      const exists = await isTrackInDB(track.id);
-      if (!exists) return false;
+      // Vérifier d'abord Cache Storage (nouveau), puis IndexedDB (ancien — rétrocompatibilité)
+      const inCache = await isAudioInCache(track.id);
+      const inOldDB = await isTrackInDB(track.id);
+      if (!inCache && !inOldDB) return false;
     }
     return true;
   } catch {
@@ -239,6 +242,9 @@ export async function deleteAlbumOffline(albumId: string): Promise<boolean> {
     const metadata = await getLocalAlbumMetadata(albumId);
     if (metadata?.tracks) {
       for (const track of metadata.tracks) {
+        // Supprimer du Cache Storage (nouveau) et IndexedDB (ancien — rétrocompatibilité)
+        await deleteAudioFromCache(track.id);
+        const { deleteTrackFromDB } = await import('./indexedDB');
         await deleteTrackFromDB(track.id);
       }
     }
@@ -262,6 +268,9 @@ export async function deleteAllOffline(): Promise<boolean> {
     for (const album of albums) {
       await deleteAlbumOffline(album.id);
     }
+    // Vider le cache audio complet
+    const { clearAudioCache } = await import('./offlineCache');
+    await clearAudioCache();
     // Nettoyage supplémentaire : forcer l'itération de toutes les clés
     const keysToRemove: string[] = [];
     for (let i = 0; i < localStorage.length; i++) {
@@ -270,7 +279,8 @@ export async function deleteAllOffline(): Promise<boolean> {
         key?.startsWith('passio_album_metadata_') ||
         key?.startsWith('passio_key_') ||
         key?.startsWith('passio_dl_queue_') ||
-        key?.startsWith('passio_lyrics_')
+        key?.startsWith('passio_lyrics_') ||
+        key?.startsWith('passio_audio_cache_map_')  // Nettoyer les anciens mappings
       ) {
         keysToRemove.push(key);
       }
@@ -285,16 +295,16 @@ export async function deleteAllOffline(): Promise<boolean> {
 }
 
 /**
- * Télécharge et met en cache une piste gratuite dans IndexedDB.
+ * Télécharge et met en cache une piste gratuite dans le Cache Storage.
  * Évite de re-télécharger le même fichier audio à chaque écoute.
- * Utilise un fetch + ArrayBuffer pour sauvegarder dans le DB.
  */
 export async function cacheFreeTrack(
   trackId: string,
   audioUrl: string,
 ): Promise<boolean> {
   try {
-    const alreadyCached = await isTrackInDB(trackId);
+    // Vérifier d'abord Cache Storage, puis IndexedDB (rétrocompatibilité)
+    const alreadyCached = await isAudioInCache(trackId) || await isTrackInDB(trackId);
     if (alreadyCached) return true;
 
     const response = await fetch(audioUrl);
@@ -303,9 +313,9 @@ export async function cacheFreeTrack(
       return false;
     }
 
-    const buffer = await response.arrayBuffer();
-    await saveTrackToDB(trackId, new Uint8Array(buffer));
-    logger.info('[CacheFreeTrack] ✅ Piste gratuite mise en cache:', trackId, `(${(buffer.byteLength / 1024).toFixed(0)} Ko)`);
+    // Stocker dans Cache Storage avec l'URL source comme clé
+    await saveAudioToCache(trackId, response, audioUrl);
+    logger.info('[CacheFreeTrack] ✅ Piste gratuite mise en cache:', trackId);
     return true;
   } catch (err) {
     logger.warn('[CacheFreeTrack] ❌ Échec cache pour', trackId, err);
@@ -314,10 +324,16 @@ export async function cacheFreeTrack(
 }
 
 /**
- * Récupère une piste gratuite depuis le cache IndexedDB sous forme de Blob URL.
+ * Récupère une piste gratuite depuis le Cache Storage sous forme de Blob URL.
+ * Fallback vers IndexedDB pour la rétrocompatibilité.
  * Retourne null si non trouvée.
  */
 export async function getCachedFreeTrackUrl(trackId: string): Promise<string | null> {
+  // 1. Essayer Cache Storage (nouveau système)
+  const cacheBlobUrl = await getAudioBlobUrl(trackId);
+  if (cacheBlobUrl) return cacheBlobUrl;
+
+  // 2. Fallback IndexedDB (ancien système — rétrocompatibilité)
   try {
     const exists = await isTrackInDB(trackId);
     if (!exists) return null;
@@ -325,7 +341,6 @@ export async function getCachedFreeTrackUrl(trackId: string): Promise<string | n
     const data = await getTrackFromDB(trackId);
     if (!data) return null;
 
-    // Convertir en ArrayBuffer pour Blob (gère Uint8Array<ArrayBufferLike>)
     const buffer = data instanceof Uint8Array ? data.buffer as ArrayBuffer : data;
     const blob = new Blob([buffer]);
     const url = URL.createObjectURL(blob);
@@ -349,11 +364,35 @@ export function getDownloadProgress(albumId: string): DownloadProgress | undefin
   return downloadState.get(albumId);
 }
 
+// ⚡ Migration unique IndexedDB → Cache Storage au premier téléchargement
+let migrationTriggered = false;
+
+/**
+ * Déclenche la migration des anciennes données IndexedDB vers Cache Storage.
+ * Ne s'exécute qu'une seule fois.
+ */
+async function ensureMigration(): Promise<void> {
+  if (migrationTriggered) return;
+  migrationTriggered = true;
+  try {
+    const { migrateFromIndexedDB } = await import('./offlineCache');
+    const count = await migrateFromIndexedDB();
+    if (count > 0) {
+      logger.info('[DownloadManager] 🔄 Migration terminée :', count, 'piste(s)');
+    }
+  } catch {
+    // Échec silencieux — le fallback IndexedDB est toujours actif
+  }
+}
+
 export async function downloadAlbumWithStreaming(
   album: PublicAlbumDetails,
   decryptionKey: string | null,
   onTrackReady?: (track: PublicTrack, index: number) => void,
 ): Promise<DownloadStatus> {
+  // ⚡ Migration unique IndexedDB → Cache Storage
+  await ensureMigration();
+
   const albumId = album.id;
   const tracks = album.tracks ?? [];
   if (tracks.length === 0) return 'error';    // ⚡ Éviction LRU : libérer de l'espace si nécessaire
@@ -373,7 +412,10 @@ export async function downloadAlbumWithStreaming(
 
   // Sauvegarder les métadonnées même si la reprise est partielle
   localStorage.setItem(`passio_album_metadata_${albumId}`, JSON.stringify(album));
-  if (decryptionKey) localStorage.setItem(`passio_key_${albumId}`, decryptionKey);
+  if (decryptionKey) {
+    const { persistVaultDecryptionKey } = await import('./vault');
+    await persistVaultDecryptionKey(albumId, decryptionKey);
+  }
 
   // ⚡ Créer un AbortController pour ce téléchargement
   const abortController = new AbortController();
@@ -409,37 +451,42 @@ export async function downloadAlbumWithStreaming(
 
       let downloaded = false;
       let retries = 0;
-      const MAX_RETRIES = 3;
-
-      while (!downloaded && retries < MAX_RETRIES && !signal.aborted) {
+      const MAX_RETRIES = 3;      while (!downloaded && retries < MAX_RETRIES && !signal.aborted) {
         try {
+          // 🎯 Déterminer l'URL source ET le type MIME avant de télécharger
+          // (nécessaire pour la clé de cache et l'interception Service Worker)
+          const sourceUrl = isFreeAlbum
+            ? (getCloudflareAudioUrl(track.audio_storage_key || '') || track.encrypted_audio_url || track.preview_url || '')
+            : `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(track.id)}/audio`;
+
+          if (!sourceUrl) throw new Error('Aucune URL disponible pour le téléchargement');
+
           let trackData: Uint8Array;
 
           if (isFreeAlbum) {
             // 🚀 Piste gratuite → téléchargement direct Cloudflare CDN
-            const cfUrl = getCloudflareAudioUrl(track.audio_storage_key || '');
-            const directUrl = cfUrl || track.encrypted_audio_url || track.preview_url;
-            if (directUrl) {
-              const response = await fetch(directUrl, { signal });
-              if (!response.ok) throw new Error(`HTTP ${response.status}`);
-              const buffer = await response.arrayBuffer();
-              trackData = new Uint8Array(buffer);
-            } else {
-              throw new Error('Aucune URL CDN disponible');
-            }
+            const response = await fetch(sourceUrl, { signal });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const buffer = await response.arrayBuffer();
+            trackData = new Uint8Array(buffer);
           } else {
             // 🔒 Piste payante → proxy backend avec XOR sécurisé
-            // Récupérer un token audio avant le téléchargement
             await secureAudioPlayer.fetchToken(track.id);
             secureAudioPlayer.currentTrackId = track.id;
-            const proxyUrl = `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(track.id)}/audio`;
-            trackData = await secureAudioPlayer.downloadInChunks(proxyUrl, undefined, undefined, signal);
+            trackData = await secureAudioPlayer.downloadInChunks(sourceUrl, undefined, undefined, signal);
           }
 
-          await saveTrackToDB(track.id, trackData);
+          // 💾 Sauvegarder dans Cache Storage (avec l'URL réelle comme clé pour l'interception SW)
+          const arrayBuffer = trackData.buffer.slice(trackData.byteOffset, trackData.byteLength + trackData.byteOffset) as ArrayBuffer;
+          const blob = new Blob([arrayBuffer]);
+          const cacheResponse = new Response(blob, {
+            headers: { 'Content-Type': isFreeAlbum ? 'audio/mpeg' : 'audio/mp4' },
+          });
+          await saveAudioToCache(track.id, cacheResponse, sourceUrl);
           downloaded = true;
-        } catch (err: any) {
-          if (err.name === 'AbortError' || signal.aborted) {
+        } catch (err: unknown) {
+          const error = err instanceof Error ? err : null;
+          if (error?.name === 'AbortError' || signal.aborted) {
             return false;
           }
           retries++;

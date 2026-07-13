@@ -1,5 +1,6 @@
 import { getAlbum, getAlbumDecryptionKey, listOwnedAlbums, refreshAlbumTracks, unwrapAlbumDetails } from '@/services/api';
 import { readEncryptedValue, saveEncryptedValue } from '@/services/storage';
+import { persistVaultDecryptionKey } from '@/services/vault';
 import { logger } from '@/utils/logger';
 import type { PublicAlbumDetails } from '@/types/backend';
 
@@ -52,15 +53,20 @@ export async function readActivationSnapshot(albumId: string): Promise<{ album: 
 
 export async function resolveAlbumDecryptionKey(albumId: string, hint?: string | null): Promise<string | null> {
   if (hint) {
-    await saveEncryptedValue(`passio_key_${albumId}`, hint);
+    await persistVaultDecryptionKey(albumId, hint);
     return hint;
   }
   const stored = await readEncryptedValue(`passio_key_${albumId}`);
-  if (stored) return stored;
+  if (stored) {
+    // ⚡ Migrer silencieusement vers le nouveau format enrichi
+    // (fire & forget — ne bloque pas)
+    persistVaultDecryptionKey(albumId, stored);
+    return stored;
+  }
   try {
     const { decryption_key } = await getAlbumDecryptionKey(albumId);
     if (decryption_key) {
-      await saveEncryptedValue(`passio_key_${albumId}`, decryption_key);
+      await persistVaultDecryptionKey(albumId, decryption_key);
       return decryption_key;
     }
   } catch { /* ignore */ }

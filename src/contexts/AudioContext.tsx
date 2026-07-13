@@ -13,7 +13,7 @@ import {
     type ReactNode,
 } from 'react';
 
-import { isAlbumOwnedByDevice, resolveAlbumDecryptionKey } from '@/services/albumOwnership';
+import { resolveAlbumDecryptionKey } from '@/services/albumOwnership';
 import { getAlbum, getApiBaseUrl, listAlbums, listOwnedAlbums, unwrapAlbumDetails } from '@/services/api';
 import { getCloudflareAudioUrl } from '@/config/urls';
 import {
@@ -39,8 +39,9 @@ import { getOrCreateDeviceId } from '@/services/device';
 import { secureAudioPlayer } from '@/services/secureAudioPlayer';
 import { mseSecurePlayer } from '@/services/mseSecurePlayer';
 import { recordArtistPlay } from '@/services/listeningHistory';
-import { cacheFreeTrack, getCachedFreeTrackUrl, touchAlbumAccess } from '@/services/downloadManager';
+import { getCachedFreeTrackUrl, touchAlbumAccess } from '@/services/downloadManager';
 import { isPreorder } from '@/utils/preorder';
+import { recordTrackEnded, fetchCollaborativeRecommendation } from '@/services/streamTracker';
 
 export type PlayMode = 'hls' | 'stream' | 'local' | 'remote' | 'device';
 export type QueueMode = 'sequential' | 'shuffle';
@@ -210,20 +211,59 @@ export function AudioProvider({ children }: { children: ReactNode }) {
   const recentlyPlayedRef = useRef<Set<string>>(new Set());
   const isAutoplayingRef = useRef(false);
   const previousTrackTitleRef = useRef<string | null>(null);
+  const previousTrackIdRef = useRef<string | null>(null);
   const [autoplayEnabled, setAutoplayEnabledState] = useState(true);
   const [isAutoplaying, setIsAutoplaying] = useState(false);
 
   // 🎯 Algorithme Radio : générer des recommandations quand la file est terminée
   async function handleAutoplay() {
-    if (isDevicePlaybackRef.current) return; // Pas d'autoplay en mode device
-    if (!autoplayEnabledRef.current) return; // Désactivé par l'utilisateur
+    // ─── Pas de radio en mode appareil ou si désactivé ───
+    if (isDevicePlaybackRef.current) return;
+    if (!autoplayEnabledRef.current) return;
+
+    // ─── 🛡️ GARDE ABSOLUE : ne JAMAIS interrompre un album/EP ───
+    //    Si des pistes restent dans la file (ex: album à 5 pistes, on est à la 3),
+    //    on ne fait ABSOLUMENT RIEN — les pistes suivantes joueront dans l'ordre.
+    //    handleAutoplay() n'est normalement appelé que quand la file est épuisée,
+    //    mais cette garde existe contre tout appel intempestif.
+    const remainingAfterCurrent = (queueRef.current.length - 1) - currentIndexRef.current;
+    if (remainingAfterCurrent > 0) {
+      logger.debug('[Autoplay] 🛡️ Garde active —', remainingAfterCurrent, 'piste(s) restante(s) dans la file');
+      return;
+    }
 
     const currentAlb = albumRef.current;
     const finishedTrackIds = recentlyPlayedRef.current;
     if (!currentAlb) return;
 
+    // 🎯 Déterminer le contexte : Album/EP terminé ou Single/TrackList
+    const albumType = currentAlb.type || 'album';
+    const isAlbumEpContext = (albumType === 'album' || albumType === 'ep') && queueScopeRef.current === 'album';
+    logger.info('[Autoplay] 📻 Mode Radio activé —',
+      isAlbumEpContext
+        ? `Album/EP (${albumType}) terminé — recherche de recommandations`
+        : `Single/TrackList — activation immédiate`
+    );
+
+    // 🎯 Recommandation collaborative : parallélisée avec listAlbums()
+    let collabTrackId: string | null = null;
+    const lastTrackId = previousTrackIdRef.current;
+    const [allAlbums, collabResult] = await Promise.all([
+      listAlbums(),
+      lastTrackId
+        ? fetchCollaborativeRecommendation(lastTrackId).catch(() => {
+            logger.debug('[Autoplay] ❌ CF Worker indisponible, fallback content-based');
+            return null;
+          })
+        : Promise.resolve(null),
+    ]);
+    if (collabResult?.trackId) {
+      collabTrackId = collabResult.trackId;
+      logger.info('[Autoplay] 🤝 Recommandation collaborative:', collabTrackId);
+    }
+
     try {
-      const allAlbums = await listAlbums();
+      // listAlbums() already done above in Promise.all
 
       // 🎯 Priorité 1 : Même artiste — autres albums du même artiste
       //    Priorité 2 : Même type/style — albums de même type (single/album/ep) et même gratuité
@@ -265,6 +305,21 @@ export function AudioProvider({ children }: { children: ReactNode }) {
         }
       }
 
+      // 🎯 Injecter la recommandation collaborative en tête si disponible
+      //    et si elle n'est pas déjà dans la liste
+      if (collabTrackId && !recommended.some(r => r.track.id === collabTrackId)) {
+        for (const details of detailsList) {
+          if (details) {
+            const collabTrack = (details.tracks || []).find(t => t.id === collabTrackId);
+            if (collabTrack) {
+              recommended.unshift({ track: collabTrack, album: details });
+              logger.info('[Autoplay] 📌 Recommandation collaborative en tête de file:', collabTrack.title);
+              break;
+            }
+          }
+        }
+      }
+
       // Mélanger les recommandations pour un effet radio
       for (let i = recommended.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
@@ -296,36 +351,6 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  /**
-   * Solution C: Précharge immédiatement la piste suivante dans la file.
-   * Se déclenche dès qu'une piste commence à jouer, pour une transition
-   * sans aucune latence vers la piste suivante.
-   */
-  function triggerNextTrackPrefetch(currentIdx: number) {
-    const q = queueRef.current;
-    let nextIdx = currentIdx + 1;
-    if (nextIdx >= q.length && repeatModeRef.current === 'all' && q.length > 0) {
-      nextIdx = 0;
-    }
-    if (nextIdx >= 0 && nextIdx < q.length) {
-      const nextTrack = q[nextIdx];
-      if (nextTrack) {
-        const isFreeAlbum = Boolean(albumRef.current?.is_free);
-        if (!isFreeAlbum) {
-          const nextUrl = `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(nextTrack.id)}/audio`;
-          prefetchSecureTrack(nextUrl, nextTrack.id);
-        } else {
-          // Pour les pistes gratuites : préchargement simple via le navigateur
-          let directUrl = getCloudflareAudioUrl(nextTrack.audio_storage_key || '');
-          if (!directUrl) directUrl = (nextTrack.encrypted_audio_url || nextTrack.preview_url) ?? null;
-          if (directUrl) {
-            // Juste une requête HEAD pour mettre en cache
-            fetch(directUrl, { method: 'HEAD' }).catch(() => {});
-          }
-        }
-      }
-    }
-  }
 
   const currentTrack = useMemo(
     () => currentIndex >= 0 && currentIndex < queue.length ? queue[currentIndex] ?? null : null,
@@ -347,10 +372,10 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     const fullLabel = artist ? `${label} — ${artist}` : label;
 
     if (track && isPlaying) {
-      document.title = `🎵 ${fullLabel} | Pass'io Web`;
+      document.title = `${fullLabel} | Pass'io Web`;
       previousTrackTitleRef.current = fullLabel;
     } else if (track && !isPlaying && previousTrackTitleRef.current === fullLabel) {
-      document.title = `⏸ ${fullLabel} | Pass'io Web`;
+      document.title = `${fullLabel} | Pass'io Web`;
     } else if (!track) {
       document.title = "Pass'io Web";
       previousTrackTitleRef.current = null;
@@ -438,7 +463,7 @@ export function AudioProvider({ children }: { children: ReactNode }) {
         } else {
           localStorage.removeItem('passio_audio_session');
         }
-      } catch (e) {
+      } catch {
         localStorage.removeItem('passio_audio_session');
       }
     }
@@ -480,37 +505,6 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     return resolved;
   }
 
-  async function resolvePlayMode(track: PublicTrack, albumData: PublicAlbumDetails, key: string | null): Promise<PlayMode> {
-    const isFreeRelease = Boolean(albumData.is_free);
-    let effectiveKey = key;
-    let ownedPaid = false;
-    if (!isFreeRelease) {
-      effectiveKey = await resolveKeyForAlbum(albumData, key);
-      ownedPaid = libraryRef.current.some((entry) => entry.id === albumData.id) || await isAlbumOwnedByDevice(albumData.id);
-    }
-
-    // 🎯 Pour les pistes gratuites : utiliser d'abord les URL directes (Cloudflare) pour éviter les problèmes de décodage
-    if (isFreeRelease) {
-      if (track.encrypted_audio_url || track.preview_url || track.stream_url) {
-        return 'stream';
-      }
-    }
-
-    // 🔒 PROTECTION IDM pour les pistes payantes : forcer le mode remote pour passer par le proxy
-    if (track.id && (track.audio_storage_key || track.encrypted_audio_url || track.preview_url)) {
-      return 'remote';
-    }
-
-    // 🚀 HLS stream (Albums prêts)
-    if (isFreeRelease && albumData.stream_status === 'ready' && albumData.stream_url) {
-      return 'hls';
-    }
-
-    // Fallback URL externes (ex: stream_url vers soundcloud, radio...)
-    if (track.stream_url) return 'stream';
-
-    throw new Error("Aucune URL de lecture disponible pour ce titre.");
-  }
 
   function setParallelQueue(albums: PublicAlbumDetails[], keys: (string | null)[]) {
     queueParallelRef.current = { albums, keys };
@@ -578,6 +572,14 @@ export function AudioProvider({ children }: { children: ReactNode }) {
   async function advanceToNextTrack() {
     if (trackAdvanceLockRef.current) return;
     trackAdvanceLockRef.current = true;
+
+    // 🎯 Tracking collaboratif : enregistrer la fin de la piste (Fire & Forget)
+    const endedTrack = queueRef.current[currentIndexRef.current];
+    if (endedTrack) {
+      recordTrackEnded(endedTrack.id, previousTrackIdRef.current ?? undefined);
+      previousTrackIdRef.current = endedTrack.id;
+    }
+
     try {
       const repeat = repeatModeRef.current;
       if (repeat === 'one') {
@@ -667,7 +669,11 @@ export function AudioProvider({ children }: { children: ReactNode }) {
       await stopCurrentTrack();
       await ensureStreamDeviceId();
 
-      const handleStatus = (status: any) => {
+      const handleStatus = (status: {
+        currentTime?: number;
+        duration?: number;
+        playing?: boolean;
+      }) => {
         const currentTime = status.currentTime ?? 0;
         const dur = status.duration ?? 0;
         if (dur > 0) updateProgressThrottled(currentTime, dur);
@@ -701,9 +707,7 @@ export function AudioProvider({ children }: { children: ReactNode }) {
         const cfUrl = getCloudflareAudioUrl(track.audio_storage_key || '');
         if (cfUrl) directUrls.push(cfUrl);
         if (track.encrypted_audio_url) directUrls.push(track.encrypted_audio_url);
-        if (track.preview_url && track.preview_url !== track.encrypted_audio_url) directUrls.push(track.preview_url);
-        
-        for (const directUrl of directUrls) {
+        if (track.preview_url && track.preview_url !== track.encrypted_audio_url) directUrls.push(track.preview_url);          for (const directUrl of directUrls) {
           try {
             const audio = await playStream(directUrl, handleStatus, true);
             if (audio) {
@@ -712,8 +716,6 @@ export function AudioProvider({ children }: { children: ReactNode }) {
               // 🎯 Synchroniser le volume après la création du nouvel élément audio direct
               setAudioVolume(volumeRef.current);
               if (isMuted) setAudioMuted(true);
-              // ⚡ Mettre en cache la piste gratuite en arrière-plan (pas de await)
-              cacheFreeTrack(track.id, directUrl);
               return;
             }
           } catch (err) {
@@ -759,7 +761,7 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  async function generateShuffledQueue(startAlbumId?: string, startTrackIndex?: number) {
+  async function generateShuffledQueue() {
     const lib = libraryRef.current;
     if (lib.length === 0) return;
 
@@ -993,17 +995,16 @@ export function AudioProvider({ children }: { children: ReactNode }) {
         setDecryptionKey(key);
       }
       const seekTime = pendingSeekSecondsRef.current;
+      pendingSeekSecondsRef.current = null;
       const p = startPlayback(track, index, alb, key);
-      pendingSeekSecondsRef.current = seekTime;
       await p;
+      if (seekTime !== null) {
+        audioSeekToSeconds(seekTime);
+      }
     }
   }, []);
 
   const togglePlayPause = useCallback(() => {
-    if (pendingSeekSecondsRef.current !== null && currentIndexRef.current >= 0 && albumRef.current) {
-      resumePlayback();
-      return;
-    }
     toggleAudioPlayPause().then((newState) => {
       setIsPlaying(newState);
       isPlayingRef.current = newState;

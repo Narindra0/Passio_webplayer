@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, Compass, FolderOpen, KeyRound, Library, Search, Sparkles } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Compass, FolderOpen, KeyRound, Library, Search, Shield, Sparkles } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useLibraryMode } from '../contexts/LibraryModeContext';
 import { useLayout } from '../contexts/LayoutContext';
@@ -12,6 +12,7 @@ interface NavItem {
 const secondaryNav: NavItem[] = [
   { path: '/activate', label: 'Activation', icon: KeyRound },
   { path: '/local', label: 'Fichiers locaux', icon: FolderOpen },
+  { path: '/privacy', label: 'Confidentialité', icon: Shield },
 ];
 
 export function Sidebar() {

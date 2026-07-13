@@ -92,7 +92,7 @@ export function ArtistCard({ artist, onPress }: ArtistCardProps) {
           textOverflow: 'ellipsis',
           display: '-webkit-box',
           WebkitLineClamp: 2,
-          WebkitBoxOrient: 'vertical' as any,
+          WebkitBoxOrient: 'vertical',
         }}>
           {artist.name}
         </span>

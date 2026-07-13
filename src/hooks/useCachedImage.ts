@@ -50,7 +50,6 @@ export function useCachedImage(
         const result = await getCachedImageUrl(imageUrl!, abortController.signal);
 
         // Nettoyer l'ancienne URL objet si elle existe
-        // eslint-disable-next-line react-hooks/exhaustive-deps
         const prev = cachedUrl;
         if (prev && prev !== imageUrl && prev.startsWith('blob:')) {
           URL.revokeObjectURL(prev);
@@ -76,7 +75,6 @@ export function useCachedImage(
       cancelled = true;
       abortController.abort();
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [imageUrl]);
 
   // Nettoyer les URLs objets au démontage du composant

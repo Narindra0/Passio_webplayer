@@ -21,5 +21,6 @@
     "baseUrl": ".",
     "types": ["vite/client", "node"]
   },
+  "exclude": ["src/workers"],
   "include": ["src", "vite-env.d.ts", "vite.config.ts"]
 }

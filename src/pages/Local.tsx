@@ -1,7 +1,6 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
-import { Music, Play } from 'lucide-react';
+import { useState, useCallback, useRef } from 'react';
+import { Music } from 'lucide-react';
 import { Screen, PageHeader } from '@/components/Screen';
-import { SectionTitle } from '@/components/SectionTitle';
 import { PrimaryButton } from '@/components/PrimaryButton';
 import { formatTitle } from '@/utils/formatTitle';
 import { useAudioPlayback } from '@/contexts/AudioContext';

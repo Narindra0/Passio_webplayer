@@ -38,7 +38,7 @@ if (import.meta.env.VITE_LOCAL !== 'active' && !import.meta.env.DEV) {
       const widthDiff = window.outerWidth - window.innerWidth;
       const heightDiff = window.outerHeight - window.innerHeight;
       if (widthDiff > threshold || heightDiff > threshold) {
-        document.title = '🚫 Pass\'io — Inspection détectée';
+        document.title = "Pass'io — Inspection détectée";
       }
     };
     setInterval(devtoolsDetect, 2000);

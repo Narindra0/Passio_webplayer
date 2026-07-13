@@ -4,14 +4,14 @@ import { useCachedImage } from '@/hooks/useCachedImage';
 import { useAudioPlayback, useAudioProgress } from '@/contexts/AudioContext';
 import { useLibraryMode } from '@/contexts/LibraryModeContext';
 import { albumHasStreamableTracks, loadOwnedAlbumForPlayback, resolveAlbumDecryptionKey } from '@/services/albumOwnership';
-import { isAlbumReadyOffline, downloadAlbumWithStreaming, subscribeToDownloadProgress, getDownloadProgress, deleteAlbumOffline, cancelDownload } from '@/services/downloadManager';
+import { isAlbumReadyOffline } from '@/services/downloadManager';
+import { DownloadButton } from '@/components/DownloadButton';
 import { resolveOfflinePlayback } from '@/services/offlineAccess';
 import type { PublicAlbumDetails, PublicTrack } from '@/types/backend';
 import { useAlbumColors } from '@/hooks/useAlbumColors';
 import {
   ChevronLeft, Crown, Download, Lock, Pause, Play, Share2,
   ShieldCheck, ShoppingBag, Sparkles, Clock, CloudOff,
-  Trash2, Check, X,
 } from 'lucide-react';
 import { ShareCard } from '@/components/ShareCard';
 import { useCallback, useEffect, useState } from 'react';
@@ -52,9 +52,6 @@ export function AlbumDetailScreen() {
   const [isOfflineReady, setIsOfflineReady] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [shareModalVisible, setShareModalVisible] = useState(false);
-  const [downloadStatus, setDownloadStatus] = useState<'idle' | 'downloading' | 'completed' | 'error'>('idle');
-  const [downloadProgress, setDownloadProgress] = useState(0);
-  const [showCompletedToast, setShowCompletedToast] = useState(false);
 
   // Call all hooks BEFORE any early returns
   const cachedCover = useCachedImage(album?.cover_url);
@@ -88,68 +85,9 @@ export function AlbumDetailScreen() {
     void loadAlbumData();
   }, [id, loadAlbumData]);
 
-  // ⚡ Vérifier l'état du téléchargement au chargement
-  useEffect(() => {
-    if (!album?.id) return;
-    const existing = getDownloadProgress(album.id);
-    if (existing?.status === 'downloading') {
-      setDownloadStatus('downloading');
-      setDownloadProgress(existing.progress);
-    }
-    void isAlbumReadyOffline(album.id).then((ready) => {
-      if (ready) {
-        setDownloadStatus('completed');
-        setDownloadProgress(100);
-      }
-    });
-  }, [album?.id]);
+  // ⚡ Le DownloadButton gère lui-même l'état, la progression et la souscription
 
-  // ⚡ Souscrire aux événements de progression (gère aussi la complétion)
-  useEffect(() => {
-    if (!album?.id || downloadStatus !== 'downloading') return;
-    const unsub = subscribeToDownloadProgress(album.id, (p) => {
-      setDownloadProgress(p.progress);
-      if (p.status === 'completed') {
-        setDownloadStatus('completed');
-        setDownloadProgress(100);
-        setIsOfflineReady(true);
-        setShowCompletedToast(true);
-        setTimeout(() => setShowCompletedToast(false), 4000);
-      } else if (p.status === 'error') {
-        setDownloadStatus('error');
-        setActionError(p.error || 'Échec du téléchargement');
-      } else if (p.status === 'idle') {
-        setDownloadStatus('idle');
-        setDownloadProgress(0);
-      }
-    });
-    return () => unsub();
-  }, [album?.id, downloadStatus]);
-
-  const handleDownload = useCallback(async () => {
-    if (!album || downloadStatus === 'downloading') return;
-    // Si déjà téléchargé → supprimer
-    if (downloadStatus === 'completed') {
-      await deleteAlbumOffline(album.id);
-      setDownloadStatus('idle');
-      setDownloadProgress(0);
-      setIsOfflineReady(false);
-      return;
-    }
-    // Lancer le téléchargement — la progression/complétion est gérée par le subscription
-    setActionError(null);
-    setDownloadStatus('downloading');
-    setDownloadProgress(0);
-    const result = await downloadAlbumWithStreaming(album, decryptionKey);
-    if (result === 'cancelled') {
-      // L'utilisateur a annulé — la subscription va déjà gérer le reset vers 'idle'
-      return;
-    }
-    if (result === 'error') {
-      setDownloadStatus('error');
-      setActionError('Échec du téléchargement. Vérifiez votre connexion.');
-    }
-  }, [album, decryptionKey, downloadStatus]);
+  // handleDownload est géré par DownloadButton — voir ci-dessous
 
   // ⚡ Mode offline : si l'album n'est pas en cache, afficher un écran fallback premium
   const isOfflineAndUnavailable = !loading && effectiveMode === 'offline' && !album;
@@ -618,58 +556,15 @@ export function AlbumDetailScreen() {
               </button>
             )}
 
-            {/* Download button — owned or free, not yet offline */}
-            {!isOfflineReady && downloadStatus !== 'downloading' && (isOwned || isFreeRelease) && (
-              <button
-                onClick={() => void handleDownload()}
-                title="Télécharger l'album pour écoute hors-ligne"
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  padding: '12px 24px',
-                  borderRadius: 'var(--radius-full)',
-                  background: 'rgba(29, 185, 84, 0.06)',
-                  border: '1px solid rgba(29, 185, 84, 0.15)',
-                  cursor: 'pointer',
-                  color: 'var(--color-success)',
-                  fontSize: 14,
-                  fontWeight: 600,
-                  transition: 'all var(--transition-fast) ease',
-                }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(29, 185, 84, 0.12)'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(29, 185, 84, 0.06)'; }}
-              >
-                <Download size={16} />
-                {preordered ? 'Pré-télécharger' : 'Télécharger'}
-              </button>
-            )}
-
-            {/* Supprimer le téléchargement */}
-            {isOfflineReady && downloadStatus !== 'downloading' && (
-              <button
-                onClick={() => void handleDownload()}
-                title="Supprimer le téléchargement hors-ligne"
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  padding: '12px 24px',
-                  borderRadius: 'var(--radius-full)',
-                  background: 'rgba(220,20,60,0.06)',
-                  border: '1px solid rgba(220,20,60,0.12)',
-                  cursor: 'pointer',
-                  color: 'var(--color-accent)',
-                  fontSize: 14,
-                  fontWeight: 600,
-                  transition: 'all var(--transition-fast) ease',
-                }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(220,20,60,0.12)'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(220,20,60,0.06)'; }}
-              >
-                <Trash2 size={15} />
-                Supprimer
-              </button>
+            {/* Download button — géré par le composant DownloadButton */}
+            {(isOwned || isFreeRelease) && album && (
+              <DownloadButton
+                album={album}
+                decryptionKey={decryptionKey}
+                variant="full"
+                onComplete={() => setIsOfflineReady(true)}
+                onDelete={() => setIsOfflineReady(false)}
+              />
             )}
 
             {/* Share button — dynamic for hero bg */}
@@ -719,103 +614,7 @@ export function AlbumDetailScreen() {
             </button>
           </div>
 
-          {/* Download progress bar + cancel */}
-          {downloadStatus === 'downloading' && (
-            <div style={{ marginTop: 16, maxWidth: 400 }}>
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 10,
-              }}>
-                <div style={{
-                  flex: 1,
-                  height: 4,
-                  borderRadius: 2,
-                  background: 'rgba(255,255,255,0.08)',
-                  overflow: 'hidden',
-                }}>
-                  <div style={{
-                    height: '100%',
-                    width: `${Math.round(downloadProgress)}%`,
-                    borderRadius: 2,
-                    background: 'linear-gradient(90deg, var(--color-accent), #FF6B6B)',
-                    transition: 'width 0.3s ease',
-                  }} />
-                </div>
-                <span style={{
-                  color: 'var(--color-text-muted)',
-                  fontSize: 12,
-                  fontWeight: 700,
-                  fontVariantNumeric: 'tabular-nums',
-                  minWidth: 42,
-                  textAlign: 'right',
-                }}>
-                  {Math.round(downloadProgress)}%
-                </span>
-                <button
-                  onClick={() => { cancelDownload(album.id); }}
-                  title="Annuler"
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    width: 24,
-                    height: 24,
-                    borderRadius: 'var(--radius-full)',
-                    background: 'rgba(255,255,255,0.04)',
-                    border: 'none',
-                    cursor: 'pointer',
-                    color: 'var(--color-text-muted)',
-                    flexShrink: 0,
-                    transition: 'all 0.15s ease',
-                  }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; e.currentTarget.style.color = 'var(--color-text-primary)'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; e.currentTarget.style.color = 'var(--color-text-muted)'; }}
-                >
-                  <X size={14} />
-                </button>
-              </div>
-              <p style={{
-                color: 'var(--color-text-muted)',
-                fontSize: 12,
-                margin: '6px 0 0',
-              }}>
-                {downloadProgress < 100 ? (
-                  <>
-                    <span style={{ color: 'var(--color-text-muted)', fontWeight: 600 }}>
-                      {(() => {
-                        const p = getDownloadProgress(album.id);
-                        return p?.currentTrack || '';
-                      })()}
-                    </span>
-                    <span style={{ color: 'var(--color-text-muted)' }}> · </span>
-                  </>
-                ) : null}
-                Téléchargement…
-              </p>
-            </div>
-          )}
 
-          {/* Success toast */}
-          {downloadStatus === 'completed' && showCompletedToast && (
-            <div style={{ marginTop: 12 }}>
-              <div style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 6,
-                padding: '8px 16px',
-                borderRadius: 'var(--radius-full)',
-                background: 'rgba(29, 185, 84, 0.1)',
-                border: '1px solid rgba(29, 185, 84, 0.2)',
-                animation: 'fadeIn 0.3s ease',
-              }}>
-                <Check size={14} color="var(--color-success)" />
-                <span style={{ color: 'var(--color-success)', fontSize: 13, fontWeight: 600 }}>
-                  Album téléchargé · disponible hors-ligne
-                </span>
-              </div>
-            </div>
-          )}
 
         </div>
       </div>

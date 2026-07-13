@@ -1,36 +1,21 @@
-# Dependencies
+# Dépendances
 node_modules/
+.pnpm-store/
 
-# Build output
+# Builds de production
 dist/
 build/
-dev-dist/
 
-# Special Windows file
-nul
+# Variables d'environnement secrètes (très important !)
 
-# Environment
-.env
-.env.local
-.env.*.local
 
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS
-.DS_Store
-Thumbs.db
-
-# TypeScript
-*.tsbuildinfo
-
-# Debug
+# Logs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+pnpm-debug.log*
 
-# Cache
-.eslintcache
+# Fichiers système / IDE
+.DS_Store
+.vscode/
+.idea/

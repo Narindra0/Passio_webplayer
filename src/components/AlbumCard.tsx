@@ -2,6 +2,7 @@ import type { Album } from '@/types/album';
 import { useCachedImage } from '@/hooks/useCachedImage';
 import { Download, Play } from 'lucide-react';
 import { formatTitle } from '@/utils/formatTitle';
+import { getOptimizedImageUrl, handleImageError } from '@/utils/imageUtils';
 
 type AlbumCardProps = {
   album: Album;
@@ -56,7 +57,8 @@ export function AlbumCard({ album, variant = 'row', onPress, isOffline = false, 
         >
           {album.cover_url ? (
             <img
-              src={cachedCover || album.cover_url}
+              src={getOptimizedImageUrl(cachedCover || album.cover_url)}
+              onError={handleImageError}
               alt={album.title}
               loading="lazy"
               decoding="async"
@@ -213,7 +215,8 @@ export function AlbumCard({ album, variant = 'row', onPress, isOffline = false, 
     >
       {album.cover_url ? (
         <img
-          src={cachedCover || album.cover_url}
+          src={getOptimizedImageUrl(cachedCover || album.cover_url)}
+          onError={handleImageError}
           alt={album.title}
           loading="lazy"
           decoding="async"

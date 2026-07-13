@@ -15,52 +15,99 @@ const API_URL = (import.meta.env.VITE_API_URL ?? getDefaultApiUrl()).replace(/\/
 
 type RequestInitWithJson = Omit<RequestInit, 'body'> & { body?: unknown };
 
-async function request<T>(path: string, init: RequestInitWithJson = {}): Promise<T> {
-  const deviceId = await getOrCreateDeviceId().catch(() => null);
+function isGetLikeRequest(init: RequestInitWithJson): boolean {
+  return (init.method ?? 'GET').toUpperCase() === 'GET';
+}
 
-  const headers: Record<string, string> = {
-    ...(deviceId ? { 'x-passio-device-id': deviceId } : {}),
-  };
+function isJsonResponse(response: Response): boolean {
+  return response.headers.get('Content-Type')?.includes('application/json') ?? false;
+}
 
-  if (typeof init.body !== 'undefined') {
-    headers['Content-Type'] = 'application/json';
+async function fetchWithCacheBypass(
+  url: string,
+  init: RequestInitWithJson,
+  deviceId: string | null,
+): Promise<Response> {
+  const isGetLike = isGetLikeRequest(init);
+  const requestHeaders = new Headers(init.headers);
+
+  if (deviceId) {
+    requestHeaders.set('x-passio-device-id', deviceId);
   }
 
-  // 🔒 Cloudflare reverse proxy : on utilise credentials: 'include' pour que le
-  //    navigateur envoie correctement les en-têtes personnalisés (x-passio-device-id)
-  //    en contexte cross-origin (pages.dev → api.passiio.shop)
-  //    On ne peut plus utiliser keepalive: true car il interfère avec les credentials
-  //    cross-origin sur les requêtes non-simples (en-tête personnalisé = OPTIONS preflight).
-  const response = await fetch(`${API_URL}${path}`, {
+  if (typeof init.body !== 'undefined') {
+    requestHeaders.set('Content-Type', 'application/json');
+  }
+
+  const requestInit: RequestInit = {
     ...init,
-    headers: {
-      ...headers,
-      ...((init.headers as Record<string, string>) ?? {}),
-    },
+    headers: requestHeaders,
     body: typeof init.body === 'undefined' ? undefined : JSON.stringify(init.body),
     credentials: 'include',
     mode: 'cors',
+    cache: isGetLike ? 'no-store' : init.cache,
+  };
+
+  const response = await fetch(url, requestInit);
+  if (response.status !== 304 || !isGetLike) {
+    return response;
+  }
+
+  logger.error('[API] 304 Not Modified on GET request, retrying without cache', {
+    url,
+    method: init.method ?? 'GET',
   });
 
-  const isJson = response.headers.get('Content-Type')?.includes('application/json');
-  const data = isJson ? await response.json() : null;
+  const retryHeaders = new Headers(requestHeaders);
+  retryHeaders.set('Cache-Control', 'no-cache');
+  retryHeaders.set('Pragma', 'no-cache');
+
+  const retryResponse = await fetch(url, {
+    ...requestInit,
+    headers: retryHeaders,
+    cache: 'reload',
+  });
+
+  if (retryResponse.status === 304) {
+    logger.error('[API] 304 Not Modified persisted after cache-bypass retry', {
+      url,
+      method: init.method ?? 'GET',
+    });
+  }
+
+  return retryResponse;
+}
+
+async function request<T>(path: string, init: RequestInitWithJson = {}): Promise<T> {
+  const deviceId = await getOrCreateDeviceId().catch(() => null);
+
+  // Cloudflare reverse proxy: use credentials so custom headers reach the API.
+  // GET requests are forced through a cache-bypass path so 304 responses do not
+  // break JSON parsing in production.
+  const response = await fetchWithCacheBypass(`${API_URL}${path}`, init, deviceId);
+
+  if (response.status === 304) {
+    throw new Error(`Request failed with status 304 for ${path}`);
+  }
+
+  const data: unknown = isJsonResponse(response) ? await response.json() : null;
 
   if (!response.ok) {
-    // 🔍 Diagnostic 403 : album key rejeté
+    // Diagnostic 403: album key rejected
     if (response.status === 403) {
-      const via = (response.headers.get('cf-ray') ? 'cloudflare' : 'direct');
-      logger.warn('[API] 🔐 403 Forbidden:', {
+      const via = response.headers.get('cf-ray') ? 'cloudflare' : 'direct';
+      logger.warn('[API] 403 Forbidden:', {
         path,
         via,
         deviceId: deviceId?.slice(0, 8) + '…',
         statusCode: response.status,
         statusText: response.statusText,
         contentType: response.headers.get('Content-Type'),
-        albumData: data && typeof data === 'object' ? 'oui' : 'non',
-        hasAlbumKey: data && typeof data === 'object' && 'decryption_key' in (data as any),
+        albumData: data && typeof data === 'object' ? 'yes' : 'no',
+        hasAlbumKey: data && typeof data === 'object' && 'decryption_key' in (data as Record<string, unknown>),
         responseBody: data && typeof data === 'object' ? JSON.stringify(data).slice(0, 300) : '(non-JSON)',
       });
-      if (data && (data as any).album) {
+      if (data && typeof data === 'object' && 'album' in data) {
         return data as T;
       }
       throw new Error(`Accès refusé (403) — la clé de l'album semble invalide ou expirée. Path: ${path}`);

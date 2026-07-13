@@ -320,7 +320,7 @@ export function ShareCard({
       await new Promise(r => setTimeout(r, 400));
       const node = document.getElementById('share-story-canvas');
       if (!node) throw new Error('Canvas DOM node not found');
-      const canvas = await (html2canvas as Function)(node, {
+      const canvas = await html2canvas(node, {
         useCORS: true,
         allowTaint: false,
         scale: 2,
@@ -373,7 +373,7 @@ export function ShareCard({
 
   // ── Generate share text ──
   const getShareText = () =>
-    `J'écoute « ${trackTitle} » par ${artistName} sur Pass'io 🎵`;
+    `J'écoute « ${trackTitle} » par ${artistName} sur Pass'io`;
 
   const shareTitle = `${trackTitle} — ${artistName}`;
 

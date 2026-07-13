@@ -1,25 +1,40 @@
-import { getApiBaseUrl } from '@/services/api';
 import { readEncryptedValue, saveEncryptedValue } from '@/services/storage';
 
 const VAULT_PLAIN_AUDIO_MARKER = '__PASSIO_VAULT_PLAIN__';
 
 export { VAULT_PLAIN_AUDIO_MARKER };
 
+/**
+ * Persiste une clé de déchiffrement dans le vault local.
+ * Utilise désormais le format enrichi avec timestamp via keyManager.
+ * Cette fonction sert de point d'entrée unique pour les autres services.
+ */
 export async function persistVaultDecryptionKey(albumId: string, decryptionKey: string | null): Promise<void> {
-  if (decryptionKey) {
-    await saveEncryptedValue(`passio_key_${albumId}`, decryptionKey);
-    return;
-  }
-  await saveEncryptedValue(`passio_key_${albumId}`, VAULT_PLAIN_AUDIO_MARKER);
+  const { storeKey } = await import('./keyManager');
+  await storeKey(albumId, decryptionKey);
 }
 
+/**
+ * Lit et valide une clé de déchiffrement depuis le vault local.
+ * Fait appel à keyManager.readKey() pour la validation d'expiration.
+ */
 export async function readVaultDecryptionKey(albumId: string): Promise<string | null> {
-  const stored = await readEncryptedValue(`passio_key_${albumId}`);
-  if (!stored || stored === VAULT_PLAIN_AUDIO_MARKER) return null;
-  return stored;
+  try {
+    const { readKey } = await import('./keyManager');
+    return readKey(albumId);
+  } catch {
+    return null;
+  }
 }
 
+/**
+ * Vérifie si une clé existe dans le vault (sans validation d'expiration).
+ */
 export async function vaultHasCredentials(albumId: string): Promise<boolean> {
-  const stored = await readEncryptedValue(`passio_key_${albumId}`);
-  return Boolean(stored);
+  try {
+    const stored = await readEncryptedValue(`passio_key_${albumId}`);
+    return Boolean(stored);
+  } catch {
+    return false;
+  }
 }
