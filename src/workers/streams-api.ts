@@ -78,6 +78,48 @@ function todayDate(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+/**
+ * Vérifie et applique le rate-limiting IP et DeviceID.
+ * @returns Response si rejeté (400 ou 429), null si accepté.
+ */
+async function checkRateLimits(
+  req: Request,
+  env: Env,
+  deviceId: string,
+  isStreamCompletedEvent: boolean
+): Promise<Response | null> {
+  // 1. Validation du Device ID (soit un UUID v4 brut, soit l'empreinte passio-web:...)
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  const fingerprintRegex = /^passio-web:.+:(?:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|\d+-[0-9a-f]{8,})$/i;
+  if (!deviceId || (!uuidRegex.test(deviceId) && !fingerprintRegex.test(deviceId))) {
+    return err('Invalid or spoofed deviceId', 400);
+  }
+
+  const ip = req.headers.get('CF-Connecting-IP') || '127.0.0.1';
+
+  // 2. Rate limit IP : 30 requêtes par minute (sur toutes les routes d'écriture API)
+  const minuteKey = `rl:ip:${ip}:${Math.floor(Date.now() / 60000)}`;
+  const ipCountStr = await env.STREAMS_KV.get(minuteKey);
+  const ipCount = parseInt(ipCountStr || '0', 10);
+  if (ipCount >= 30) {
+    return json({ error: 'Too many requests' }, 429);
+  }
+  await env.STREAMS_KV.put(minuteKey, String(ipCount + 1), { expirationTtl: 120 }); // TTL 2 min
+
+  // 3. Rate limit DeviceID : 10 streams par heure (uniquement pour handlePostStream ou progress=100%)
+  if (isStreamCompletedEvent) {
+    const hourKey = `rl:dev:${deviceId}:${Math.floor(Date.now() / 3600000)}`;
+    const devCountStr = await env.STREAMS_KV.get(hourKey);
+    const devCount = parseInt(devCountStr || '0', 10);
+    if (devCount >= 10) {
+      return json({ error: 'Stream limit exceeded for this hour' }, 429);
+    }
+    await env.STREAMS_KV.put(hourKey, String(devCount + 1), { expirationTtl: 7200 }); // TTL 2h
+  }
+
+  return null;
+}
+
 // ─── Handlers API V1 (inchangés, sauf vérification consentement) ────────
 
 /**
@@ -105,6 +147,11 @@ async function handlePostStream(req: Request, env: Env): Promise<Response> {
   }
 
   const deviceId = getDeviceId(req);
+
+  // Appliquer le rate-limiting et la validation du deviceId (V1 est toujours considéré comme un stream complété)
+  const rateLimitResponse = await checkRateLimits(req, env, deviceId, true);
+  if (rateLimitResponse) return rateLimitResponse;
+
   const date = todayDate();
 
   // ── 1. Anti-fraude : déduplication par device + jour + piste ──
@@ -223,6 +270,15 @@ async function handlePostEvent(req: Request, env: Env): Promise<Response> {
   }
 
   const deviceId = getDeviceId(req);
+
+  // Déterminer s'il s'agit d'une fin de piste (ended ou progress à 100%)
+  const progressPct = typeof body.progressPct === 'number' ? body.progressPct : null;
+  const isCompleted = eventType === 'ended' || (eventType === 'progress' && progressPct === 1.0);
+
+  // Appliquer le rate-limiting et la validation du deviceId
+  const rateLimitResponse = await checkRateLimits(req, env, deviceId, isCompleted);
+  if (rateLimitResponse) return rateLimitResponse;
+
   const db = env.ANALYTICS_DB;
 
   // Obtenir ou créer une session
@@ -246,7 +302,6 @@ async function handlePostEvent(req: Request, env: Env): Promise<Response> {
 
   // Track events (ended, progress, skip)
   const trackId = typeof body.trackId === 'string' ? body.trackId : '';
-  const progressPct = typeof body.progressPct === 'number' ? body.progressPct : null;
   const durationSec = typeof body.durationSec === 'number' ? body.durationSec : null;
 
   if (!trackId) {

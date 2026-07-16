@@ -1,30 +1,25 @@
-import { Compass, KeyRound, Library, Search, Sparkles } from 'lucide-react';
+import { KeyRound, Library, Search, Sparkles } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { useLibraryMode } from '../contexts/LibraryModeContext';
 import { useBottomInset } from '@/hooks/useBottomInset';
 
 interface NavItem {
   path: string;
   label: string;
-  icon: typeof Compass;
+  icon: typeof Sparkles;
 }
 
 export function MobileNav() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { effectiveMode } = useLibraryMode();
   const currentPath = location.pathname;
 
   const bottomInset = useBottomInset();
 
-  const navItems: NavItem[] = effectiveMode === 'online' ? [
+  const navItems: NavItem[] = [
     { path: '/discover', label: 'Découvertes', icon: Sparkles },
     { path: '/search', label: 'Rechercher', icon: Search },
+    { path: '/activate', label: 'Activer', icon: KeyRound },
     { path: '/catalog', label: 'Bibliothèque', icon: Library },
-    { path: '/activate', label: 'Activer', icon: KeyRound },
-  ] : [
-    { path: '/catalog', label: 'Musique', icon: Library },
-    { path: '/activate', label: 'Activer', icon: KeyRound },
   ];
 
   const isActive = (path: string) => {

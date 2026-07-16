@@ -41,7 +41,7 @@ import { mseSecurePlayer } from '@/services/mseSecurePlayer';
 import { recordArtistPlay } from '@/services/listeningHistory';
 import { getCachedFreeTrackUrl, touchAlbumAccess } from '@/services/downloadManager';
 import { isPreorder } from '@/utils/preorder';
-import { recordTrackEnded, fetchCollaborativeRecommendation } from '@/services/streamTracker';
+import { recordTrackEnded, recordTrackProgress, recordTrackSkip, fetchCollaborativeRecommendation } from '@/services/streamTracker';
 
 export type PlayMode = 'hls' | 'stream' | 'local' | 'remote' | 'device';
 export type QueueMode = 'sequential' | 'shuffle';
@@ -200,6 +200,9 @@ export function AudioProvider({ children }: { children: ReactNode }) {
   const lastProgressRef = useRef(0);
   const lastDurationRef = useRef(0);
   const prefetchTriggeredRef = useRef(false);
+  const sentProgressThresholdsRef = useRef<Set<string>>(new Set());
+  const currentTrackForProgressRef = useRef<string | null>(null);
+
 
   const sequentialBackupRef = useRef<{
     tracks: PublicTrack[];
@@ -394,6 +397,24 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     lastProgressRef.current = dur > 0 ? currentTime / dur : 0;
     lastDurationRef.current = dur;
 
+    // 🎯 V2 Progress thresholds : envoyer un événement à chaque palier de complétion
+    const currentProgress = dur > 0 ? currentTime / dur : 0;
+    const currentTrackId = queueRef.current[currentIndexRef.current]?.id;
+    if (currentTrackId !== currentTrackForProgressRef.current) {
+      currentTrackForProgressRef.current = currentTrackId ?? null;
+      sentProgressThresholdsRef.current = new Set();
+    }
+    if (currentTrackId && currentProgress > 0) {
+      const thresholds = [0.25, 0.50, 0.75, 0.90];
+      for (const threshold of thresholds) {
+        const key = `${currentTrackId}:${threshold}`;
+        if (currentProgress >= threshold && !sentProgressThresholdsRef.current.has(key)) {
+          sentProgressThresholdsRef.current.add(key);
+          recordTrackProgress(currentTrackId, threshold, Math.round(currentTime));
+        }
+      }
+    }
+
     if (progressThrottleRef.current) return;
 
     progressThrottleRef.current = setTimeout(() => {
@@ -573,37 +594,70 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     if (trackAdvanceLockRef.current) return;
     trackAdvanceLockRef.current = true;
 
-    // 🎯 Tracking collaboratif : enregistrer la fin de la piste (Fire & Forget)
-    const endedTrack = queueRef.current[currentIndexRef.current];
+    // 🎯 V2: Enregistrer la fin de piste (V1 + V2)
+    const endedTrack = isDevicePlaybackRef.current
+      ? deviceQueueRef.current[deviceCurrentIndexRef.current]
+      : queueRef.current[currentIndexRef.current];
+
     if (endedTrack) {
       recordTrackEnded(endedTrack.id, previousTrackIdRef.current ?? undefined);
+      // 🎯 V2: Marquer 100% de complétion dans la table D1
+      const fullDuration = lastDurationRef.current;
+      if (fullDuration > 0) {
+        recordTrackProgress(endedTrack.id, 1.0, Math.round(fullDuration));
+      }
       previousTrackIdRef.current = endedTrack.id;
     }
 
     try {
       const repeat = repeatModeRef.current;
       if (repeat === 'one') {
-        await playAtIndexRef.current(currentIndexRef.current);
+        if (isDevicePlaybackRef.current) {
+          await playDeviceTrackAtIndex(deviceQueueRef.current, deviceCurrentIndexRef.current);
+        } else {
+          await playAtIndexRef.current(currentIndexRef.current);
+        }
         return;
       }
-      const nextIdx = currentIndexRef.current + 1;
-      if (nextIdx < queueRef.current.length) {
-        await playAtIndexRef.current(nextIdx);
-        return;
+
+      const nextIdx = isDevicePlaybackRef.current
+        ? deviceCurrentIndexRef.current + 1
+        : currentIndexRef.current + 1;
+
+      if (isDevicePlaybackRef.current) {
+        if (nextIdx < deviceQueueRef.current.length) {
+          await playDeviceTrackAtIndex(deviceQueueRef.current, nextIdx);
+          return;
+        }
+      } else {
+        if (nextIdx < queueRef.current.length) {
+          await playAtIndexRef.current(nextIdx);
+          return;
+        }
       }
+
       if (repeat === 'all') {
-        await playAtIndexRef.current(0);
+        if (isDevicePlaybackRef.current) {
+          await playDeviceTrackAtIndex(deviceQueueRef.current, 0);
+        } else {
+          await playAtIndexRef.current(0);
+        }
         return;
       }
-      if (queueModeRef.current === 'shuffle' && libraryRef.current.length > 0) {
+
+      if (!isDevicePlaybackRef.current && queueModeRef.current === 'shuffle' && libraryRef.current.length > 0) {
         await generateShuffledQueue();
         if (queueRef.current.length > 0) await playAtIndexRef.current(0);
         return;
       }
-      // 🎯 Autoplay : lancer les recommandations avant d'arrêter
-      isAutoplayingRef.current = false;
-      await handleAutoplay();
-      if (isAutoplayingRef.current) return; // handleAutoplay a lancé une nouvelle piste
+
+      // 🎯 Autoplay : lancer les recommandations avant d'arrêter (pas en mode local)
+      if (!isDevicePlaybackRef.current) {
+        isAutoplayingRef.current = false;
+        await handleAutoplay();
+        if (isAutoplayingRef.current) return; // handleAutoplay a lancé une nouvelle piste
+      }
+
       setIsPlaying(false);
       setProgress(0);
       isPlayingRef.current = false;
@@ -693,6 +747,7 @@ export function AudioProvider({ children }: { children: ReactNode }) {
             if (audio) {
               currentIndexRef.current = index;
               setCurrentIndex(index);
+              setPlayMode('local');
               setAudioVolume(volumeRef.current);
               if (isMuted) setAudioMuted(true);
               logger.info('[AudioContext] ⚡ Lecture depuis le cache IndexedDB:', track.title);
@@ -713,6 +768,7 @@ export function AudioProvider({ children }: { children: ReactNode }) {
             if (audio) {
               currentIndexRef.current = index;
               setCurrentIndex(index);
+              setPlayMode('stream');
               // 🎯 Synchroniser le volume après la création du nouvel élément audio direct
               setAudioVolume(volumeRef.current);
               if (isMuted) setAudioMuted(true);
@@ -745,6 +801,7 @@ export function AudioProvider({ children }: { children: ReactNode }) {
       if (success) {
         currentIndexRef.current = index;
         setCurrentIndex(index);
+        setPlayMode('stream');
         // 🎯 Synchroniser le volume après la création du nouvel élément audio
         setAudioVolume(volumeRef.current);
         if (isMuted) setAudioMuted(true);
@@ -975,6 +1032,34 @@ export function AudioProvider({ children }: { children: ReactNode }) {
 
   const playTrackAtIndex = useCallback(async (index: number) => { await playAtIndex(index); }, [playAtIndex]);
 
+  const playDeviceTrackAtIndex = useCallback(async (tracks: DeviceTrack[], index: number) => {
+    if (tracks.length === 0) return;
+    const safeIndex = Math.max(0, Math.min(index, tracks.length - 1));
+    deviceQueueRef.current = tracks;
+    setDeviceQueue(tracks);
+    isDevicePlaybackRef.current = true;
+    // 🎯 Si le shuffle est déjà actif, sauvegarder et mélanger les nouvelles tracks immédiatement
+    if (queueModeRef.current === 'shuffle' && tracks.length > 1) {
+      deviceBackupRef.current = [...tracks];
+      deviceCurrentIndexRef.current = safeIndex;
+      shuffleRemainingDeviceQueue();
+    }
+    const track = tracks[safeIndex];
+    if (!track) return;
+    await playDeviceFile(track.uri, (status) => {
+      const currentTime = status.currentTime ?? 0;
+      const dur = status.duration ?? 0;
+      if (dur > 0) updateProgressThrottled(currentTime, dur);
+      if (status.playing !== undefined) { setIsPlaying(Boolean(status.playing)); isPlayingRef.current = Boolean(status.playing); }
+    });
+    // 🎯 Synchroniser le volume après la création de l'élément audio du device
+    setPlayMode('device');
+    setAudioVolume(volumeRef.current);
+    if (isMuted) setAudioMuted(true);
+    setDeviceCurrentIndex(safeIndex);
+    deviceCurrentIndexRef.current = safeIndex;
+  }, [updateProgressThrottled]);
+
   const resumePlayback = useCallback(async () => {
     if (currentIndexRef.current >= 0 && albumRef.current && queueRef.current.length > 0) {
       const q = queueRef.current;
@@ -1014,36 +1099,70 @@ export function AudioProvider({ children }: { children: ReactNode }) {
   }, [resumePlayback]);
 
   const next = useCallback(async () => {
-    const q = queueRef.current;
-    const len = q.length;
-    if (len === 0) return;
-    let nextIdx = currentIndexRef.current + 1;
-    if (nextIdx >= len) {
-      if (repeatModeRef.current === 'all') nextIdx = 0;
-      else {
-        // 🎯 Déclencher l'autoplay si on est sur la dernière piste
-        if (!isDevicePlaybackRef.current && autoplayEnabledRef.current) {
-          isAutoplayingRef.current = false;
-          await handleAutoplay();
-          if (isAutoplayingRef.current) return;
-        }
-        return;
-      }
+    // 🎯 V2 Skip detection : détecter un saut manuel avant 90% de la piste
+    const currentSkipTrack = isDevicePlaybackRef.current
+      ? deviceQueueRef.current[deviceCurrentIndexRef.current]
+      : queueRef.current[currentIndexRef.current];
+    const currentSkipProgress = lastProgressRef.current;
+    if (currentSkipTrack && currentSkipProgress < 0.9 && isPlayingRef.current) {
+      const durationSec = Math.round(currentSkipProgress * lastDurationRef.current);
+      recordTrackSkip(currentSkipTrack.id, currentSkipProgress, durationSec);
     }
-    await playAtIndex(nextIdx);
-  }, [playAtIndex]);
+
+    if (isDevicePlaybackRef.current) {
+      const q = deviceQueueRef.current;
+      const len = q.length;
+      if (len === 0) return;
+      let nextIdx = deviceCurrentIndexRef.current + 1;
+      if (nextIdx >= len) {
+        if (repeatModeRef.current === 'all') nextIdx = 0;
+        else return;
+      }
+      await playDeviceTrackAtIndex(q, nextIdx);
+    } else {
+      const q = queueRef.current;
+      const len = q.length;
+      if (len === 0) return;
+      let nextIdx = currentIndexRef.current + 1;
+      if (nextIdx >= len) {
+        if (repeatModeRef.current === 'all') nextIdx = 0;
+        else {
+          // 🎯 Déclencher l'autoplay si on est sur la dernière piste
+          if (!isDevicePlaybackRef.current && autoplayEnabledRef.current) {
+            isAutoplayingRef.current = false;
+            await handleAutoplay();
+            if (isAutoplayingRef.current) return;
+          }
+          return;
+        }
+      }
+      await playAtIndex(nextIdx);
+    }
+  }, [playAtIndex, playDeviceTrackAtIndex]);
 
   const previous = useCallback(async () => {
-    const q = queueRef.current;
-    const len = q.length;
-    if (len === 0) return;
-    let prevIdx = currentIndexRef.current - 1;
-    if (prevIdx < 0) {
-      if (repeatModeRef.current === 'all') prevIdx = len - 1;
-      else return;
+    if (isDevicePlaybackRef.current) {
+      const q = deviceQueueRef.current;
+      const len = q.length;
+      if (len === 0) return;
+      let prevIdx = deviceCurrentIndexRef.current - 1;
+      if (prevIdx < 0) {
+        if (repeatModeRef.current === 'all') prevIdx = len - 1;
+        else return;
+      }
+      await playDeviceTrackAtIndex(q, prevIdx);
+    } else {
+      const q = queueRef.current;
+      const len = q.length;
+      if (len === 0) return;
+      let prevIdx = currentIndexRef.current - 1;
+      if (prevIdx < 0) {
+        if (repeatModeRef.current === 'all') prevIdx = len - 1;
+        else return;
+      }
+      await playAtIndex(prevIdx);
     }
-    await playAtIndex(prevIdx);
-  }, [playAtIndex]);
+  }, [playAtIndex, playDeviceTrackAtIndex]);
 
   const toggleRepeat = useCallback(() => {
     const order: RepeatMode[] = ['off', 'one', 'all'];
@@ -1069,6 +1188,10 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     const newMode = queueModeRef.current === 'sequential' ? 'shuffle' : 'sequential';
     queueModeRef.current = newMode;
     setQueueMode(newMode);
+
+    // 🎯 Radio couplé au shuffle : shuffle ON → Radio ON, sequential → Radio OFF
+    setAutoplayEnabled(newMode === 'shuffle');
+
     if (newMode === 'shuffle') {
       // ── Mode device : sauvegarder + mélanger la queue device ──
       if (isDevicePlaybackRef.current) {
@@ -1192,33 +1315,6 @@ export function AudioProvider({ children }: { children: ReactNode }) {
       setAudioMuted(true);
     }
   }, [isMuted, volume]);
-
-  const playDeviceTrackAtIndex = useCallback(async (tracks: DeviceTrack[], index: number) => {
-    if (tracks.length === 0) return;
-    const safeIndex = Math.max(0, Math.min(index, tracks.length - 1));
-    deviceQueueRef.current = tracks;
-    setDeviceQueue(tracks);
-    isDevicePlaybackRef.current = true;
-    // 🎯 Si le shuffle est déjà actif, sauvegarder et mélanger les nouvelles tracks immédiatement
-    if (queueModeRef.current === 'shuffle' && tracks.length > 1) {
-      deviceBackupRef.current = [...tracks];
-      deviceCurrentIndexRef.current = safeIndex;
-      shuffleRemainingDeviceQueue();
-    }
-    const track = tracks[safeIndex];
-    if (!track) return;
-    await playDeviceFile(track.uri, (status) => {
-      const currentTime = status.currentTime ?? 0;
-      const dur = status.duration ?? 0;
-      if (dur > 0) updateProgressThrottled(currentTime, dur);
-      if (status.playing !== undefined) { setIsPlaying(Boolean(status.playing)); isPlayingRef.current = Boolean(status.playing); }
-    });
-    // 🎯 Synchroniser le volume après la création de l'élément audio du device
-    setAudioVolume(volumeRef.current);
-    if (isMuted) setAudioMuted(true);
-    setDeviceCurrentIndex(safeIndex);
-    deviceCurrentIndexRef.current = safeIndex;
-  }, [updateProgressThrottled]);
 
   const playbackValue = useMemo<AudioPlaybackContextValue>(() => ({
     album, queue, currentIndex, currentTrack, isPlaying, isLoading, playMode,

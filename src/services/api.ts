@@ -19,10 +19,6 @@ function isGetLikeRequest(init: RequestInitWithJson): boolean {
   return (init.method ?? 'GET').toUpperCase() === 'GET';
 }
 
-function isJsonResponse(response: Response): boolean {
-  return response.headers.get('Content-Type')?.includes('application/json') ?? false;
-}
-
 async function fetchWithCacheBypass(
   url: string,
   init: RequestInitWithJson,
@@ -90,7 +86,15 @@ async function request<T>(path: string, init: RequestInitWithJson = {}): Promise
     throw new Error(`Request failed with status 304 for ${path}`);
   }
 
-  const data: unknown = isJsonResponse(response) ? await response.json() : null;
+  let data: unknown = null;
+  try {
+    // Toujours tenter le parsing JSON, même si Content-Type n'est pas
+    // application/json. Cloudflare peut modifier/stripper les en-têtes,
+    // mais le corps reste valide.
+    data = await response.json();
+  } catch {
+    data = null;
+  }
 
   if (!response.ok) {
     // Diagnostic 403: album key rejected
@@ -123,8 +127,11 @@ export function getApiBaseUrl(): string {
 }
 
 export function unwrapAlbumDetails(
-  raw: PublicAlbumDetails | { album?: PublicAlbumDetails; message?: string },
+  raw: PublicAlbumDetails | { album?: PublicAlbumDetails; message?: string } | null | undefined,
 ): PublicAlbumDetails {
+  if (!raw) {
+    throw new Error('unwrapAlbumDetails: received null/undefined response');
+  }
   return (raw as { album?: PublicAlbumDetails }).album ?? (raw as PublicAlbumDetails);
 }
 

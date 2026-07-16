@@ -10,9 +10,10 @@ type AlbumCardProps = {
   onPress?: () => void;
   isOffline?: boolean;
   premiumLabel?: string;
+  releaseTypeLabel?: string;
 };
 
-export function AlbumCard({ album, variant = 'row', onPress, isOffline = false, premiumLabel }: AlbumCardProps) {
+export function AlbumCard({ album, variant = 'row', onPress, isOffline = false, premiumLabel, releaseTypeLabel }: AlbumCardProps) {
   const artistName = album.artist_name || album.artist?.name || 'Artiste inconnu';
   const cachedCover = useCachedImage(album.cover_url);
 
@@ -23,6 +24,7 @@ export function AlbumCard({ album, variant = 'row', onPress, isOffline = false, 
         onClick={onPress}
         style={{
           width: '100%',
+          height: '100%',
           backgroundColor: 'transparent',
           borderRadius: 'var(--radius-md)',
           padding: 0,
@@ -86,14 +88,14 @@ export function AlbumCard({ album, variant = 'row', onPress, isOffline = false, 
             </div>
           )}
 
-          {/* Play Button Overlay — Spotify-style */}
+          {/* Play Button Overlay */}
           <div
             style={{
               position: 'absolute',
-              bottom: 8,
-              right: 8,
-              width: 48,
-              height: 48,
+              bottom: 6,
+              right: 6,
+              width: 40,
+              height: 40,
               borderRadius: 'var(--radius-full)',
               background: 'var(--color-accent)',
               display: 'flex',
@@ -114,7 +116,7 @@ export function AlbumCard({ album, variant = 'row', onPress, isOffline = false, 
               e.currentTarget.style.transform = 'scale(1)';
             }}
           >
-            <Play size={22} color="#fff" style={{ marginLeft: 3 }} />
+            <Play size={18} color="#fff" style={{ marginLeft: 2 }} />
           </div>
 
           {/* Offline Indicator */}
@@ -139,16 +141,14 @@ export function AlbumCard({ album, variant = 'row', onPress, isOffline = false, 
               </span>
             </div>
           )}
-        </div>
-
-        {/* Album Info */}
-        <div style={{ padding: '2px 4px', minHeight: 48 }}>
+        </div>          {/* Album Info — compact */}
+        <div style={{ padding: '2px 4px', minHeight: 40 }}>
           <div
             style={{
               color: 'var(--color-text-primary)',
-              fontSize: 14,
+              fontSize: 13,
               fontWeight: 600,
-              lineHeight: '18px',
+              lineHeight: '16px',
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               whiteSpace: 'nowrap',
@@ -158,10 +158,28 @@ export function AlbumCard({ album, variant = 'row', onPress, isOffline = false, 
             {formatTitle(album.title)}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
+            {releaseTypeLabel && (
+              <span style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                padding: '1px 5px',
+                borderRadius: 'var(--radius-full)',
+                background: 'rgba(220,20,60,0.08)',
+                border: '1px solid rgba(220,20,60,0.15)',
+                color: 'var(--color-accent)',
+                fontSize: 8,
+                fontWeight: 800,
+                whiteSpace: 'nowrap',
+                flexShrink: 0,
+                letterSpacing: '0.3px',
+              }}>
+                {releaseTypeLabel}
+              </span>
+            )}
             <span style={{
               color: 'var(--color-text-secondary)',
-              fontSize: 13,
-              lineHeight: '16px',
+              fontSize: 11,
+              lineHeight: '14px',
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               whiteSpace: 'nowrap',
@@ -173,13 +191,13 @@ export function AlbumCard({ album, variant = 'row', onPress, isOffline = false, 
               <span style={{
                 display: 'inline-flex',
                 alignItems: 'center',
-                gap: 3,
-                padding: '1px 6px',
+                gap: 2,
+                padding: '1px 5px',
                 borderRadius: 'var(--radius-full)',
                 background: 'rgba(255,215,0,0.1)',
                 border: '1px solid rgba(255,215,0,0.15)',
                 color: '#cca300',
-                fontSize: 9,
+                fontSize: 8,
                 fontWeight: 700,
                 whiteSpace: 'nowrap',
                 flexShrink: 0,

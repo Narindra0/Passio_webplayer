@@ -77,7 +77,9 @@ export function AlbumDetailScreen() {
       setDecryptionKey(loaded.decryptionKey);
       const ready = await isAlbumReadyOffline(id);
       setIsOfflineReady(ready);
-    } catch { /* ignore */ }
+    } catch (err) {
+      logger.error('[AlbumDetail] Erreur chargement album:', err instanceof Error ? err.message : String(err));
+    }
     setLoading(false);
   }, [id, effectiveMode]);
 

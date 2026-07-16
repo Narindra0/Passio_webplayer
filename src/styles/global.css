@@ -731,7 +731,13 @@ img { max-width: 100%; height: auto; }
     z-index: 9999 !important;
     border-left: none !important;
     border-radius: 0 !important;
+    /* GPU-accelerated compositing layer */
+    will-change: transform, opacity;
+    transform: translateZ(0);
   }
+
+  /* On mobile, the FullPlayer has a simple solid var(--color-bg-dark) background.
+     All content layers sit above via their own z-index. */
 
   /* Reduce section spacing on mobile */
   .discover-content {
@@ -804,20 +810,14 @@ img { max-width: 100%; height: auto; }
     padding: 36px 16px 24px !important;
   }
   .artist-info-row {
-    flex-direction: column !important;
-    align-items: center !important;
-    text-align: center !important;
-  }
-  .artist-avatar {
-    width: 120px !important;
-    height: 120px !important;
-    min-width: 120px !important;
+    /* Supprimé flex-direction: column pour ne pas écraser les styles inline */
+    text-align: left !important;
   }
   .artist-info {
-    text-align: center !important;
+    text-align: left !important;
   }
   .artist-info .artist-cta-row {
-    justify-content: center !important;
+    justify-content: flex-start !important;
   }
   .artist-back {
     top: 12px !important;

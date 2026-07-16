@@ -1,4 +1,4 @@
-import { getApiBaseUrl } from './api';
+import { getApiBaseUrl, getAudioToken } from './api';
 import { getCloudflareAudioUrl } from '@/config/urls';
 import { logger } from '@/utils/logger';
 import type { PublicAlbumDetails, PublicAlbumSummary, PublicTrack } from '@/types/backend';
@@ -6,6 +6,7 @@ import { secureAudioPlayer } from './secureAudioPlayer';
 import { saveAudioToCache, isAudioInCache, getAudioBlobUrl, deleteAudioFromCache, getAllCachedTrackIds } from './offlineCache';
 import { isTrackInDB, getTrackFromDB } from './indexedDB';
 import { saveDownloadQueue, getDownloadQueue, clearDownloadQueue } from './storageQuota';
+import { getOrCreateDeviceId } from './device';
 
 export type DownloadStatus = 'idle' | 'downloading' | 'completed' | 'error' | 'cancelled';
 
@@ -349,6 +350,115 @@ export async function getCachedFreeTrackUrl(trackId: string): Promise<string | n
     logger.warn('[CacheFreeTrack] ❌ Erreur lecture cache pour', trackId, err);
     return null;
   }
+}
+
+// ─── Types pour l'estimation de taille ────────────────────────────────────
+
+export interface TrackSizeInfo {
+  trackId: string;
+  bytes: number;
+  source: 'cache' | 'head' | 'estimate';
+}
+
+export interface AlbumSizeEstimate {
+  totalBytes: number;
+  totalFormatted: string;
+  tracks: TrackSizeInfo[];
+}
+
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} o`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} Ko`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} Mo`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} Go`;
+}
+
+/**
+ * Estime la taille totale d'un album avant téléchargement.
+ *
+ * Stratégie (individuelle par piste) :
+ * 1. Cache localStorage → retour immédiat
+ * 2. HEAD sur l'URL source → Content-Length (5s timeout)
+ * 3. Fallback estimation via durée × bitrate 192kbps (24 Ko/s)
+ *
+ * Chaque piste est traitée indépendamment — si une HEAD échoue,
+ * les autres continuent et seule la piste défaillante utilise le fallback.
+ */
+export async function getAlbumDownloadSize(
+  album: PublicAlbumDetails,
+): Promise<AlbumSizeEstimate> {
+  const tracks = album.tracks ?? [];
+  const isFreeAlbum = Boolean(album.is_free);
+
+  // 🔑 Récupérer un token UNIQUE pour tout l'album (pistes payantes)
+  // Évite N appels API pour N pistes
+  // ⚠️ Si le backend lie ce token au trackId (tracks[0]!.id), les HEAD
+  //    des pistes suivantes échoueront → fallback estimation par durée.
+  //    C'est acceptable : le fallback individuel par piste est validé.
+  let sharedToken: string | null = null;
+  let sharedDeviceId: string | null = null;
+  if (!isFreeAlbum && tracks.length > 0) {
+    try {
+      const token = await getAudioToken(tracks[0]!.id);
+      sharedToken = token.token;
+      sharedDeviceId = await getOrCreateDeviceId();
+    } catch {
+      // Pas de token → toutes les pistes utiliseront le fallback estimation
+    }
+  }
+
+  const perTrack: TrackSizeInfo[] = await Promise.all(
+    tracks.map(async (track) => {
+      // 1. Cache localStorage
+      try {
+        const cached = localStorage.getItem(`passio_track_size_${track.id}`);
+        if (cached) {
+          const bytes = parseInt(cached, 10);
+          if (bytes > 0) return { trackId: track.id, bytes, source: 'cache' as const };
+        }
+      } catch { /* ignore */ }
+
+      // 2. HEAD sur l'URL source avec timeout 5s
+      try {
+        const url = isFreeAlbum
+          ? (getCloudflareAudioUrl(track.audio_storage_key || '') || track.encrypted_audio_url || track.preview_url || '')
+          : `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(track.id)}/audio`;
+
+        if (!url) throw new Error('No URL');
+
+        const headers: Record<string, string> = {};
+        if (!isFreeAlbum && sharedToken) {
+          // Token partagé + device ID (HEAD unique, pas de refetch par piste)
+          headers['X-Audio-Token'] = sharedToken;
+          if (sharedDeviceId) headers['x-passio-device-id'] = sharedDeviceId;
+        }
+
+        const resp = await fetch(url, {
+          method: 'HEAD',
+          headers,
+          signal: AbortSignal.timeout(5_000),
+        });
+
+        const contentLength = resp.headers.get('Content-Length');
+        if (contentLength) {
+          const bytes = parseInt(contentLength, 10);
+          if (bytes > 0) {
+            try { localStorage.setItem(`passio_track_size_${track.id}`, String(bytes)); } catch { /* ignore */ }
+            return { trackId: track.id, bytes, source: 'head' as const };
+          }
+        }
+      } catch {
+        // Piste individuelle → fallback silencieux, les autres pistes continuent
+      }
+
+      // 3. Fallback estimation via durée × 24 Ko/s (~192 kbps)
+      const estimated = Math.round((track.duration || 180) * 24_000);
+      return { trackId: track.id, bytes: estimated, source: 'estimate' as const };
+    }),
+  );
+
+  const totalBytes = perTrack.reduce((sum, t) => sum + t.bytes, 0);
+  return { totalBytes, totalFormatted: formatBytes(totalBytes), tracks: perTrack };
 }
 
 export function subscribeToDownloadProgress(albumId: string, callback: ProgressCallback): () => void {

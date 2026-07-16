@@ -4,6 +4,7 @@ import { ChevronLeft, Crown, Disc, Lock, Pause, Play, Clock } from 'lucide-react
 import { AlbumCard } from '@/components/AlbumCard';
 import { FeatTrackCard } from '@/components/FeatTrackCard';
 import type { TrackWithAlbum } from '@/components/TrackListItem';
+import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useAlbumColors } from '@/hooks/useAlbumColors';
 import { useAudioPlayback } from '@/contexts/AudioContext';
 import { Screen } from '@/components/Screen';
@@ -15,6 +16,7 @@ import { isAlbumOwnedByDevice } from '@/services/albumOwnership';
 import { hasFeatArtists, parseFeatArtists, normalizeArtistName } from '@/utils/featArtists';
 import { formatTitle } from '@/utils/formatTitle';
 import { ArtistRecommendations } from '@/components/ArtistRecommendations';
+import { getCachedArtistData, setCachedArtistData } from '@/services/artistDataCache';
 import type { PublicAlbumDetails, PublicAlbumSummary } from '@/types/backend';
 import {
   getPrimaryTextColor,
@@ -48,14 +50,31 @@ export function ArtistDetailScreen() {
   const albumCacheRef = useRef<Map<string, PublicAlbumDetails>>(new Map());
 
   useEffect(() => {
-    if (!id) return;
+    const artistId = id;
+    if (!artistId) return;
+
+    // ⚡ Cache check : instant si déjà chargé
+    const cached = getCachedArtistData(artistId);
+    if (cached) {
+      setArtistName(cached.artistName);
+      setProfilePicture(cached.profilePicture);
+      setAlbums(cached.albums);
+      setOwnedMap(cached.ownedMap);
+      setCollabAlbums(cached.collabAlbums);
+      setCollaborationTracks(cached.collaborationTracks);
+      albumCacheRef.current = cached.albumCache;
+      setTopTracks(cached.topTracks);
+      setLoading(false);
+      return;
+    }
+
     async function loadData() {
       try {
         setLoading(true);
         const allAlbums = await listAlbums();
 
         // ── Séparer les albums de l'artiste des autres ──
-        const artistAlbums = allAlbums.filter((a) => a.artist?.id === id || a.artist_name === id || a.id === id);
+        const artistAlbums = allAlbums.filter((a) => a.artist?.id === artistId || a.artist_name === artistId || a.id === artistId);
         setAlbums(artistAlbums);
 
         if (artistAlbums.length > 0) {
@@ -71,7 +90,7 @@ export function ArtistDetailScreen() {
           //    `artists[]` n'est souvent pas renvoyé par l'API listAlbums).
           //    On charge leurs détails en parallèle pour analyser les titres de pistes.
           const otherFreeAlbums = allAlbums.filter(
-            (a) => a.is_free && a.id !== id && a.artist?.id !== id && a.artist_name !== id,
+            (a) => a.is_free && a.id !== artistId && a.artist?.id !== artistId && a.artist_name !== artistId,
           );
 
           // ⚡ TOUT CHARGER EN PARALLÈLE : ownership + détails albums
@@ -142,7 +161,7 @@ export function ArtistDetailScreen() {
           };
           // 1. Albums où l'artiste est dans artists[] (si renseigné)
           for (const album of allAlbums) {
-            if (album.artists?.some((a) => a.id === id)) addAlbumIfNew(album);
+            if (album.artists?.some((a) => a.id === artistId)) addAlbumIfNew(album);
           }
           // 2. Albums gratuits : scanner les titres pour trouver les feats individuels
           for (const album of otherFreeAlbums) {
@@ -179,15 +198,28 @@ export function ArtistDetailScreen() {
           setCollabAlbums(foundAlbums);
           foundTracks.sort((a, b) => (a.album_title || '').localeCompare(b.album_title || '') || a.title.localeCompare(b.title));
           setCollaborationTracks(foundTracks);
+
+          // ⚡ Mettre en cache pour les revisites instantanées
+          setCachedArtistData(artistId!, {
+            artistName: name,
+            profilePicture: first.artist?.profile_picture_url || first.artist_pdp || first.cover_url || null,
+            albums: artistAlbums,
+            ownedMap: ownership,
+            collabAlbums: foundAlbums,
+            collaborationTracks: foundTracks,
+            albumCache: cache,
+            topTracks: trackList.slice(0, 5),
+          });
         }
       } catch {
-        const fallback = await loadArtistFromFreeCatalogCache(id!);
+        const fallback = await loadArtistFromFreeCatalogCache(artistId!);
         if (fallback) { setAlbums(fallback.albums); setArtistName(fallback.artistName); setProfilePicture(fallback.profilePicture); albumCacheRef.current = fallback.detailsMap; setTopTracks(fallback.topTracks); }
       } finally { setLoading(false); }
     }
     void loadData();
   }, [id]);
 
+  const isMobile = useMediaQuery('(max-width: 768px)');
   const cachedProfile = useCachedImage(profilePicture);
   const profileColors = useAlbumColors(profilePicture);
 
@@ -206,6 +238,14 @@ export function ArtistDetailScreen() {
     void playFromTrackList(collaborationTracks, albumCacheRef.current, track.id);
   };
 
+  const getReleaseTypeLabel = (albumSummary: PublicAlbumSummary): string | undefined => {
+    const t = albumSummary.type;
+    if (t === 'single') return 'Single';
+    if (t === 'ep') return 'EP';
+    if (t === 'album' || !t) return undefined; // default album → pas de label
+    return undefined;
+  };
+
   const renderAlbumCard = (album: PublicAlbumSummary) => {
     const isPaid = !album.is_free;
     const isOwned = ownedMap.get(album.id) ?? false;
@@ -222,6 +262,7 @@ export function ArtistDetailScreen() {
         album={album}
         variant="tile"
         premiumLabel={premiumLabel}
+        releaseTypeLabel={getReleaseTypeLabel(album)}
         onPress={() => navigate(`/album/${album.id}`)}
       />
     );
@@ -255,6 +296,28 @@ export function ArtistDetailScreen() {
     });
   }, [albums, collabAlbums, collaborationTracks]);
 
+  // 🎯 Sous-titre complet de la discographie (sans filtre)
+  const discographySubtitle = useMemo(() => {
+    let albumCount = 0, singleCount = 0, epCount = 0;
+    for (const item of discographyItems) {
+      if (item.type === 'feat') continue;
+      const t = item.data.type;
+      if (t === 'single') singleCount++;
+      else if (t === 'ep') epCount++;
+      else albumCount++;
+    }
+    const featCount = discographyItems.filter(i => i.type === 'feat').length;
+    const premiumCount = discographyItems.filter(i => i.type === 'album' && !(i.data as PublicAlbumSummary).is_free).length;
+
+    const parts: string[] = [];
+    if (albumCount > 0) parts.push(`${albumCount} album${albumCount > 1 ? 's' : ''}`);
+    if (singleCount > 0) parts.push(`${singleCount} single${singleCount > 1 ? 's' : ''}`);
+    if (epCount > 0) parts.push(`${epCount} EP${epCount > 1 ? 's' : ''}`);
+    if (featCount > 0) parts.push(`${featCount} feat.`);
+    if (premiumCount > 0) parts.push(`${premiumCount} premium`);
+    return parts.join(' · ');
+  }, [discographyItems]);
+
   const canPlayAny = tracksWithPaidFlag.some((t) => t._canPlay);
   const priceAlbums = albums.filter((a) => !a.is_free && a.price_ariary > 0);
 
@@ -283,12 +346,12 @@ export function ArtistDetailScreen() {
       <div className="artist-hero"
         style={{
           position: 'relative',
-          minHeight: 'clamp(280px, 40vh, 400px)',
+          minHeight: isMobile ? 'auto' : 'clamp(280px, 40vh, 400px)',
           background: profileColors.gradientStyle,
           transition: 'background 0.6s ease',
           display: 'flex',
           alignItems: 'flex-end',
-          padding: '48px 32px 32px',
+          padding: isMobile ? '44px 20px 20px' : '48px 32px 32px',
         }}
       >
         {/* Back button */}
@@ -346,22 +409,24 @@ export function ArtistDetailScreen() {
         <div className="artist-info-row"
           style={{
             display: 'flex',
-            gap: 28,
-            alignItems: 'flex-end',
+            gap: isMobile ? 18 : 28,
+            alignItems: isMobile ? 'stretch' : 'flex-end',
             position: 'relative',
             zIndex: 1,
+            width: '100%',
           }}
         >
           {/* Circular artist image */}
           <div className="artist-avatar"
             style={{
-              width: 180,
-              height: 180,
-              minWidth: 180,
+              width: isMobile ? 88 : 180,
+              height: isMobile ? 88 : 180,
+              minWidth: isMobile ? 88 : 180,
               borderRadius: 'var(--radius-full)',
               overflow: 'hidden',
               boxShadow: 'var(--shadow-xl)',
               backgroundColor: 'var(--color-surface-elevated)',
+              flexShrink: 0,
             }}
           >
             {profilePicture ? (
@@ -380,97 +445,164 @@ export function ArtistDetailScreen() {
           </div>
 
           {/* Name + actions */}
-          <div className="artist-info" style={{ paddingBottom: 8 }}>
-            <p style={{
-              color: getSecondaryTextColor(profileColors.colors, 'var(--color-accent)'),
-              fontSize: 12,
-              fontWeight: 700,
-              textTransform: 'uppercase',
-              letterSpacing: '1.5px',
-              marginBottom: 8,
-            }}>
-              Artiste
-            </p>
-            <h1 style={{
-              color: getPrimaryTextColor(profileColors.colors, 'var(--color-text-primary)'),
-              fontSize: 'clamp(32px, 5vw, 56px)',
-              fontWeight: 800,
-              letterSpacing: '-1.5px',
-              lineHeight: 1.05,
-              margin: '0 0 8px',
-            }}>
-              {artistName}
-            </h1>
+          <div className="artist-info" style={{ paddingBottom: isMobile ? 0 : 8, minWidth: 0, flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+            {/* ── MOBILE : photo gauche · nom en haut · bouton en bas ── */}
+            {isMobile && (
+              <>
+                <div style={{
+                  color: getPrimaryTextColor(profileColors.colors, 'var(--color-text-primary)'),
+                  fontSize: 22,
+                  fontWeight: 800,
+                  letterSpacing: '-0.5px',
+                  lineHeight: 1.2,
+                }}>
+                  {artistName}
+                </div>
 
-            {/* Metadata — dynamic colors */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
-              <span style={{ color: getSecondaryTextColor(profileColors.colors, 'var(--color-text-secondary)'), fontSize: 14, fontWeight: 500 }}>
-                {priceAlbums.length > 0 && (
-                  <span>{priceAlbums.length} album{priceAlbums.length > 1 ? 's' : ''} premium</span>
-                )}
-              </span>
-              {topTracks.length > 0 && (
-                <>
-                  <span style={{ color: getMutedTextColor(profileColors.colors, 'var(--color-text-muted)'), fontSize: 12 }}>·</span>
-                  <span style={{ color: getSecondaryTextColor(profileColors.colors, 'var(--color-text-secondary)'), fontSize: 14, fontWeight: 500 }}>
-                    {topTracks.length} titre{topTracks.length > 1 ? 's' : ''}
-                  </span>
-                </>
-              )}
-              {totalDuration > 0 && (
-                <>
-                  <span style={{ color: getMutedTextColor(profileColors.colors, 'var(--color-text-muted)'), fontSize: 12 }}>·</span>
-                  <span style={{ color: getSecondaryTextColor(profileColors.colors, 'var(--color-text-secondary)'), fontSize: 13, fontWeight: 500, fontVariantNumeric: 'tabular-nums' }}>
-                    {totalDurationLabel}
-                  </span>
-                </>
-              )}
-            </div>
+                {(!loading && tracksWithPaidFlag.length > 0) || priceAlbums.length > 0 ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 6 }}>
+                  {!loading && tracksWithPaidFlag.length > 0 && (
+                    <button
+                      onClick={() => handleTrackPress(topTracks[0])}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        padding: '10px 24px',
+                        borderRadius: 'var(--radius-full)',
+                        background: 'var(--color-accent)',
+                        border: 'none',
+                        cursor: 'pointer',
+                        color: '#fff',
+                        fontSize: 13,
+                        fontWeight: 700,
+                        transition: 'all var(--transition-fast) ease',
+                        boxShadow: '0 2px 10px rgba(220,20,60,0.3)',
+                      }}
+                      >
+                        <Play size={14} fill="#fff" />
+                        {canPlayAny ? 'Écouter tout' : 'Découvrir'}
+                      </button>
+                    )}
 
-            {/* Action buttons */}
-            {!loading && tracksWithPaidFlag.length > 0 && (
-              <div className="artist-cta-row" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                <button
-                  onClick={() => handleTrackPress(topTracks[0])}
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    padding: '12px 24px',
-                    borderRadius: 'var(--radius-full)',
-                    background: 'var(--color-accent)',
-                    border: 'none',
-                    cursor: 'pointer',
-                    color: '#fff',
-                    fontSize: 14,
-                    fontWeight: 700,
-                    transition: 'all var(--transition-fast) ease',
-                  }}
-                  onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.04)'; e.currentTarget.style.background = 'var(--color-accent-light)'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.background = 'var(--color-accent)'; }}
-                >
-                  <Play size={18} fill="#fff" />
-                  {canPlayAny ? 'Tout écouter' : 'Découvrir'}
-                </button>
+                    {priceAlbums.length > 0 && (
+                      <span style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 4,
+                        padding: '4px 10px',
+                        borderRadius: 'var(--radius-full)',
+                        background: getBadgeBackground(profileColors.colors, profileColors.colors?.isDark ?? true, true),
+                        border: `1px solid ${getBadgeBorder(profileColors.colors, profileColors.colors?.isDark ?? true, true)}`,
+                        color: '#FFD700',
+                        fontSize: 10,
+                        fontWeight: 700,
+                      }}>
+                        <Crown size={10} />
+                        {priceAlbums.length}
+                      </span>
+                    )}
+                  </div>
+                ) : null}
+              </>
+            )}
 
-                {priceAlbums.length > 0 && (
-                  <span style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 6,
-                    padding: '4px 14px',
-                    borderRadius: 'var(--radius-full)',
-                    background: getBadgeBackground(profileColors.colors, profileColors.colors?.isDark ?? true, true),
-                    border: `1px solid ${getBadgeBorder(profileColors.colors, profileColors.colors?.isDark ?? true, true)}`,
-                    color: '#FFD700',
-                    fontSize: 12,
-                    fontWeight: 700,
+            {/* ── DESKTOP : label + nom + metadata + CTA ── */}
+            {!isMobile && (
+              <>
+                <p style={{
+                  color: getSecondaryTextColor(profileColors.colors, 'var(--color-accent)'),
+                  fontSize: 12,
+                  fontWeight: 700,
+                  textTransform: 'uppercase',
+                  letterSpacing: '1.5px',
+                  marginBottom: 8,
+                }}>
+                  Artiste
+                </p>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <h1 style={{
+                    color: getPrimaryTextColor(profileColors.colors, 'var(--color-text-primary)'),
+                    fontSize: 'clamp(32px, 5vw, 56px)',
+                    fontWeight: 800,
+                    letterSpacing: '-1.5px',
+                    lineHeight: 1.05,
+                    margin: '0 0 8px',
                   }}>
-                    <Crown size={12} />
-                    {priceAlbums.length} premium
-                  </span>
+                    {artistName}
+                  </h1>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 16 }}>
+                  {priceAlbums.length > 0 && (
+                    <span style={{ color: getSecondaryTextColor(profileColors.colors, 'var(--color-text-secondary)'), fontSize: 14, fontWeight: 500 }}>
+                      {priceAlbums.length} album{priceAlbums.length > 1 ? 's' : ''} premium
+                    </span>
+                  )}
+                  {topTracks.length > 0 && (
+                    <>
+                      <span style={{ color: getMutedTextColor(profileColors.colors, 'var(--color-text-muted)'), fontSize: 12 }}>·</span>
+                      <span style={{ color: getSecondaryTextColor(profileColors.colors, 'var(--color-text-secondary)'), fontSize: 14, fontWeight: 500 }}>
+                        {topTracks.length} titre{topTracks.length > 1 ? 's' : ''}
+                      </span>
+                    </>
+                  )}
+                  {totalDuration > 0 && (
+                    <>
+                      <span style={{ color: getMutedTextColor(profileColors.colors, 'var(--color-text-muted)'), fontSize: 12 }}>·</span>
+                      <span style={{ color: getSecondaryTextColor(profileColors.colors, 'var(--color-text-secondary)'), fontSize: 13, fontWeight: 500, fontVariantNumeric: 'tabular-nums' }}>
+                        {totalDurationLabel}
+                      </span>
+                    </>
+                  )}
+                </div>
+
+                {!loading && tracksWithPaidFlag.length > 0 && (
+                  <div className="artist-cta-row" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <button
+                      onClick={() => handleTrackPress(topTracks[0])}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        padding: '12px 24px',
+                        borderRadius: 'var(--radius-full)',
+                        background: 'var(--color-accent)',
+                        border: 'none',
+                        cursor: 'pointer',
+                        color: '#fff',
+                        fontSize: 14,
+                        fontWeight: 700,
+                        transition: 'all var(--transition-fast) ease',
+                      }}
+                      onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.04)'; e.currentTarget.style.background = 'var(--color-accent-light)'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.background = 'var(--color-accent)'; }}
+                    >
+                      <Play size={18} fill="#fff" />
+                      {canPlayAny ? 'Tout écouter' : 'Découvrir'}
+                    </button>
+
+                    {priceAlbums.length > 0 && (
+                      <span style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        padding: '4px 14px',
+                        borderRadius: 'var(--radius-full)',
+                        background: getBadgeBackground(profileColors.colors, profileColors.colors?.isDark ?? true, true),
+                        border: `1px solid ${getBadgeBorder(profileColors.colors, profileColors.colors?.isDark ?? true, true)}`,
+                        color: '#FFD700',
+                        fontSize: 12,
+                        fontWeight: 700,
+                      }}>
+                        <Crown size={12} />
+                        {priceAlbums.length} premium
+                      </span>
+                    )}
+                  </div>
                 )}
-              </div>
+              </>
             )}
           </div>
         </div>
@@ -580,9 +712,11 @@ export function ArtistDetailScreen() {
                   <span style={{ flex: 1, color: 'var(--color-text-muted)', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.8px' }}>
                     Titre
                   </span>
-                  <span style={{ width: 48, color: 'var(--color-text-muted)', fontSize: 11, fontWeight: 600, textAlign: 'right', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
-                    <Clock size={14} />
-                  </span>
+                  {!isMobile && (
+                    <span style={{ width: 48, color: 'var(--color-text-muted)', fontSize: 11, fontWeight: 600, textAlign: 'right', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
+                      <Clock size={14} />
+                    </span>
+                  )}
                 </div>
 
                 {/* Track rows */}
@@ -703,7 +837,7 @@ export function ArtistDetailScreen() {
                         ) : isCurrent ? (
                           <Play size={14} color="var(--color-accent)" />
                         ) : null}
-                        {track.duration != null && track.duration > 0 && (
+                        {!isMobile && track.duration != null && track.duration > 0 && (
                           <span style={{
                             color: 'var(--color-text-muted)',
                             fontSize: 12,
@@ -754,7 +888,7 @@ export function ArtistDetailScreen() {
                     }}>
                       <Disc size={16} color="#fff" />
                     </div>
-                    <div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
                       <h2 className="section-title" style={{ margin: 0 }}>Discographie</h2>
                       <p style={{
                         color: 'var(--color-text-muted)',
@@ -762,40 +896,131 @@ export function ArtistDetailScreen() {
                         margin: '2px 0 0',
                         fontWeight: 500,
                       }}>
-                        {albums.length} album{albums.length > 1 ? 's' : ''}
-                        {collaborationTracks.length > 0 && ` · ${collaborationTracks.length} feat.`}
-                        {priceAlbums.length > 0 && ` · ${priceAlbums.length} premium`}
+                        {discographySubtitle || 'Aucun résultat'}
                       </p>
                     </div>
                   </div>
+
+                  {/* Bouton + vers la page discographie complète — poussé à droite par section-header flex */}
+                  <button
+                    onClick={() => navigate(`/artist/${id}/discography`)}
+                    title="Voir toute la discographie"
+                    style={{
+                      width: 32,
+                      height: 32,
+                      minWidth: 32,
+                      borderRadius: 'var(--radius-full)',
+                      background: 'var(--color-surface-elevated)',
+                      border: '1px solid var(--color-border-subtle)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: 'pointer',
+                      color: 'var(--color-accent)',
+                      fontSize: 18,
+                      fontWeight: 700,
+                      lineHeight: 1,
+                      transition: 'all var(--transition-fast) ease',
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = 'var(--color-accent)';
+                      e.currentTarget.style.color = '#fff';
+                      e.currentTarget.style.borderColor = 'var(--color-accent)';
+                      e.currentTarget.style.transform = 'scale(1.08)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = 'var(--color-surface-elevated)';
+                      e.currentTarget.style.color = 'var(--color-accent)';
+                      e.currentTarget.style.borderColor = 'var(--color-border-subtle)';
+                      e.currentTarget.style.transform = 'scale(1)';
+                    }}
+                  >
+                    +
+                  </button>
                 </div>
 
-                <div className="artist-discography-grid"
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))',
-                    gap: 16,
-                  }}
-                >
-                  {discographyItems.map((item) => {
-                    if (item.type === 'album') {
-                      return renderAlbumCard(item.data);
-                    }
-                    // type === 'feat'
-                    const track = item.data;
-                    const isCurrent = currentTrack?.id === track.id;
-                    return (
-                      <FeatTrackCard
-                        key={`feat-${track.id}`}
-                        track={track}
-                        isPlaying={isPlaying}
-                        isCurrent={isCurrent}
-                        sourceArtistName={track.artist_name}
-                        onPress={() => handleCollabTrackPress(track)}
-                      />
-                    );
-                  })}
-                </div>
+                {isMobile ? (
+                  /* ⚡ Carrousel horizontal (mobile) — scroll snap, cartes taille fixe */
+                  <div
+                    style={{
+                      display: 'flex',
+                      gap: 10,
+                      overflowX: 'auto',
+                      scrollSnapType: 'x mandatory',
+                      WebkitOverflowScrolling: 'touch',
+                      paddingLeft: 'var(--page-padding)',
+                      paddingRight: 6,
+                      paddingBottom: 4,
+                      scrollbarWidth: 'none',
+                      msOverflowStyle: 'none',
+                    }}
+                  >
+                    {discographyItems.map((item) => {
+                      if (item.type === 'album') {
+                        return (
+                          <div
+                            key={item.data.id}
+                            style={{
+                              scrollSnapAlign: 'start',
+                              flexShrink: 0,
+                              width: 145,
+                            }}
+                          >
+                            {renderAlbumCard(item.data)}
+                          </div>
+                        );
+                      }
+                      const track = item.data;
+                      const isCurrent = currentTrack?.id === track.id;
+                      return (
+                        <div
+                          key={`feat-${track.id}`}
+                          style={{
+                            scrollSnapAlign: 'start',
+                            flexShrink: 0,
+                            width: 145,
+                          }}
+                        >
+                          <FeatTrackCard
+                            track={track}
+                            isPlaying={isPlaying}
+                            isCurrent={isCurrent}
+                            sourceArtistName={track.artist_name}
+                            onPress={() => handleCollabTrackPress(track)}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  /* Grille CSS (desktop) — inchangée */
+                  <div className="artist-discography-grid"
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))',
+                      gap: 16,
+                    }}
+                  >
+                    {discographyItems.map((item) => {
+                      if (item.type === 'album') {
+                        return renderAlbumCard(item.data);
+                      }
+                      // type === 'feat'
+                      const track = item.data;
+                      const isCurrent = currentTrack?.id === track.id;
+                      return (
+                        <FeatTrackCard
+                          key={`feat-${track.id}`}
+                          track={track}
+                          isPlaying={isPlaying}
+                          isCurrent={isCurrent}
+                          sourceArtistName={track.artist_name}
+                          onPress={() => handleCollabTrackPress(track)}
+                        />
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             )}
 

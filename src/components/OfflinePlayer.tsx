@@ -1,12 +1,27 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAudioPlayback, useAudioProgress } from '@/contexts/AudioContext';
 import { useLibraryMode } from '@/contexts/LibraryModeContext';
 import { listVaultAlbums } from '@/services/downloadManager';
 import { resolveOfflinePlayback } from '@/services/offlineAccess';
 import type { PublicAlbumDetails, PublicAlbumSummary, PublicTrack } from '@/types/backend';
-import { Play, Pause, Download, WifiOff, HardDrive, ChevronLeft } from 'lucide-react';
+import {
+  Play, Pause, Download, Wifi, HardDrive, ChevronLeft,
+  Music, Headphones,
+} from 'lucide-react';
 import { sortTracksByPosition } from '@/utils/tracks';
 import { formatTitle } from '@/utils/formatTitle';
+
+function formatDuration(seconds: number | null | undefined): string {
+  if (!seconds || isNaN(seconds)) return '--:--';
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+/** Animation slideUp pour les transitions de vue */
+const slideUpStyle: React.CSSProperties = {
+  animation: 'slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
+};
 
 export function OfflinePlayer() {
   const { toggleMode } = useLibraryMode();
@@ -19,6 +34,9 @@ export function OfflinePlayer() {
   const [loading, setLoading] = useState(true);
   const [storageInfo, setStorageInfo] = useState<string | null>(null);
   const [selectedAlbumId, setSelectedAlbumId] = useState<string | null>(null);
+  const [viewTransition, setViewTransition] = useState<'none' | 'entering'>('none');
+
+  const bodyRef = useRef<HTMLDivElement>(null);
 
   // Charger les albums téléchargés
   useEffect(() => {
@@ -72,13 +90,6 @@ export function OfflinePlayer() {
     return { summary, details };
   }, [selectedAlbumId, albums, albumDetails]);
 
-  const formatDuration = (seconds: number | null | undefined): string => {
-    if (!seconds || isNaN(seconds)) return '--:--';
-    const m = Math.floor(seconds / 60);
-    const s = Math.floor(seconds % 60);
-    return `${m}:${s.toString().padStart(2, '0')}`;
-  };
-
   const sortedTracks = useMemo(() => {
     if (!selectedAlbum) return [];
     return sortTracksByPosition(selectedAlbum.details.tracks || []);
@@ -99,13 +110,32 @@ export function OfflinePlayer() {
       return;
     }
 
-    // Lire directement depuis le cache IndexedDB
     try {
       await audio.playTrackAtIndex(index);
     } catch {
       // Silencieux
     }
   }, [selectedAlbum, audio]);
+
+  /** Retour à la liste avec animation */
+  const goBackToList = useCallback(() => {
+    setViewTransition('none');
+    setSelectedAlbumId(null);
+  }, []);
+
+  /** Ouvre un album détaillé */
+  const openAlbum = useCallback((albumId: string) => {
+    setViewTransition('entering');
+    setSelectedAlbumId(albumId);
+    // Scroll en haut du body
+    if (bodyRef.current) bodyRef.current.scrollTop = 0;
+  }, []);
+
+  const handleProgressClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    seekTo(Math.max(0, Math.min(1, x / rect.width)));
+  }, [seekTo]);
 
   return (
     <div
@@ -126,9 +156,14 @@ export function OfflinePlayer() {
           alignItems: 'center',
           justifyContent: 'space-between',
           padding: '16px 20px',
+          paddingTop: 'calc(16px + env(safe-area-inset-top, 0px))',
           borderBottom: '1px solid var(--color-border-subtle)',
           flexShrink: 0,
-          background: 'var(--color-bg-dark)',
+          flexWrap: 'wrap',
+          gap: 8,
+          background: 'linear-gradient(180deg, rgba(30,10,10,0.95) 0%, var(--color-bg-dark) 100%)',
+          backdropFilter: 'blur(12px)',
+          WebkitBackdropFilter: 'blur(12px)',
           zIndex: 10,
         }}
       >
@@ -138,101 +173,105 @@ export function OfflinePlayer() {
               width: 36,
               height: 36,
               borderRadius: 'var(--radius-full)',
-              background: 'rgba(255,255,255,0.04)',
-              border: '1px solid var(--color-border-subtle)',
+              background: 'linear-gradient(135deg, rgba(220,20,60,0.15), rgba(139,0,0,0.1))',
+              border: '1px solid rgba(220,20,60,0.2)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
             }}
           >
-            <HardDrive size={18} color="var(--color-text-muted)" />
+            <HardDrive size={18} color="var(--color-accent)" />
           </div>
-          <span
-            style={{
-              fontSize: 15,
-              fontWeight: 700,
-              color: 'var(--color-text-primary)',
-              letterSpacing: '-0.3px',
-            }}
-          >
-            Hors-ligne
-          </span>
+          <div>
+            <span
+              style={{
+                fontSize: 15,
+                fontWeight: 700,
+                color: 'var(--color-text-primary)',
+                letterSpacing: '-0.3px',
+                display: 'block',
+              }}
+            >
+              Hors-ligne
+            </span>
+            {storageInfo && (
+              <span
+                style={{
+                  fontSize: 10,
+                  color: 'var(--color-text-muted)',
+                  fontWeight: 500,
+                  display: 'block',
+                  marginTop: 1,
+                }}
+              >
+                {storageInfo}
+              </span>
+            )}
+          </div>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          {storageInfo && (
-            <span
-              style={{
-                fontSize: 11,
-                color: 'var(--color-text-muted)',
-                fontWeight: 500,
-                padding: '4px 10px',
-                borderRadius: 'var(--radius-full)',
-                background: 'var(--color-surface-elevated)',
-                border: '1px solid var(--color-border-subtle)',
-              }}
-            >
-              {storageInfo}
-            </span>
-          )}
           <button
             onClick={() => void toggleMode()}
-            title="Passer en mode en ligne"
+            title="Revenir au mode en ligne"
             style={{
               display: 'inline-flex',
               alignItems: 'center',
               gap: 6,
               padding: '8px 14px',
               borderRadius: 'var(--radius-full)',
-              background: 'rgba(255,255,255,0.04)',
-              border: '1px solid var(--color-border-subtle)',
+              background: 'rgba(29,185,84,0.08)',
+              border: '1px solid rgba(29,185,84,0.15)',
               cursor: 'pointer',
-              color: 'var(--color-text-secondary)',
+              color: '#1DB954',
               fontSize: 12,
               fontWeight: 600,
               transition: 'all var(--transition-fast) ease',
+              whiteSpace: 'nowrap',
             }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.background = 'var(--color-surface-hover)';
-              e.currentTarget.style.color = 'var(--color-text-primary)';
+              e.currentTarget.style.background = 'rgba(29,185,84,0.15)';
+              e.currentTarget.style.transform = 'scale(1.03)';
             }}
             onMouseLeave={(e) => {
-              e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
-              e.currentTarget.style.color = 'var(--color-text-secondary)';
+              e.currentTarget.style.background = 'rgba(29,185,84,0.08)';
+              e.currentTarget.style.transform = 'scale(1)';
             }}
           >
-            <WifiOff size={14} />
-            Mode avion
+            <Wifi size={14} />
+            <span style={{ display: 'inline' }}>Mode en ligne</span>
           </button>
         </div>
       </div>
 
       {/* ========== BODY ========== */}
       <div
+        ref={bodyRef}
         style={{
           flex: 1,
           overflowY: 'auto',
-          padding: '0 20px',
+          overflowX: 'hidden',
+          padding: '0 16px',
+          paddingBottom: currentTrack ? 80 : 24,
         }}
       >
         {selectedAlbumId ? (
-          /* ── Vue album détaillé ── */
-          <div>
-            {/* Back button */}
+          /* ── VUE ALBUM DÉTAILLÉ ── */
+          <div style={viewTransition === 'entering' ? slideUpStyle : undefined}>
+            {/* Bouton retour */}
             <button
-              onClick={() => setSelectedAlbumId(null)}
+              onClick={goBackToList}
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: 6,
-                padding: '10px 0',
+                padding: '14px 0 10px',
                 background: 'none',
                 border: 'none',
                 cursor: 'pointer',
                 color: 'var(--color-text-muted)',
                 fontSize: 13,
                 fontWeight: 600,
-                marginBottom: 8,
                 transition: 'color var(--transition-fast) ease',
               }}
               onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--color-text-primary)'; }}
@@ -244,27 +283,29 @@ export function OfflinePlayer() {
 
             {selectedAlbum?.details && (
               <>
-                {/* Album header compact */}
+                {/* ── Album header ── */}
                 <div
                   style={{
                     display: 'flex',
-                    gap: 16,
+                    gap: 18,
                     alignItems: 'center',
-                    marginBottom: 24,
-                    padding: '16px',
-                    borderRadius: 'var(--radius-md)',
-                    background: 'var(--color-surface-elevated)',
+                    marginBottom: 28,
+                    padding: '18px 16px',
+                    borderRadius: 'var(--radius-lg)',
+                    background: 'linear-gradient(135deg, var(--color-surface-elevated) 0%, var(--color-surface) 100%)',
+                    border: '1px solid var(--color-border-subtle)',
                   }}
                 >
-                  {/* Mini cover */}
+                  {/* Cover */}
                   <div
                     style={{
-                      width: 72,
-                      height: 72,
-                      borderRadius: 'var(--radius-sm)',
+                      width: 80,
+                      height: 80,
+                      minWidth: 80,
+                      borderRadius: 'var(--radius-md)',
                       overflow: 'hidden',
                       backgroundColor: 'var(--color-bg-dark)',
-                      flexShrink: 0,
+                      boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
                     }}
                   >
                     {selectedAlbum.details.cover_url ? (
@@ -278,13 +319,9 @@ export function OfflinePlayer() {
                     ) : (
                       <div
                         style={{
-                          width: '100%',
-                          height: '100%',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          color: 'var(--color-text-muted)',
-                          fontSize: 28,
+                          width: '100%', height: '100%',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          color: 'var(--color-text-muted)', fontSize: 32,
                         }}
                       >
                         ♪
@@ -292,15 +329,16 @@ export function OfflinePlayer() {
                     )}
                   </div>
 
-                  {/* Album info */}
+                  {/* Infos */}
                   <div style={{ minWidth: 0, flex: 1 }}>
                     <h2
                       style={{
                         margin: 0,
-                        fontSize: 18,
-                        fontWeight: 700,
+                        fontSize: 20,
+                        fontWeight: 800,
                         color: 'var(--color-text-primary)',
-                        lineHeight: '22px',
+                        lineHeight: '24px',
+                        letterSpacing: '-0.4px',
                         overflow: 'hidden',
                         textOverflow: 'ellipsis',
                         whiteSpace: 'nowrap',
@@ -310,29 +348,62 @@ export function OfflinePlayer() {
                     </h2>
                     <p
                       style={{
-                        margin: '3px 0 0',
-                        fontSize: 13,
+                        margin: '4px 0 0',
+                        fontSize: 14,
                         color: 'var(--color-text-secondary)',
                         fontWeight: 500,
                       }}
                     >
                       {selectedAlbum.details.artist_name || selectedAlbum.details.artist?.name || 'Artiste inconnu'}
                     </p>
-                    <p
+                    <div
                       style={{
-                        margin: '2px 0 0',
-                        fontSize: 11,
-                        color: 'var(--color-text-muted)',
-                        fontWeight: 500,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 4,
+                        marginTop: 6,
+                        padding: '3px 10px',
+                        borderRadius: 'var(--radius-full)',
+                        background: 'rgba(29,185,84,0.06)',
+                        border: '1px solid rgba(29,185,84,0.1)',
                       }}
                     >
-                      {selectedAlbum.details.tracks?.length ?? 0} titre(s) · Disponible hors-ligne
-                    </p>
+                      <Download size={10} color="#1DB954" />
+                      <span
+                        style={{
+                          fontSize: 10,
+                          color: '#1DB954',
+                          fontWeight: 700,
+                          letterSpacing: '0.2px',
+                          textTransform: 'uppercase',
+                        }}
+                      >
+                        {selectedAlbum.details.tracks?.length ?? 0} titre{(selectedAlbum.details.tracks?.length ?? 0) > 1 ? 's' : ''} · Hors-ligne
+                      </span>
+                    </div>
                   </div>
                 </div>
 
-                {/* Tracklist */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                {/* ── Tracklist ── */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 2, paddingBottom: 16 }}>
+                  {sortedTracks.length > 0 && (
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 12,
+                        padding: '0 14px 10px',
+                        borderBottom: '1px solid var(--color-border-subtle)',
+                        marginBottom: 4,
+                      }}
+                    >
+                      <span style={{ width: 24, fontSize: 11, fontWeight: 600, color: 'var(--color-text-muted)', textAlign: 'center' }}>#</span>
+                      <span style={{ flex: 1, fontSize: 11, fontWeight: 600, color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.6px' }}>Titre</span>
+                      <span style={{ width: 48, fontSize: 11, fontWeight: 600, color: 'var(--color-text-muted)', textAlign: 'right' }}>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                      </span>
+                    </div>
+                  )}
                   {sortedTracks.map((track, index) => {
                     const isCurrent = audio.currentTrack?.id === track.id;
                     const isThisPlaying = isCurrent && isPlaying;
@@ -344,14 +415,16 @@ export function OfflinePlayer() {
                           display: 'flex',
                           alignItems: 'center',
                           gap: 12,
-                          padding: '10px 12px',
+                          padding: '10px 14px',
                           borderRadius: 'var(--radius-sm)',
                           border: 'none',
-                          background: isCurrent ? 'var(--color-accent-soft)' : 'transparent',
+                          background: isCurrent
+                            ? 'var(--color-accent-soft)'
+                            : 'transparent',
                           cursor: 'pointer',
                           width: '100%',
                           textAlign: 'left',
-                          transition: 'background-color var(--transition-fast) ease',
+                          transition: 'all var(--transition-fast) ease',
                         }}
                         onMouseEnter={(e) => {
                           if (!isCurrent) e.currentTarget.style.background = 'var(--color-surface-hover)';
@@ -360,12 +433,11 @@ export function OfflinePlayer() {
                           if (!isCurrent) e.currentTarget.style.background = 'transparent';
                         }}
                       >
-                        {/* Play/Pause */}
+                        {/* Index ou indicateur de lecture */}
                         <div
                           style={{
                             width: 24,
                             height: 24,
-                            borderRadius: 'var(--radius-full)',
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent: 'center',
@@ -373,13 +445,21 @@ export function OfflinePlayer() {
                           }}
                         >
                           {isThisPlaying ? (
-                            <Pause size={14} color="var(--color-accent)" />
+                            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 2, height: 14 }}>
+                              <div className="equalizer-bar" style={{ width: 2, backgroundColor: 'var(--color-accent)', borderRadius: 1 }} />
+                              <div className="equalizer-bar" style={{ width: 2, backgroundColor: 'var(--color-accent)', borderRadius: 1 }} />
+                              <div className="equalizer-bar" style={{ width: 2, backgroundColor: 'var(--color-accent)', borderRadius: 1 }} />
+                            </div>
                           ) : (
-                            <Play size={14} color={isCurrent ? 'var(--color-accent)' : 'var(--color-text-muted)'} />
+                            <Play
+                              size={13}
+                              color={isCurrent ? 'var(--color-accent)' : 'var(--color-text-muted)'}
+                              style={{ opacity: isCurrent ? 1 : 0.5 }}
+                            />
                           )}
                         </div>
 
-                        {/* Track info */}
+                        {/* Infos piste */}
                         <div style={{ minWidth: 0, flex: 1 }}>
                           <span
                             style={{
@@ -397,7 +477,7 @@ export function OfflinePlayer() {
                           </span>
                         </div>
 
-                        {/* Duration */}
+                        {/* Durée */}
                         {track.duration != null && track.duration > 0 && (
                           <span
                             style={{
@@ -419,146 +499,139 @@ export function OfflinePlayer() {
             )}
           </div>
         ) : (
-          /* ── Liste des albums téléchargés ── */
-          <>
-            {/* Mini status */}
+          /* ── LISTE DES ALBUMS ── */
+          <div style={viewTransition === 'entering' ? undefined : undefined}>
+            {/* En-tête de liste */}
             <div
               style={{
                 display: 'flex',
                 alignItems: 'center',
-                gap: 10,
-                padding: '16px 0 12px',
+                justifyContent: 'space-between',
+                padding: '20px 4px 8px',
               }}
             >
-              <div
-                style={{
-                  width: 8,
-                  height: 8,
-                  borderRadius: '50%',
-                  background: 'var(--color-success)',
-                  flexShrink: 0,
-                  opacity: 0.7,
-                }}
-              />
-              <span
-                style={{
-                  color: 'var(--color-text-muted)',
-                  fontSize: 13,
-                  fontWeight: 500,
-                }}
-              >
-                {loading
-                  ? 'Chargement…'
-                  : `${albums.length} album${albums.length > 1 ? 's' : ''} téléchargé${albums.length > 1 ? 's' : ''}`}
-              </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div
+                  style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: '50%',
+                    background: '#1DB954',
+                    flexShrink: 0,
+                    boxShadow: '0 0 8px rgba(29,185,84,0.4)',
+                  }}
+                />
+                <span
+                  style={{
+                    color: 'var(--color-text-muted)',
+                    fontSize: 13,
+                    fontWeight: 500,
+                  }}
+                >
+                  {loading
+                    ? 'Chargement…'
+                    : albums.length === 0
+                      ? 'Aucun album téléchargé'
+                      : `${albums.length} album${albums.length > 1 ? 's' : ''} téléchargé${albums.length > 1 ? 's' : ''}`}
+                </span>
+              </div>
             </div>
 
             {loading ? (
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'center',
-                  padding: '60px 0',
-                }}
-              >
-                <div
-                  className="loader-spinner"
-                  style={{
-                    width: 24,
-                    height: 24,
-                    borderWidth: 2,
-                  }}
-                />
+              <div style={{ display: 'flex', justifyContent: 'center', padding: '60px 0' }}>
+                <div className="loader-spinner" style={{ width: 24, height: 24, borderWidth: 2 }} />
               </div>
             ) : albums.length === 0 ? (
-              /* ── État vide ── */
+              /* ── ÉTAT VIDE ── */
               <div
                 style={{
                   display: 'flex',
                   flexDirection: 'column',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  padding: '80px 24px',
+                  padding: '60px 24px 80px',
                   textAlign: 'center',
-                  gap: 12,
+                  gap: 16,
                 }}
               >
                 <div
                   style={{
-                    width: 64,
-                    height: 64,
+                    width: 80,
+                    height: 80,
                     borderRadius: 'var(--radius-full)',
-                    background: 'var(--color-surface-elevated)',
+                    background: 'linear-gradient(135deg, rgba(220,20,60,0.08), rgba(139,0,0,0.05))',
+                    border: '1px solid rgba(220,20,60,0.1)',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
                     marginBottom: 4,
                   }}
                 >
-                  <Download
-                    size={28}
-                    color="var(--color-text-muted)"
-                    style={{ opacity: 0.4 }}
-                  />
+                  <Headphones size={36} color="var(--color-accent)" style={{ opacity: 0.5 }} />
                 </div>
-                <h3
-                  style={{
-                    color: 'var(--color-text-primary)',
-                    fontSize: 20,
-                    fontWeight: 700,
-                    margin: 0,
-                    letterSpacing: '-0.3px',
-                  }}
-                >
-                  Aucun album téléchargé
-                </h3>
-                <p
-                  style={{
-                    color: 'var(--color-text-muted)',
-                    fontSize: 14,
-                    lineHeight: '20px',
-                    maxWidth: 340,
-                    margin: 0,
-                  }}
-                >
-                  Pour écouter de la musique hors-ligne, téléchargez vos albums depuis le catalogue en ligne.
-                </p>
+                <div>
+                  <h3
+                    style={{
+                      color: 'var(--color-text-primary)',
+                      fontSize: 22,
+                      fontWeight: 800,
+                      margin: 0,
+                      letterSpacing: '-0.5px',
+                    }}
+                  >
+                    Bibliothèque vide
+                  </h3>
+                  <p
+                    style={{
+                      color: 'var(--color-text-muted)',
+                      fontSize: 14,
+                      lineHeight: '22px',
+                      maxWidth: 320,
+                      margin: '8px auto 0',
+                    }}
+                  >
+                    Téléchargez vos albums depuis le catalogue pour les écouter
+                    même sans connexion internet.
+                  </p>
+                </div>
                 <button
                   onClick={() => void toggleMode()}
                   style={{
                     display: 'inline-flex',
                     alignItems: 'center',
                     gap: 8,
-                    padding: '12px 24px',
+                    padding: '12px 28px',
                     borderRadius: 'var(--radius-full)',
-                    background: 'var(--color-surface-elevated)',
-                    border: '1px solid var(--color-border-subtle)',
+                    background: 'var(--color-accent)',
+                    border: 'none',
                     cursor: 'pointer',
-                    color: 'var(--color-text-primary)',
+                    color: '#fff',
                     fontSize: 14,
-                    fontWeight: 600,
-                    marginTop: 4,
+                    fontWeight: 700,
                     transition: 'all var(--transition-fast) ease',
+                    boxShadow: '0 4px 16px rgba(220,20,60,0.2)',
                   }}
                   onMouseEnter={(e) => {
-                    e.currentTarget.style.background = 'var(--color-surface-hover)';
+                    e.currentTarget.style.transform = 'scale(1.04)';
+                    e.currentTarget.style.background = 'var(--color-accent-light)';
                   }}
                   onMouseLeave={(e) => {
-                    e.currentTarget.style.background = 'var(--color-surface-elevated)';
+                    e.currentTarget.style.transform = 'scale(1)';
+                    e.currentTarget.style.background = 'var(--color-accent)';
                   }}
                 >
-                  <WifiOff size={16} />
-                  Activer le mode en ligne
+                  <Wifi size={16} />
+                  Aller au catalogue
                 </button>
               </div>
             ) : (
-              /* ── Grille des albums ── */
+              /* ── GRILLE DES ALBUMS ── */
               <div
                 style={{
                   display: 'flex',
                   flexDirection: 'column',
                   gap: 8,
-                  paddingBottom: 24,
+                  paddingBottom: 16,
                 }}
               >
                 {albums.map((album) => {
@@ -571,9 +644,7 @@ export function OfflinePlayer() {
                     <button
                       key={album.id}
                       onClick={() => {
-                        if (details) {
-                          setSelectedAlbumId(album.id);
-                        }
+                        if (details) openAlbum(album.id);
                       }}
                       style={{
                         display: 'flex',
@@ -581,32 +652,53 @@ export function OfflinePlayer() {
                         gap: 14,
                         padding: '12px 14px',
                         borderRadius: 'var(--radius-md)',
-                        border: '1px solid var(--color-border-subtle)',
-                        background: isCurrentAlbum ? 'var(--color-accent-soft)' : 'var(--color-surface-elevated)',
+                        border: `1px solid ${
+                          isCurrentAlbum
+                            ? 'rgba(220,20,60,0.2)'
+                            : 'var(--color-border-subtle)'
+                        }`,
+                        background: isCurrentAlbum
+                          ? 'linear-gradient(135deg, rgba(220,20,60,0.06), rgba(139,0,0,0.03))'
+                          : 'var(--color-surface-elevated)',
                         cursor: 'pointer',
                         width: '100%',
                         textAlign: 'left',
                         transition: 'all var(--transition-fast) ease',
+                        position: 'relative',
+                        overflow: 'hidden',
                       }}
                       onMouseEnter={(e) => {
-                        if (!isCurrentAlbum) e.currentTarget.style.background = 'var(--color-surface-hover)';
-                        e.currentTarget.style.borderColor = 'var(--color-border)';
+                        if (!isCurrentAlbum) {
+                          e.currentTarget.style.background = 'var(--color-surface-hover)';
+                        }
+                        e.currentTarget.style.borderColor = isCurrentAlbum
+                          ? 'rgba(220,20,60,0.35)'
+                          : 'var(--color-border)';
+                        e.currentTarget.style.transform = 'translateY(-1px)';
+                        e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.2)';
                       }}
                       onMouseLeave={(e) => {
-                        if (!isCurrentAlbum) e.currentTarget.style.background = 'var(--color-surface-elevated)';
-                        e.currentTarget.style.borderColor = 'var(--color-border-subtle)';
+                        if (!isCurrentAlbum) {
+                          e.currentTarget.style.background = 'var(--color-surface-elevated)';
+                        }
+                        e.currentTarget.style.borderColor = isCurrentAlbum
+                          ? 'rgba(220,20,60,0.2)'
+                          : 'var(--color-border-subtle)';
+                        e.currentTarget.style.transform = 'translateY(0)';
+                        e.currentTarget.style.boxShadow = 'none';
                       }}
                     >
                       {/* Mini cover */}
                       <div
                         style={{
-                          width: 48,
-                          height: 48,
+                          width: 52,
+                          height: 52,
                           borderRadius: 'var(--radius-sm)',
                           overflow: 'hidden',
                           backgroundColor: 'var(--color-bg-dark)',
                           flexShrink: 0,
                           position: 'relative',
+                          boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
                         }}
                       >
                         {album.cover_url ? (
@@ -620,41 +712,37 @@ export function OfflinePlayer() {
                         ) : (
                           <div
                             style={{
-                              width: '100%',
-                              height: '100%',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              color: 'var(--color-text-muted)',
-                              fontSize: 20,
+                              width: '100%', height: '100%',
+                              display: 'flex', alignItems: 'center', justifyContent: 'center',
+                              color: 'var(--color-text-muted)', fontSize: 22,
                             }}
                           >
                             ♪
                           </div>
                         )}
 
-                        {/* Playing indicator */}
+                        {/* Indicateur "en cours" */}
                         {isAlbumPlaying && (
                           <div
                             style={{
                               position: 'absolute',
-                              bottom: 2,
-                              right: 2,
-                              width: 16,
-                              height: 16,
-                              borderRadius: '50%',
-                              background: 'var(--color-accent)',
+                              inset: 0,
+                              background: 'rgba(0,0,0,0.4)',
                               display: 'flex',
                               alignItems: 'center',
                               justifyContent: 'center',
                             }}
                           >
-                            <Pause size={8} color="#fff" />
+                            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 2, height: 16 }}>
+                              <div className="equalizer-bar" style={{ width: 3, backgroundColor: '#fff', borderRadius: 1 }} />
+                              <div className="equalizer-bar" style={{ width: 3, backgroundColor: '#fff', borderRadius: 1 }} />
+                              <div className="equalizer-bar" style={{ width: 3, backgroundColor: '#fff', borderRadius: 1 }} />
+                            </div>
                           </div>
                         )}
                       </div>
 
-                      {/* Info */}
+                      {/* Infos */}
                       <div style={{ minWidth: 0, flex: 1 }}>
                         <span
                           style={{
@@ -694,19 +782,21 @@ export function OfflinePlayer() {
                         </span>
                       </div>
 
-                      {/* Play button */}
+                      {/* Bouton play */}
                       <div
                         style={{
-                          width: 32,
-                          height: 32,
+                          width: 36,
+                          height: 36,
                           borderRadius: 'var(--radius-full)',
-                          background:
-                            isAlbumPlaying ? 'var(--color-accent)' : 'var(--color-bg-dark)',
+                          background: isAlbumPlaying
+                            ? 'var(--color-accent)'
+                            : 'var(--color-bg-dark)',
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'center',
                           flexShrink: 0,
                           transition: 'all var(--transition-fast) ease',
+                          boxShadow: isAlbumPlaying ? '0 2px 10px rgba(220,20,60,0.3)' : 'none',
                         }}
                       >
                         {isAlbumPlaying ? (
@@ -720,49 +810,86 @@ export function OfflinePlayer() {
                 })}
               </div>
             )}
-          </>
+          </div>
         )}
       </div>
 
-      {/* ========== NOW PLAYING BAR (compact) ========== */}
+      {/* ========== NOW PLAYING BAR ========== */}
       {currentTrack && (
         <div
           style={{
             flexShrink: 0,
             borderTop: '1px solid var(--color-border-subtle)',
-            background: 'var(--color-surface-elevated)',
-            padding: '10px 20px',
+            background: 'var(--color-surface-glass)',
+            backdropFilter: 'blur(16px)',
+            WebkitBackdropFilter: 'blur(16px)',
+            padding: '10px 16px',
+            paddingBottom: 'calc(10px + env(safe-area-inset-bottom, 0px))',
             display: 'flex',
             alignItems: 'center',
             gap: 12,
+            zIndex: 10,
           }}
         >
-          {/* Progress bar */}
+          {/* Barre de progression interactive */}
           <div
+            onClick={handleProgressClick}
             style={{
               position: 'absolute',
-              top: 0,
+              top: -2,
               left: 0,
               right: 0,
-              height: 2,
+              height: 4,
               cursor: 'pointer',
+              zIndex: 2,
             }}
-            onClick={(e) => {
-              const rect = e.currentTarget.getBoundingClientRect();
-              const x = e.clientX - rect.left;
-              seekTo(Math.max(0, Math.min(1, x / rect.width)));
-            }}
+            onMouseEnter={(e) => { e.currentTarget.style.height = '6px'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.height = '4px'; }}
           >
             <div
               style={{
                 height: '100%',
                 width: `${Math.round(progress * 100)}%`,
-                background: 'var(--color-accent)',
+                background: 'var(--color-accent-gradient)',
+                borderRadius: '0 2px 2px 0',
                 transition: 'width 0.1s linear',
+                boxShadow: '0 0 6px rgba(220,20,60,0.3)',
               }}
             />
           </div>
 
+          {/* Cover miniature */}
+          <div
+            style={{
+              width: 40,
+              height: 40,
+              borderRadius: 'var(--radius-sm)',
+              overflow: 'hidden',
+              backgroundColor: 'var(--color-bg-dark)',
+              flexShrink: 0,
+              boxShadow: '0 2px 6px rgba(0,0,0,0.3)',
+            }}
+          >
+            {audio.album?.cover_url ? (
+              <img
+                src={audio.album.cover_url}
+                alt=""
+                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+              />
+            ) : (
+              <div
+                style={{
+                  width: '100%', height: '100%',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  color: 'var(--color-text-muted)', fontSize: 18,
+                }}
+              >
+                <Music size={18} />
+              </div>
+            )}
+          </div>
+
+          {/* Infos piste */}
           <div style={{ minWidth: 0, flex: 1 }}>
             <span
               style={{
@@ -777,36 +904,57 @@ export function OfflinePlayer() {
             >
               {formatTitle(currentTrack.title)}
             </span>
+            {audio.album && (
+              <span
+                style={{
+                  color: 'var(--color-text-muted)',
+                  fontSize: 11,
+                  fontWeight: 500,
+                  display: 'block',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  marginTop: 1,
+                }}
+              >
+                {audio.album.artist_name || audio.album.artist?.name || 'Artiste inconnu'}
+              </span>
+            )}
           </div>
 
-          <button
-            onClick={togglePlayPause}
-            style={{
-              width: 32,
-              height: 32,
-              borderRadius: 'var(--radius-full)',
-              background: 'var(--color-accent)',
-              border: 'none',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              flexShrink: 0,
-              transition: 'all var(--transition-fast) ease',
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.transform = 'scale(1.06)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.transform = 'scale(1)';
-            }}
-          >
-            {isPlaying ? (
-              <Pause size={14} color="#fff" />
-            ) : (
-              <Play size={14} color="#fff" style={{ marginLeft: 1 }} />
-            )}
-          </button>
+          {/* Contrôles */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+            <button
+              onClick={togglePlayPause}
+              style={{
+                width: 36,
+                height: 36,
+                borderRadius: 'var(--radius-full)',
+                background: 'var(--color-accent)',
+                border: 'none',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                transition: 'all var(--transition-fast) ease',
+                boxShadow: '0 2px 8px rgba(220,20,60,0.25)',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.transform = 'scale(1.08)';
+                e.currentTarget.style.background = 'var(--color-accent-light)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = 'scale(1)';
+                e.currentTarget.style.background = 'var(--color-accent)';
+              }}
+            >
+              {isPlaying ? (
+                <Pause size={16} color="#fff" />
+              ) : (
+                <Play size={16} color="#fff" style={{ marginLeft: 1 }} />
+              )}
+            </button>
+          </div>
         </div>
       )}
     </div>

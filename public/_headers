@@ -5,3 +5,20 @@
   Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
   Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), clipboard-read=(), clipboard-write=(), display-capture=()
   Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https: http:; connect-src 'self' ws: http://localhost:* https://pass-io.onrender.com https://api.passiio.shop https://passiio.shop https://*.backblazeb2.com https://res.cloudinary.com https://static.cloudflareinsights.com https://cloudflareinsights.com; media-src 'self' blob: https: http:; worker-src 'self' blob:; manifest-src 'self'; frame-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'none'; object-src 'none'
+
+# ── Service Worker & Workbox : contexte CSP séparé du document ──
+# Les SW ont leur propre politique — ils ne héritent pas de la règle "/" ci-dessus.
+# 'unsafe-eval' est requis par le code obfusqué (stringArrayEncoding base64 + splitStrings).
+# ⚡ Pas de Cache-Control sur sw.js : Chrome 68+ ignore les en-têtes de cache HTTP
+#    pour les scripts SW lors du update check (byte-for-byte). De plus, en cas d'échec
+#    réseau (DNS), le SW existant continue de fonctionner — cf. spec W3C.
+/sw.js
+  Content-Security-Policy: script-src 'self' 'unsafe-eval' 'unsafe-inline'; connect-src 'self' https://api.passiio.shop https://pass-io.onrender.com https://*.backblazeb2.com https://res.cloudinary.com blob:; worker-src 'self' blob:
+  Service-Worker-Allowed: /
+
+/workbox-*.js
+  Content-Security-Policy: script-src 'self' 'unsafe-eval' 'unsafe-inline'; connect-src 'self' https://api.passiio.shop https://pass-io.onrender.com https://*.backblazeb2.com https://res.cloudinary.com blob:; worker-src 'self' blob:
+
+# ── Assets JS (keyManager et autres chunks obfusqués) ──
+/assets/*.js
+  Content-Security-Policy: script-src 'self' 'unsafe-eval' 'unsafe-inline'

@@ -16,6 +16,8 @@ export default defineConfig(({ mode }) => ({
     }),
     VitePWA({
       registerType: 'autoUpdate',
+      // ✅ Le nouveau SW s'active IMMÉDIATEMENT sans attendre la fermeture de l'onglet
+      injectRegister: 'auto',
 
       manifest: {
         name: "Pass'io Web Player — Lecteur de musique sécurisé",
@@ -49,13 +51,16 @@ export default defineConfig(({ mode }) => ({
         ],
       },
       workbox: {
+        // ✅ Activation immédiate du nouveau Service Worker pour tous les utilisateurs
+        skipWaiting: true,
+        clientsClaim: true,
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
         // ⚡ Offline shell : l'app s'ouvre même sans connexion
         navigateFallback: '/index.html',
         navigateFallbackAllowlist: [
-          // Permet les routes de l'app (ex: /discover, /album/123, /artist/abc)
+          // Permet les routes de l'app (/discover, /album/123, /artist/abc, /)
           // mais bloque les requêtes API /api/*
-          /^\/[^/]+(\/.*)?$/,
+          /^\/(|[^/]+(\/.*)?)$/,
         ],
         runtimeCaching: [
           {
@@ -127,15 +132,23 @@ export default defineConfig(({ mode }) => ({
             },
           },
           {
+            // 🚫 Endpoints API DYNAMIQUES (albums, tracks, artistes, auth…)
+            // → NetworkOnly : JAMAIS de cache. Toujours les données fraîches du serveur.
+            urlPattern: /^https?:\/\/(api\.passiio\.shop|pass-io\.onrender\.com)\/api\/.*/i,
+            handler: 'NetworkOnly',
+          },
+          {
+            // ⚡ Autres ressources non-/api/ sur nos domaines (health, favicon backend…)
+            // → NetworkFirst courte durée (fallback offline de 5 min max)
             urlPattern: /^https?:\/\/(api\.passiio\.shop|pass-io\.onrender\.com)\/.*/i,
             handler: 'NetworkFirst',
             options: {
-              cacheName: 'passio-api-cache',
+              cacheName: 'passio-api-misc-cache',
               expiration: {
-                maxEntries: 200,
-                maxAgeSeconds: 60 * 60 * 24 * 7, // 7 jours
+                maxEntries: 20,
+                maxAgeSeconds: 60 * 5, // 5 minutes max
               },
-              networkTimeoutSeconds: 10,
+              networkTimeoutSeconds: 8,
             },
           },
         ],
@@ -143,6 +156,14 @@ export default defineConfig(({ mode }) => ({
     }),
     // Protection du bundle : obfuscation activée UNIQUEMENT en production
     mode === 'production' && obfuscator({
+      // ⚠️ CRITIQUE : exclure les fichiers qui contiennent des dynamic imports.
+      // L'obfuscateur encode les chaînes en base64 (stringArrayEncoding),
+      // ce qui brise la résolution des chemins dans import('./keyManager') → GET /assets/keyManager sans hash ni .js.
+      exclude: [
+        // Services avec dynamic imports critiques
+        /src[\/\\]services[\/\\](keyManager|vault|api|offlineCache|storage)\.ts$/,
+        /src[\/\\]contexts[\/\\]LibraryModeContext\.tsx$/,
+      ],
       options: {
         compact: true,
         controlFlowFlattening: false,
@@ -160,7 +181,7 @@ export default defineConfig(({ mode }) => ({
         debugProtection: false,
         selfDefending: false, // Désactivé pour compatibilité avec terser (minification post-obfuscation)
       },
-    }),
+    } as Parameters<typeof obfuscator>[0]),
   ].filter(Boolean),
   resolve: {
     alias: {
@@ -188,6 +209,13 @@ export default defineConfig(({ mode }) => ({
     rollupOptions: {
       output: {
         manualChunks: (id) => {
+          // ── Chunk nommé stable pour keyManager ──
+          // keyManager est chargé via dynamic import depuis vault.ts et LibraryModeContext.
+          // Un nom stable (sans hash aléatoire qui change à chaque build) garantit
+          // que le chemin résolu en runtime correspond au fichier existant dans dist/assets/.
+          if (id.includes('src/services/keyManager') || id.includes('src\\services\\keyManager')) {
+            return 'keyManager';
+          }
           if (id.includes('node_modules')) {
             if (id.includes('react') || id.includes('react-dom')) {
               return 'react-vendor';

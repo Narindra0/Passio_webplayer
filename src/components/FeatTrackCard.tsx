@@ -32,6 +32,7 @@ export function FeatTrackCard({
       onClick={onPress}
       style={{
         width: '100%',
+        height: '100%',
         backgroundColor: 'transparent',
         borderRadius: 'var(--radius-md)',
         padding: 0,
@@ -53,15 +54,18 @@ export function FeatTrackCard({
           borderRadius: 'var(--radius-md)',
           overflow: 'hidden',
           backgroundColor: 'var(--color-surface-elevated)',
-          boxShadow: 'var(--shadow-md)',
           transition: 'box-shadow var(--transition-normal) ease',
-          border: isCurrent ? '2px solid var(--color-accent)' : 'none',
+          boxShadow: isCurrent ? 'inset 0 0 0 2px var(--color-accent), var(--shadow-md)' : 'var(--shadow-md)',
         }}
         onMouseEnter={(e) => {
-          e.currentTarget.style.boxShadow = '0 4px 20px rgba(99,102,241,0.3)';
+          e.currentTarget.style.boxShadow = isCurrent
+            ? 'inset 0 0 0 2px var(--color-accent), 0 4px 20px rgba(220,20,60,0.25)'
+            : '0 4px 20px rgba(220,20,60,0.25)';
         }}
         onMouseLeave={(e) => {
-          e.currentTarget.style.boxShadow = 'var(--shadow-md)';
+          e.currentTarget.style.boxShadow = isCurrent
+            ? 'inset 0 0 0 2px var(--color-accent), var(--shadow-md)'
+            : 'var(--shadow-md)';
         }}
       >
         {track.cover_url ? (
@@ -98,10 +102,10 @@ export function FeatTrackCard({
         <div
           style={{
             position: 'absolute',
-            bottom: 8,
-            right: 8,
-            width: 48,
-            height: 48,
+            bottom: 6,
+            right: 6,
+            width: 40,
+            height: 40,
             borderRadius: 'var(--radius-full)',
             background: isCurrent && isPlaying ? 'var(--color-accent)' : 'var(--color-accent)',
             display: 'flex',
@@ -123,43 +127,43 @@ export function FeatTrackCard({
           }}
         >
           {isCurrent && isPlaying ? (
-            <Pause size={22} color="#fff" />
+            <Pause size={18} color="#fff" />
           ) : (
-            <Play size={22} color="#fff" style={{ marginLeft: 3 }} />
+            <Play size={18} color="#fff" style={{ marginLeft: 2 }} />
           )}
         </div>
 
-        {/* Feat Badge — toujours visible sur une FeatTrackCard */}
+        {/* Feat Badge — couleur harmonisée avec le thème */}
         <div
           style={{
             position: 'absolute',
-            top: 8,
-            left: 8,
-            background: 'rgba(99,102,241,0.9)',
-            padding: '3px 8px',
+            top: 6,
+            left: 6,
+            background: 'var(--color-accent-soft)',
+            padding: '2px 6px',
             borderRadius: 'var(--radius-full)',
             display: 'flex',
             alignItems: 'center',
             gap: 3,
-            backdropFilter: 'blur(8px)',
+            border: '1px solid var(--color-accent)',
           }}
         >
-          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+          <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" color="var(--color-accent)">
             <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
             <circle cx="9" cy="7" r="4"/>
           </svg>
-          <span style={{ fontSize: 9, fontWeight: 800, color: '#fff' }}>Feat.</span>
+          <span style={{ fontSize: 8, fontWeight: 800, color: 'var(--color-accent)', textTransform: 'uppercase' }}>Feat.</span>
         </div>
       </div>
 
-      {/* Track Info */}
-      <div style={{ padding: '2px 4px', minHeight: 48 }}>
+      {/* Track Info — compact */}
+      <div style={{ padding: '2px 4px', minHeight: 40 }}>
         <div
           style={{
             color: isCurrent ? 'var(--color-accent)' : 'var(--color-text-primary)',
-            fontSize: 14,
+            fontSize: 13,
             fontWeight: 600,
-            lineHeight: '18px',
+            lineHeight: '16px',
             overflow: 'hidden',
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
@@ -168,25 +172,19 @@ export function FeatTrackCard({
         >
           {formatTitle(track.title)}
         </div>
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 4,
-          minWidth: 0,
-        }}>
-          <span
-            style={{
-              color: 'var(--color-text-muted)',
-              fontSize: 12,
-              lineHeight: '16px',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {sourceArtistName} · {track.album_title}
-          </span>
-        </div>
+        <span
+          style={{
+            color: 'var(--color-text-muted)',
+            fontSize: 11,
+            lineHeight: '14px',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            display: 'block',
+          }}
+        >
+          {sourceArtistName}
+        </span>
       </div>
     </button>
   );

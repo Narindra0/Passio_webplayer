@@ -15,6 +15,7 @@ import {
   getDownloadProgress,
   type DownloadStatus,
 } from '@/services/downloadManager';
+import { DownloadConfirmModal } from './DownloadConfirmModal';
 import type { PublicAlbumDetails } from '@/types/backend';
 import { logger } from '@/utils/logger';
 
@@ -65,6 +66,7 @@ export function DownloadButton({
   const [downloadStatus, setDownloadStatus] = useState<DownloadStatus>('idle');
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [showCompletedToast, setShowCompletedToast] = useState(false);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
 
   const albumId = album.id;
   const tracks = album.tracks ?? [];
@@ -125,12 +127,17 @@ export function DownloadButton({
       return;
     }
 
-    // Lancer le téléchargement
+    // ⚡ Afficher la modale de confirmation avant de lancer le téléchargement
     if (tracks.length === 0) {
       logger.warn('[DownloadButton] Aucune piste à télécharger');
       return;
     }
 
+    setShowConfirmModal(true);
+  }, [album, albumId, decryptionKey, downloadStatus, tracks.length, onDelete]);
+
+  const handleConfirmDownload = useCallback(() => {
+    setShowConfirmModal(false);
     setDownloadStatus('downloading');
     setDownloadProgress(0);
 
@@ -144,7 +151,11 @@ export function DownloadButton({
       }
       // 'completed' est géré par la souscription ci-dessus
     });
-  }, [album, albumId, decryptionKey, downloadStatus, tracks.length, onDelete]);
+  }, [album, albumId, decryptionKey]);
+
+  const handleCancelModal = useCallback(() => {
+    setShowConfirmModal(false);
+  }, []);
 
   // ── Variante : icône seule ──
   if (variant === 'icon') {
@@ -509,6 +520,14 @@ export function DownloadButton({
           </div>
         </div>
       )}
+
+      {/* ⚡ Modal de confirmation avant téléchargement */}
+      <DownloadConfirmModal
+        album={album}
+        visible={showConfirmModal}
+        onConfirm={handleConfirmDownload}
+        onCancel={handleCancelModal}
+      />
     </div>
   );
 }
