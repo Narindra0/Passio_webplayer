@@ -19,7 +19,7 @@ export function MobileNav() {
     { path: '/discover', label: 'Découvertes', icon: Sparkles },
     { path: '/search', label: 'Rechercher', icon: Search },
     { path: '/activate', label: 'Activer', icon: KeyRound },
-    { path: '/catalog', label: 'Bibliothèque', icon: Library },
+    { path: '/local', label: 'Bibliothèque', icon: Library },
   ];
 
   const isActive = (path: string) => {

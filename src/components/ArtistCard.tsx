@@ -22,18 +22,20 @@ export function ArtistCard({ artist, onPress }: ArtistCardProps) {
       onClick={onPress}
       className="group"
       style={{
-        width: 160,
+        width: '100%',
+        maxWidth: 200,
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
-        gap: 12,
-        padding: '20px 16px 16px',
+        gap: 10,
+        padding: '16px 12px 14px',
         borderRadius: 'var(--radius-md)',
         background: 'transparent',
         border: 'none',
         cursor: 'pointer',
-        transition: 'background-color var(--transition-fast) ease',
+        transition: 'background-color var(--transition-fast) ease, transform 0.2s ease',
         flexShrink: 0,
+        margin: '0 auto',
       }}
       onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-surface-elevated)'; }}
       onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}

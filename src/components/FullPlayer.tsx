@@ -17,6 +17,7 @@ import {
     Share2, TextQuote, Volume2, Volume1, Volume, VolumeX, X,
 } from 'lucide-react';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { FullPlayerLyrics } from './FullPlayerLyrics';
 import { PlayerWaveform } from './PlayerWaveform';
@@ -24,7 +25,6 @@ import { ShareCard } from './ShareCard';
 import { hasFeatArtists, parseFeatArtists, normalizeArtistName } from '@/utils/featArtists';
 import { FeatArtistLinks } from './FeatArtistLinks';
 import { formatTitle } from '@/utils/formatTitle';
-import { listAlbums } from '@/services/api';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { logger } from '@/utils/logger';
 
@@ -55,6 +55,7 @@ export function FullPlayer() {
   const [shareModalVisible, setShareModalVisible] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
   const [isEntered, setIsEntered] = useState(false);
+  const [showAllUpcoming, setShowAllUpcoming] = useState(false);
   const queueRef = useRef<HTMLDivElement>(null);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // État pour stocker le dictionnaire enrichi nom→ID depuis TOUS les albums (API)
@@ -136,37 +137,26 @@ export function FullPlayer() {
     }
   }, [lyricsAutoOpen, showLyricsControls, isMobile, setLyricsAutoOpen]);
 
-  // Charger TOUS les albums pour construire un dictionnaire nom→ID
+  // 🎯 Construire le dictionnaire nom→ID uniquement depuis l'album courant
+  //    (évite un appel listAlbums() redondant — Discover/Catalog le fait déjà)
   useEffect(() => {
-    let cancelled = false;
-    async function loadAllAlbums() {
-      try {
-        const albums = await listAlbums();
-        if (cancelled) return;
-        const map: Record<string, string> = {};
-        for (const a of albums) {
-          const name = a.artist_name || a.artist?.name;
-          const id = a.artist_id || a.artist?.id;
-          if (name && id) {
-            map[normalizeArtistName(name)] = id;
-          }
-          if (a.artists) {
-            for (const art of a.artists) {
-              if (art.id && art.name) {
-                map[normalizeArtistName(art.name)] = art.id;
-              }
-            }
-          }
+    if (!album) return;
+    const map: Record<string, string> = {};
+    const name = album.artist_name || album.artist?.name;
+    const id = album.artist_id || album.artist?.id;
+    if (name && id) {
+      map[normalizeArtistName(name)] = id;
+    }
+    if (album.artists) {
+      for (const art of album.artists) {
+        if (art.id && art.name) {
+          map[normalizeArtistName(art.name)] = art.id;
         }
-        logger.info('[FullPlayer] Global artist map:', Object.keys(map).length, 'artists.');
-        if (!cancelled) setGlobalArtistIdMap(map);
-      } catch (err) {
-        logger.warn('[FullPlayer] listAlbums failed:', err);
       }
     }
-    void loadAllAlbums();
-    return () => { cancelled = true; };
-  }, []);
+    logger.info('[FullPlayer] Artist map built from album:', Object.keys(map).length, 'artists.');
+    setGlobalArtistIdMap(map);
+  }, [album]);
 
   // Early returns — must come after all hooks
   // On desktop: normal render logic
@@ -653,7 +643,7 @@ export function FullPlayer() {
             progress={progress}
             trackKey={trackKey}
             onSeek={seekTo}
-            playedColor={isMobile ? 'var(--color-accent)' : (coverColors.colors?.vibrant || 'var(--color-accent)')}
+            playedColor="var(--color-accent)"
             unplayedColor="rgba(255,255,255,0.15)"
           />
           <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6 }}>
@@ -924,16 +914,66 @@ export function FullPlayer() {
           <div style={{ marginTop: 8, marginBottom: 12 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
               <h3 style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px', margin: 0 }}>
-                À suivre ({upcomingTracks.length})
+                À suivre
               </h3>
               {isAutoplaying && (
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 'var(--radius-full)', background: 'var(--color-accent-soft)', border: '1px solid var(--color-accent)', fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.3px', color: 'var(--color-accent)' }}>
                   <Radio size={10} /> Radio
                 </span>
               )}
+              {upcomingTracks.length > 1 && !showAllUpcoming && (
+                <button
+                  onClick={() => setShowAllUpcoming(true)}
+                  title="Voir tous les titres à suivre"
+                  style={{
+                    marginLeft: 'auto',
+                    width: 24, height: 24,
+                    borderRadius: 'var(--radius-full)',
+                    border: '1px solid var(--color-border-subtle)',
+                    background: 'var(--color-surface-elevated)',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: 'var(--color-text-secondary)',
+                    fontSize: 14,
+                    fontWeight: 700,
+                    transition: 'all var(--transition-fast) ease',
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-surface-hover)'; e.currentTarget.style.color = 'var(--color-accent)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--color-surface-elevated)'; e.currentTarget.style.color = 'var(--color-text-secondary)'; }}
+                >
+                  +
+                </button>
+              )}
+              {showAllUpcoming && (
+                <button
+                  onClick={() => setShowAllUpcoming(false)}
+                  title="Réduire"
+                  style={{
+                    marginLeft: 'auto',
+                    width: 24, height: 24,
+                    borderRadius: 'var(--radius-full)',
+                    border: '1px solid var(--color-border-subtle)',
+                    background: 'var(--color-surface-elevated)',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: 'var(--color-text-secondary)',
+                    fontSize: 14,
+                    fontWeight: 700,
+                    transition: 'all var(--transition-fast) ease',
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-surface-hover)'; e.currentTarget.style.color = 'var(--color-accent)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--color-surface-elevated)'; e.currentTarget.style.color = 'var(--color-text-secondary)'; }}
+                >
+                  −
+                </button>
+              )}
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              {upcomingTracks.slice(0, isMobile ? 5 : 10).map((item, index) => {
+              {upcomingTracks.slice(0, showAllUpcoming ? undefined : 1).map((item, index) => {
                 const originalIndex = currentIdx + 1 + index;
                 const rowArtist = isDeviceMode
                   ? (item as { artist?: string }).artist ?? 'Artiste inconnu'
@@ -973,6 +1013,31 @@ export function FullPlayer() {
                   </button>
                 );
               })}
+              {!showAllUpcoming && upcomingTracks.length > 1 && (
+                <button
+                  onClick={() => setShowAllUpcoming(true)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 6,
+                    padding: '8px',
+                    borderRadius: 'var(--radius-sm)',
+                    border: '1px dashed var(--color-border-subtle)',
+                    background: 'transparent',
+                    cursor: 'pointer',
+                    width: '100%',
+                    color: 'var(--color-text-muted)',
+                    fontSize: 12,
+                    fontWeight: 600,
+                    transition: 'all var(--transition-fast) ease',
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-surface-elevated)'; e.currentTarget.style.color = 'var(--color-accent)'; e.currentTarget.style.borderColor = 'rgba(220,20,60,0.2)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--color-text-muted)'; e.currentTarget.style.borderColor = 'var(--color-border-subtle)'; }}
+                >
+                  + {upcomingTracks.length - 1} autre{upcomingTracks.length - 1 > 1 ? 's' : ''}
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -1067,16 +1132,19 @@ export function FullPlayer() {
         </div>
       )}
 
-      {/* ── Share Modal ── */}
-      <ShareCard
-        visible={shareModalVisible}
-        onClose={() => setShareModalVisible(false)}
-        trackTitle={trackTitle}
-        artistName={artistName}
-        albumTitle={isDeviceMode ? undefined : album?.title}
-        coverUri={coverUri}
-        albumId={isDeviceMode ? undefined : album?.id}
-      />
+      {/* ── Share Modal — portal vers document.body pour éviter les problèmes de stacking context */}
+      {shareModalVisible && createPortal(
+        <ShareCard
+          visible={shareModalVisible}
+          onClose={() => setShareModalVisible(false)}
+          trackTitle={trackTitle}
+          artistName={artistName}
+          albumTitle={isDeviceMode ? undefined : album?.title}
+          coverUri={coverUri}
+          albumId={isDeviceMode ? undefined : album?.id}
+        />,
+        document.body
+      )}
 
       {/* ── Lyrics Modal ── */}
       {showLyricsControls && lyricsModalVisible && (

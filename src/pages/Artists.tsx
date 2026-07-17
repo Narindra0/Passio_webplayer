@@ -99,11 +99,11 @@ export function ArtistsScreen() {
 
       {/* Loading State */}
       {loading && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 8 }}>
           {Array.from({ length: 12 }).map((_, i) => (
-            <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, padding: '20px 16px 16px' }}>
-              <div className="skeleton" style={{ width: 120, height: 120, borderRadius: 'var(--radius-full)' }} />
-              <div className="skeleton" style={{ width: '80%', height: 14, borderRadius: 4 }} />
+            <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, padding: '16px 12px' }}>
+              <div className="skeleton" style={{ width: 100, height: 100, borderRadius: 'var(--radius-full)' }} />
+              <div className="skeleton" style={{ width: '75%', height: 14, borderRadius: 4 }} />
             </div>
           ))}
         </div>
@@ -160,8 +160,8 @@ export function ArtistsScreen() {
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))',
-            gap: 8,
+            gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))',
+            gap: 6,
             animation: 'fadeIn 0.4s ease',
           }}
         >
@@ -176,27 +176,28 @@ export function ArtistsScreen() {
                 {playCount > 0 && (
                   <div style={{
                     position: 'absolute',
-                    top: 14,
-                    right: 16,
+                    top: 8,
+                    right: 8,
                     background: playCount >= 5
                       ? 'linear-gradient(135deg, #FF6B6B, #DC143C)'
-                      : 'var(--color-surface-elevated)',
+                      : 'rgba(255,255,255,0.06)',
                     border: playCount >= 5
                       ? '1px solid rgba(255,107,107,0.3)'
-                      : '1px solid var(--color-border-subtle)',
+                      : '1px solid rgba(255,255,255,0.06)',
                     borderRadius: 'var(--radius-full)',
-                    padding: '2px 8px',
-                    fontSize: 11,
+                    padding: '2px 7px',
+                    fontSize: 10,
                     fontWeight: 800,
-                    color: playCount >= 5 ? '#fff' : 'var(--color-text-secondary)',
-                    lineHeight: '18px',
+                    color: playCount >= 5 ? '#fff' : 'var(--color-text-muted)',
+                    lineHeight: '16px',
                     backdropFilter: 'blur(4px)',
                     display: 'flex',
                     alignItems: 'center',
-                    gap: 4,
+                    gap: 3,
                     zIndex: 2,
+                    opacity: 0.85,
                   }}>
-                    <span style={{ fontSize: 10 }}>▶</span>
+                    <span style={{ fontSize: 8 }}>▶</span>
                     {playCount}
                   </div>
                 )}

@@ -173,35 +173,41 @@ export function DownloadButton({
           display: 'inline-flex',
           alignItems: 'center',
           justifyContent: 'center',
-          width: 36,
-          height: 36,
+          width: 40,
+          height: 40,
           borderRadius: 'var(--radius-full)',
           border: 'none',
           cursor: 'pointer',
           color:
-            downloadStatus === 'completed'
+            downloadStatus === 'idle'
               ? 'var(--color-success)'
               : downloadStatus === 'downloading'
                 ? 'var(--color-accent)'
                 : 'var(--color-text-muted)',
           background:
-            downloadStatus === 'completed'
+            downloadStatus === 'idle'
               ? 'rgba(29, 185, 84, 0.1)'
               : downloadStatus === 'downloading'
                 ? 'rgba(220, 20, 60, 0.1)'
-                : 'transparent',
+                : 'rgba(255,255,255,0.04)',
           transition: 'all var(--transition-fast) ease',
           flexShrink: 0,
         }}
         onMouseEnter={(e) => {
           if (downloadStatus === 'idle') {
-            e.currentTarget.style.background = 'var(--color-surface-hover)';
-            e.currentTarget.style.color = 'var(--color-text-primary)';
+            e.currentTarget.style.background = 'rgba(29, 185, 84, 0.18)';
+            e.currentTarget.style.color = 'var(--color-success)';
+          } else if (downloadStatus === 'completed') {
+            e.currentTarget.style.background = 'rgba(220,20,60,0.1)';
+            e.currentTarget.style.color = 'var(--color-accent)';
           }
         }}
         onMouseLeave={(e) => {
           if (downloadStatus === 'idle') {
-            e.currentTarget.style.background = 'transparent';
+            e.currentTarget.style.background = 'rgba(29, 185, 84, 0.1)';
+            e.currentTarget.style.color = 'var(--color-success)';
+          } else if (downloadStatus === 'completed') {
+            e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
             e.currentTarget.style.color = 'var(--color-text-muted)';
           }
         }}
@@ -347,19 +353,23 @@ export function DownloadButton({
               gap: 8,
               padding: '12px 24px',
               borderRadius: 'var(--radius-full)',
-              background: 'rgba(220,20,60,0.06)',
-              border: '1px solid rgba(220,20,60,0.12)',
+              background: 'rgba(255,255,255,0.04)',
+              border: '1px solid var(--color-border-subtle)',
               cursor: 'pointer',
-              color: 'var(--color-accent)',
+              color: 'var(--color-text-muted)',
               fontSize: 14,
               fontWeight: 600,
               transition: 'all var(--transition-fast) ease',
             }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.background = 'rgba(220,20,60,0.12)';
+              e.currentTarget.style.background = 'rgba(220,20,60,0.1)';
+              e.currentTarget.style.color = 'var(--color-accent)';
+              e.currentTarget.style.borderColor = 'rgba(220,20,60,0.2)';
             }}
             onMouseLeave={(e) => {
-              e.currentTarget.style.background = 'rgba(220,20,60,0.06)';
+              e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
+              e.currentTarget.style.color = 'var(--color-text-muted)';
+              e.currentTarget.style.borderColor = 'var(--color-border-subtle)';
             }}
           >
             <Trash2 size={15} />

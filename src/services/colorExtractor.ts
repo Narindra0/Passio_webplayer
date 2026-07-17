@@ -9,14 +9,80 @@ export interface ExtractedColors {
   darkMuted: string;      // hex — dark muted for deep gradients
   lightVibrant: string;   // hex — light variant for gradients
   isDark: boolean;        // whether dominant is dark (for text contrast)
+  contrastWhite: number;  // WCAG contrast ratio against white
+  contrastBlack: number;  // WCAG contrast ratio against black
 }
 
-function isDark(hex: string): boolean {
+/**
+ * Convertit une composante sRGB 8-bit en valeur linéaire (norme WCAG).
+ * La correction gamma est essentielle pour évaluer correctement
+ * la luminance perçue des couleurs, notamment les bleus et les rouges.
+ *
+ * Voir https://www.w3.org/WAI/GL/wiki/Relative_luminance
+ */
+function srgbToLinear(channel: number): number {
+  const s = channel / 255;
+  return s <= 0.04045
+    ? s / 12.92
+    : Math.pow((s + 0.055) / 1.055, 2.4);
+}
+
+/**
+ * Calcule la luminance relative WCAG d'une couleur hexadécimale.
+ * Retourne une valeur entre 0 (noir) et 1 (blanc).
+ */
+function relativeLuminance(hex: string): number {
   const r = parseInt(hex.slice(1, 3), 16);
   const g = parseInt(hex.slice(3, 5), 16);
   const b = parseInt(hex.slice(5, 7), 16);
-  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-  return luminance < 0.5;
+  return (
+    0.2126 * srgbToLinear(r) +
+    0.7152 * srgbToLinear(g) +
+    0.0722 * srgbToLinear(b)
+  );
+}
+
+/**
+ * Calcule le ratio de contraste WCAG entre deux couleurs hex.
+ * Ratio ≥ 4.5:1 est requis pour le texte normal (AA).
+ * Ratio ≥ 3:1 est requis pour le texte large (AA).
+ * Ratio ≥ 7:1 est recommandé (AAA).
+ */
+function contrastRatio(hex1: string, hex2: string): number {
+  const l1 = relativeLuminance(hex1);
+  const l2 = relativeLuminance(hex2);
+  const lighter = Math.max(l1, l2);
+  const darker = Math.min(l1, l2);
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+const WHITE_HEX = '#ffffff';
+const BLACK_HEX = '#000000';
+
+/**
+ * Détermine si une couleur est "foncée" en utilisant la luminance relative WCAG.
+ * Le seuil 0.2 est plus strict que 0.5 car il garantit un meilleur contraste
+ * avec le texte blanc (ratio ≥ 3:1 pour les grands textes).
+ *
+ * Pour les couleurs proches du seuil, on utilise le ratio de contraste
+ * pour choisir la couleur de texte la plus lisible.
+ */
+function isDark(hex: string): boolean {
+  return relativeLuminance(hex) < 0.2;
+}
+
+/**
+ * Retourne la couleur de texte (blanc #FFFFFF ou noir #111111)
+ * qui offre le meilleur ratio de contraste WCAG avec la couleur donnée.
+ */
+function getReadableTextColor(
+  hex: string,
+  darkText: string = '#111111',
+  lightText: string = '#ffffff',
+): string {
+  const contrastWithWhite = contrastRatio(hex, WHITE_HEX);
+  const contrastWithBlack = contrastRatio(hex, BLACK_HEX);
+  return contrastWithWhite > contrastWithBlack ? lightText : darkText;
 }
 
 function adjustBrightness(hex: string, factor: number): string {
@@ -71,6 +137,8 @@ export async function extractColorsFromImageUrl(imageUrl: string): Promise<Extra
       darkMuted: darkMutedHex,
       lightVibrant: lightVibrantHex,
       isDark: isDark(dominantHex),
+      contrastWhite: contrastRatio(dominantHex, WHITE_HEX),
+      contrastBlack: contrastRatio(dominantHex, BLACK_HEX),
     };
 
     // Cache the result
@@ -129,27 +197,34 @@ export function clearColorCache(): void {
 }
 
 /**
- * Retourne la couleur de texte primaire (blanc ou noir) selon si le fond est sombre ou clair.
+ * Retourne la couleur de texte primaire avec le meilleur contraste.
+ * Si les couleurs ne sont pas encore extraites, utilise le fallback.
+ * Pour un fond sombre → texte blanc ; fond clair → texte sombre (#111).
  */
 export function getPrimaryTextColor(colors: ExtractedColors | null, fallback: string = '#fff'): string {
   if (!colors) return fallback;
-  return colors.isDark ? '#fff' : '#111';
+  return getReadableTextColor(colors.dominant, '#111111', '#ffffff');
 }
 
 /**
- * Retourne la couleur de texte secondaire/muted selon la luminosité du fond.
+ * Retourne la couleur de texte secondaire selon la luminosité du fond.
+ * Version avec opacité pour un rendu plus subtil.
  */
 export function getSecondaryTextColor(colors: ExtractedColors | null, fallback: string = 'rgba(255,255,255,0.65)'): string {
   if (!colors) return fallback;
-  return colors.isDark ? 'rgba(255,255,255,0.65)' : 'rgba(0,0,0,0.6)';
+  return colors.isDark
+    ? 'rgba(255,255,255,0.65)'
+    : 'rgba(0,0,0,0.6)';
 }
 
 /**
- * Retourne la couleur pour les séparateurs / dots.
+ * Retourne la couleur pour les séparateurs / dots / textes très discrets.
  */
 export function getMutedTextColor(colors: ExtractedColors | null, fallback: string = 'rgba(255,255,255,0.35)'): string {
   if (!colors) return fallback;
-  return colors.isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.3)';
+  return colors.isDark
+    ? 'rgba(255,255,255,0.35)'
+    : 'rgba(0,0,0,0.3)';
 }
 
 /**
@@ -182,9 +257,20 @@ export function getBadgeBorder(colors: ExtractedColors | null, isDarkBg: boolean
   if (isPremium) {
     return 'rgba(255,215,0,0.2)';
   }
-  if (!colors) return isDarkBg ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)';
+  if (!colors) return isDarkBg ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' ;
   if (isDarkBg) {
     return `${colors.vibrant}25`;
   }
   return `${colors.vibrant}15`;
+}
+
+/**
+ * Retourne une couleur de fond adaptative pour les conteneurs
+ * qui utilisent la couleur dominante comme arrière-plan.
+ * Pour les fonds clairs → fond semi-transparent noir
+ * Pour les fonds sombres → fond semi-transparent blanc
+ */
+export function getAdaptiveSurfaceColor(colors: ExtractedColors | null, isDarkBg: boolean): string {
+  if (!colors) return isDarkBg ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)';
+  return isDarkBg ? `${colors.vibrant}15` : `${colors.dominant}15`;
 }

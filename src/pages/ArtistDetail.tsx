@@ -351,7 +351,7 @@ export function ArtistDetailScreen() {
           transition: 'background 0.6s ease',
           display: 'flex',
           alignItems: 'flex-end',
-          padding: isMobile ? '44px 20px 20px' : '48px 32px 32px',
+          padding: isMobile ? '48px 20px 20px' : '48px clamp(20px, 3.5vw, 32px) 32px',
         }}
       >
         {/* Back button */}
@@ -409,25 +409,24 @@ export function ArtistDetailScreen() {
         <div className="artist-info-row"
           style={{
             display: 'flex',
-            gap: isMobile ? 18 : 28,
-            alignItems: isMobile ? 'stretch' : 'flex-end',
+            gap: isMobile ? 16 : 28,
+            alignItems: isMobile ? 'center' : 'flex-end',
             position: 'relative',
             zIndex: 1,
             width: '100%',
           }}
         >
           {/* Circular artist image */}
-          <div className="artist-avatar"
-            style={{
-              width: isMobile ? 88 : 180,
-              height: isMobile ? 88 : 180,
-              minWidth: isMobile ? 88 : 180,
-              borderRadius: 'var(--radius-full)',
-              overflow: 'hidden',
-              boxShadow: 'var(--shadow-xl)',
-              backgroundColor: 'var(--color-surface-elevated)',
-              flexShrink: 0,
-            }}
+          <div className="artist-avatar"              style={{
+                width: isMobile ? 88 : 'clamp(120px, 14vw, 180px)',
+                height: isMobile ? 88 : 'clamp(120px, 14vw, 180px)',
+                minWidth: isMobile ? 88 : 'clamp(120px, 14vw, 180px)',
+                borderRadius: 'var(--radius-full)',
+                overflow: 'hidden',
+                boxShadow: 'var(--shadow-xl)',
+                backgroundColor: 'var(--color-surface-elevated)',
+                flexShrink: 0,
+              }}
           >
             {profilePicture ? (
               <img src={cachedProfile || profilePicture} alt={artistName} loading="lazy" decoding="async" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
@@ -445,7 +444,7 @@ export function ArtistDetailScreen() {
           </div>
 
           {/* Name + actions */}
-          <div className="artist-info" style={{ paddingBottom: isMobile ? 0 : 8, minWidth: 0, flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+          <div className="artist-info" style={{ paddingBottom: isMobile ? 0 : 8, minWidth: 0, flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: isMobile ? 4 : 0 }}>
             {/* ── MOBILE : photo gauche · nom en haut · bouton en bas ── */}
             {isMobile && (
               <>
@@ -455,53 +454,68 @@ export function ArtistDetailScreen() {
                   fontWeight: 800,
                   letterSpacing: '-0.5px',
                   lineHeight: 1.2,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
                 }}>
                   {artistName}
                 </div>
 
                 {(!loading && tracksWithPaidFlag.length > 0) || priceAlbums.length > 0 ? (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 6 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                   {!loading && tracksWithPaidFlag.length > 0 && (
                     <button
                       onClick={() => handleTrackPress(topTracks[0])}
                       style={{
                         display: 'inline-flex',
                         alignItems: 'center',
-                        gap: 6,
-                        padding: '10px 24px',
+                        gap: 5,
+                        padding: '8px 18px',
                         borderRadius: 'var(--radius-full)',
                         background: 'var(--color-accent)',
                         border: 'none',
                         cursor: 'pointer',
                         color: '#fff',
-                        fontSize: 13,
+                        fontSize: 12,
                         fontWeight: 700,
                         transition: 'all var(--transition-fast) ease',
                         boxShadow: '0 2px 10px rgba(220,20,60,0.3)',
                       }}
-                      >
-                        <Play size={14} fill="#fff" />
-                        {canPlayAny ? 'Écouter tout' : 'Découvrir'}
-                      </button>
-                    )}
+                      onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.05)'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
+                    >
+                      <Play size={13} fill="#fff" />
+                      {canPlayAny ? 'Écouter' : 'Découvrir'}
+                    </button>
+                  )}
 
-                    {priceAlbums.length > 0 && (
-                      <span style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: 4,
-                        padding: '4px 10px',
-                        borderRadius: 'var(--radius-full)',
-                        background: getBadgeBackground(profileColors.colors, profileColors.colors?.isDark ?? true, true),
-                        border: `1px solid ${getBadgeBorder(profileColors.colors, profileColors.colors?.isDark ?? true, true)}`,
-                        color: '#FFD700',
-                        fontSize: 10,
-                        fontWeight: 700,
-                      }}>
-                        <Crown size={10} />
-                        {priceAlbums.length}
-                      </span>
-                    )}
+                  {!loading && tracksWithPaidFlag.length > 0 && (
+                    <span style={{
+                      color: getSecondaryTextColor(profileColors.colors, 'var(--color-text-secondary)'),
+                      fontSize: 11,
+                      fontWeight: 500,
+                      opacity: 0.7,
+                    }}>
+                      {tracksWithPaidFlag.length} titre{tracksWithPaidFlag.length > 1 ? 's' : ''}
+                    </span>
+                  )}
+
+                  {priceAlbums.length > 0 && (
+                    <span style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 3,
+                      padding: '3px 8px',
+                      borderRadius: 'var(--radius-full)',
+                      background: getBadgeBackground(profileColors.colors, profileColors.colors?.isDark ?? true, true),
+                      border: `1px solid ${getBadgeBorder(profileColors.colors, profileColors.colors?.isDark ?? true, true)}`,
+                      color: '#FFD700',
+                      fontSize: 9,
+                      fontWeight: 700,
+                    }}>
+                      <Crown size={9} />
+                      {priceAlbums.length}
+                    </span>                    )}
                   </div>
                 ) : null}
               </>
@@ -608,8 +622,9 @@ export function ArtistDetailScreen() {
         </div>
       </div>
 
-      {/* ========== CONTENT ========== */}
-      <div className="artist-content" style={{ padding: 'var(--page-padding)', maxWidth: 1200, margin: '0 auto', width: '100%' }}>
+      {/* ========== CONTENT ========== */}        <div className="artist-content" style={{ padding: 'var(--page-padding)', maxWidth: 1200, margin: '0 auto', width: '100%' }}>
+        {/* ⚡ Le padding est ajusté via la CSS custom property --page-padding,
+            qui est overridée par les media queries dans global.css */}
         {loading ? (
           <div className="artist-skeleton" style={{ padding: 'var(--page-padding)', maxWidth: 1200, margin: '0 auto', width: '100%' }}>
             {/* Section header skeleton */}
@@ -688,7 +703,7 @@ export function ArtistDetailScreen() {
             </div>
           </div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: isMobile ? 24 : 32 }}>
             {/* ========== TOP TRACKS ========== */}
             {topTracks.length > 0 && (
               <div>
@@ -702,14 +717,14 @@ export function ArtistDetailScreen() {
                   style={{
                     display: 'flex',
                     alignItems: 'center',
-                    gap: 16,
-                    padding: '0 16px 12px',
+                    gap: isMobile ? 12 : 16,
+                    padding: isMobile ? '0 12px 10px' : '0 16px 12px',
                     borderBottom: '1px solid var(--color-border-subtle)',
-                    marginBottom: 6,
+                    marginBottom: isMobile ? 4 : 6,
                   }}
                 >
-                  <span style={{ width: 28, color: 'var(--color-text-muted)', fontSize: 12, fontWeight: 600, textAlign: 'center' }}>#</span>
-                  <span style={{ flex: 1, color: 'var(--color-text-muted)', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.8px' }}>
+                  <span style={{ width: 28, color: 'var(--color-text-muted)', fontSize: isMobile ? 11 : 12, fontWeight: 600, textAlign: 'center' }}>#</span>
+                  <span style={{ flex: 1, color: 'var(--color-text-muted)', fontSize: isMobile ? 10 : 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: isMobile ? '0.5px' : '0.8px' }}>
                     Titre
                   </span>
                   {!isMobile && (
@@ -733,8 +748,8 @@ export function ArtistDetailScreen() {
                       style={{
                         display: 'flex',
                         alignItems: 'center',
-                        gap: 16,
-                        padding: '10px 16px',
+                        gap: isMobile ? 12 : 16,
+                        padding: isMobile ? '8px 12px' : '10px 16px',
                         width: '100%',
                         background: isCurrent ? 'var(--color-accent-soft)' : 'transparent',
                         border: 'none',
@@ -940,30 +955,30 @@ export function ArtistDetailScreen() {
                 </div>
 
                 {isMobile ? (
-                  /* ⚡ Carrousel horizontal (mobile) — scroll snap, cartes taille fixe */
+                  /* ⚡ Carrousel horizontal (mobile) — padding symétrique, cartes 150px */
                   <div
                     style={{
                       display: 'flex',
-                      gap: 10,
+                      gap: 12,
                       overflowX: 'auto',
                       scrollSnapType: 'x mandatory',
                       WebkitOverflowScrolling: 'touch',
                       paddingLeft: 'var(--page-padding)',
-                      paddingRight: 6,
-                      paddingBottom: 4,
+                      paddingRight: 'var(--page-padding)',
+                      paddingBottom: 8,
                       scrollbarWidth: 'none',
                       msOverflowStyle: 'none',
                     }}
                   >
-                    {discographyItems.map((item) => {
+                    {discographyItems.map((item, idx) => {
                       if (item.type === 'album') {
                         return (
                           <div
                             key={item.data.id}
                             style={{
-                              scrollSnapAlign: 'start',
+                              scrollSnapAlign: idx === 0 ? 'start' : 'center',
                               flexShrink: 0,
-                              width: 145,
+                              width: 150,
                             }}
                           >
                             {renderAlbumCard(item.data)}
@@ -978,7 +993,7 @@ export function ArtistDetailScreen() {
                           style={{
                             scrollSnapAlign: 'start',
                             flexShrink: 0,
-                            width: 145,
+                            width: 150,
                           }}
                         >
                           <FeatTrackCard
@@ -1026,7 +1041,7 @@ export function ArtistDetailScreen() {
 
             {/* ========== ARTISTES SIMILAIRES ========== */}
             {id && (
-              <div style={{ marginTop: 8 }}>
+              <div style={{ marginTop: isMobile ? 16 : 8 }}>
                 <ArtistRecommendations
                   sectionTitle="Artistes similaires"
                   maxArtists={10}

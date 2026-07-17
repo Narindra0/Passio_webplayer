@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { Suspense, lazy, useEffect, useRef } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useAudioPlayback } from './contexts/AudioContext';
 import { useLibraryMode } from './contexts/LibraryModeContext';
@@ -9,23 +9,40 @@ import { BottomPlayer } from './components/BottomPlayer';
 import { OfflinePlayer } from './components/OfflinePlayer';
 import { ArtistLookupProvider } from './contexts/ArtistLookupContext';
 import { LayoutProvider } from './contexts/LayoutContext';
-import { LoadingScreen } from './pages/Loading';
-import { CatalogScreen } from './pages/Catalog';
-import { ActivateScreen } from './pages/Activate';
-import { LocalScreen } from './pages/Local';
-import { AlbumDetailScreen } from './pages/AlbumDetail';
-import { ArtistDetailScreen } from './pages/ArtistDetail';
-import { ArtistDiscographyScreen } from './pages/ArtistDiscography';
-import { SearchScreen } from './pages/Search';
-import { TracksScreen } from './pages/Tracks';
-import { ArtistsScreen } from './pages/Artists';
-import { DiscoverScreen } from './pages/Discover';
-import { TopScreen } from './pages/Top';
-import { FullPlayer } from './components/FullPlayer';
 import { ConsentBanner } from './components/ConsentBanner';
 import { ConsentSettings } from './components/ConsentSettings';
 import { recordPageView, recordDeviceInfo } from '@/services/streamTracker';
 import { useConsent } from '@/hooks/useConsent';
+
+// ⚡ Lazy loading des pages — chargées uniquement quand l'utilisateur navigue dessus
+const LoadingScreen = lazy(() => import('./pages/Loading').then(m => ({ default: m.LoadingScreen })));
+const CatalogScreen = lazy(() => import('./pages/Catalog').then(m => ({ default: m.CatalogScreen })));
+const ActivateScreen = lazy(() => import('./pages/Activate').then(m => ({ default: m.ActivateScreen })));
+const LocalScreen = lazy(() => import('./pages/Local').then(m => ({ default: m.LocalScreen })));
+const AlbumDetailScreen = lazy(() => import('./pages/AlbumDetail').then(m => ({ default: m.AlbumDetailScreen })));
+const ArtistDetailScreen = lazy(() => import('./pages/ArtistDetail').then(m => ({ default: m.ArtistDetailScreen })));
+const ArtistDiscographyScreen = lazy(() => import('./pages/ArtistDiscography').then(m => ({ default: m.ArtistDiscographyScreen })));
+const SearchScreen = lazy(() => import('./pages/Search').then(m => ({ default: m.SearchScreen })));
+const TracksScreen = lazy(() => import('./pages/Tracks').then(m => ({ default: m.TracksScreen })));
+const ArtistsScreen = lazy(() => import('./pages/Artists').then(m => ({ default: m.ArtistsScreen })));
+const DiscoverScreen = lazy(() => import('./pages/Discover').then(m => ({ default: m.DiscoverScreen })));
+const TopScreen = lazy(() => import('./pages/Top').then(m => ({ default: m.TopScreen })));
+const FullPlayer = lazy(() => import('./components/FullPlayer').then(m => ({ default: m.FullPlayer })));
+
+// ⚡ Fallback de chargement pour les pages lazy (spinner minimal)
+function PageFallback() {
+  return (
+    <div style={{
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      minHeight: 300,
+      width: '100%',
+    }}>
+      <div className="loader-spinner" />
+    </div>
+  );
+}
 
 export function App() {
   const location = useLocation();
@@ -128,19 +145,19 @@ export function App() {
                     }}
                   >
                     <Routes>
-                      <Route path="/" element={<LoadingScreen />} />
-                      <Route path="/discover" element={<DiscoverScreen />} />
-                      <Route path="/catalog" element={<CatalogScreen />} />
-                      <Route path="/activate" element={<ActivateScreen />} />
-                      <Route path="/local" element={<LocalScreen />} />
-                      <Route path="/album/:id" element={<AlbumDetailScreen />} />
-                      <Route path="/artist/:id" element={<ArtistDetailScreen />} />
-                      <Route path="/artist/:id/discography" element={<ArtistDiscographyScreen />} />
-                      <Route path="/artists" element={<ArtistsScreen />} />
-                      <Route path="/search" element={<SearchScreen />} />
-                      <Route path="/tracks" element={<TracksScreen />} />
-                      <Route path="/top" element={<TopScreen />} />
-                      <Route path="/offline" element={<OfflinePlayer />} />
+                      <Route path="/" element={<Suspense fallback={<PageFallback />}><LoadingScreen /></Suspense>} />
+                      <Route path="/discover" element={<Suspense fallback={<PageFallback />}><DiscoverScreen /></Suspense>} />
+                      <Route path="/catalog" element={<Suspense fallback={<PageFallback />}><CatalogScreen /></Suspense>} />
+                      <Route path="/activate" element={<Suspense fallback={<PageFallback />}><ActivateScreen /></Suspense>} />
+                      <Route path="/local" element={<Suspense fallback={<PageFallback />}><LocalScreen /></Suspense>} />
+                      <Route path="/album/:id" element={<Suspense fallback={<PageFallback />}><AlbumDetailScreen /></Suspense>} />
+                      <Route path="/artist/:id" element={<Suspense fallback={<PageFallback />}><ArtistDetailScreen /></Suspense>} />
+                      <Route path="/artist/:id/discography" element={<Suspense fallback={<PageFallback />}><ArtistDiscographyScreen /></Suspense>} />
+                      <Route path="/artists" element={<Suspense fallback={<PageFallback />}><ArtistsScreen /></Suspense>} />
+                      <Route path="/search" element={<Suspense fallback={<PageFallback />}><SearchScreen /></Suspense>} />
+                      <Route path="/tracks" element={<Suspense fallback={<PageFallback />}><TracksScreen /></Suspense>} />
+                      <Route path="/top" element={<Suspense fallback={<PageFallback />}><TopScreen /></Suspense>} />
+                      <Route path="/offline" element={<Suspense fallback={<PageFallback />}><OfflinePlayer /></Suspense>} />
                       <Route path="/privacy" element={
                         <div className="screen">
                           <div className="screen-inner" style={{ padding: 'var(--page-padding)', alignItems: 'center', justifyContent: 'flex-start', paddingTop: 48 }}>
@@ -161,7 +178,9 @@ export function App() {
 
                 {isFullPlayerVisible && (
                   <div className="bento-player-wrapper">
-                    <FullPlayer />
+                    <Suspense fallback={null}>
+                      <FullPlayer />
+                    </Suspense>
                   </div>
                 )}
               </div>

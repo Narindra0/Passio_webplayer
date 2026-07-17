@@ -2,15 +2,15 @@ import { useAudioPlayback, useAudioProgress } from '@/contexts/AudioContext';
 import { useAlbumColors } from '@/hooks/useAlbumColors';
 import { useCachedImage } from '@/hooks/useCachedImage';
 import { buildVibrantWithAlpha } from '@/services/colorExtractor';
-import { AlertCircle, Pause, Play, Share2, SkipBack, SkipForward, TextQuote, Volume2, Volume1, Volume, VolumeX, X } from 'lucide-react';
+import { AlertCircle, List, Pause, Play, SkipBack, SkipForward, TextQuote, Volume2, Volume1, Volume, VolumeX, X } from 'lucide-react';
 import { hasFeatArtists, parseFeatArtists, normalizeArtistName } from '@/utils/featArtists';
 import { FeatArtistLinks } from './FeatArtistLinks';
 import { formatTitle } from '@/utils/formatTitle';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useBottomInset } from '@/hooks/useBottomInset';
-import { ShareCard } from './ShareCard';
-import { useMemo, useEffect, useState } from 'react';
-import { useArtistNameLookup } from '@/contexts/ArtistLookupContext';
+import { useSwipeHorizontal } from '@/hooks/useSwipeHorizontal';
+import { useMemo, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 export function BottomPlayer() {
   const {
@@ -18,9 +18,13 @@ export function BottomPlayer() {
     isPlaying, isLoading, next, previous, togglePlayPause,
     setFullPlayerVisible, isFullPlayerVisible, seekTo,
     playbackError, clearPlaybackError, setLyricsAutoOpen,
-    volume, setVolume, toggleMute, isMuted
+    volume, setVolume, toggleMute, isMuted,
+    queue, currentIndex, queueMode, toggleQueueMode,
+    repeatMode, toggleRepeat, isAutoplaying,
+    deviceQueue, deviceCurrentIndex,
+    playTrackAtIndex, playDeviceTrackAtIndex,
   } = useAudioPlayback();
-  const { getArtistId } = useArtistNameLookup();
+
   
   // Build artistIdMap for FeatArtistLinks
   const artistIdMap = useMemo(() => {
@@ -45,10 +49,19 @@ export function BottomPlayer() {
   }, [album]);
   const { progress, duration } = useAudioProgress();
   const [showError, setShowError] = useState(false);
-  const [shareModalVisible, setShareModalVisible] = useState(false);
+  const [volumeSliderVisible, setVolumeSliderVisible] = useState(false);
+  const [queueModalVisible, setQueueModalVisible] = useState(false);
+  const volumeSliderTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const isDeviceMode = playMode === 'device' && deviceCurrentTrack;
   const hasActiveTrack = playMode === 'device' ? !!deviceCurrentTrack : (!!currentTrack && !!album);
+
+  // Calculer la disponibilité des pistes suivante/précédente pour le swipe
+  const fullQueue = isDeviceMode ? deviceQueue : queue;
+  const currentIdx = isDeviceMode ? deviceCurrentIndex : currentIndex;
+  const upcomingTracks = currentIdx >= 0 ? fullQueue.slice(currentIdx + 1) : [];
+  const hasNext = currentIdx < fullQueue.length - 1 || repeatMode === 'all';
+  const hasPrev = currentIdx > 0 || repeatMode === 'all';
 
   // Compute these values even if no active track (for hook consistency)
   const rawTitle = hasActiveTrack ? (isDeviceMode ? deviceCurrentTrack!.title : currentTrack!.title) : '';
@@ -82,6 +95,21 @@ export function BottomPlayer() {
   const isDesktop = useMediaQuery('(min-width: 769px)');
   const isMobile = useMediaQuery('(max-width: 768px)');
   const bottomInset = useBottomInset();
+
+  // ── Swipe horizontal pour changer de piste (mobile uniquement) ──
+  // Doit être appelé APRÈS tous les useMediaQuery pour respecter les règles des hooks
+  const {
+    dragOffset: swipeOffset,
+    isDragging: isSwiping,
+    handlers: swipeHandlers,
+  } = useSwipeHorizontal({
+    onSwipeLeft: () => { void next(); },
+    onSwipeRight: () => { void previous(); },
+    enabled: isMobile && hasActiveTrack,
+    hasNext,
+    hasPrev,
+    threshold: 60,
+  });
   if (isDesktop && isFullPlayerVisible) return null;
 
   if (!hasActiveTrack) return null;
@@ -100,7 +128,30 @@ export function BottomPlayer() {
   const totalTimeLabel = formatTime(duration);
 
   const handleCoverClick = () => {
+    if (isSwiping) return;
     setFullPlayerVisible(!isFullPlayerVisible);
+  };
+
+  // Gestion du volume sur mobile : overlay temporaire
+  const showVolumeOverlay = () => {
+    setVolumeSliderVisible(true);
+    if (volumeSliderTimeoutRef.current) clearTimeout(volumeSliderTimeoutRef.current);
+    volumeSliderTimeoutRef.current = setTimeout(() => setVolumeSliderVisible(false), 3000);
+  };
+
+  // Nettoyer le timer au démontage du composant
+  useEffect(() => {
+    return () => {
+      if (volumeSliderTimeoutRef.current) clearTimeout(volumeSliderTimeoutRef.current);
+    };
+  }, []);
+
+  const handleVolumeSliderInteraction = (e: React.MouseEvent | React.TouchEvent, element: HTMLElement) => {
+    const rect = element.getBoundingClientRect();
+    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+    const vol = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    setVolume(vol);
+    showVolumeOverlay();
   };
 
   const showLyricsControls = !isDeviceMode && Boolean(currentTrack?.lyrics_url || currentTrack?.has_lyrics);
@@ -111,7 +162,7 @@ export function BottomPlayer() {
     setFullPlayerVisible(true);
   };
 
-  const VolIcon = isMuted || volume === 0 ? VolumeX : volume < 0.5 ? Volume : volume < 0.8 ? Volume1 : Volume2;
+  const VolIcon = isMuted || volume === 0 ? VolumeX : volume < 0.33 ? Volume : volume < 0.66 ? Volume1 : Volume2;
 
   // Base heights (sans inset)
   const basePlayerHeight = isMobile ? 64 : 80;
@@ -216,7 +267,7 @@ export function BottomPlayer() {
               />
         </div>
 
-        {/* Left: Cover + Track Info */}
+        {/* Left: Cover + Track Info (swipeable sur mobile) */}
         <div
           className="bottom-player-left"
           style={{
@@ -227,9 +278,69 @@ export function BottomPlayer() {
             flex: isMobile ? 1 : '0 0 280px',
             maxWidth: isMobile ? 'calc(100% - 68px)' : '280px',
             cursor: 'pointer',
+            position: 'relative',
+            overflow: 'hidden',
+            transform: isSwiping && isMobile ? `translateX(${swipeOffset * 0.3}px)` : 'translateX(0)',
+            transition: isSwiping ? 'none' : 'transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)',
           }}
           onClick={handleCoverClick}
+          {...(isMobile ? swipeHandlers : {})}
         >
+          {/* Indicateurs de swipe */}
+          {isMobile && isSwiping && (
+            <>
+              {/* Indicateur précédent (swipe droit) */}
+              {swipeOffset > 15 && hasPrev && (
+                <div style={{
+                  position: 'absolute',
+                  right: '100%',
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  padding: '4px 10px 4px 6px',
+                  borderRadius: '0 var(--radius-full) var(--radius-full) 0',
+                  background: 'rgba(0,0,0,0.6)',
+                  backdropFilter: 'blur(8px)',
+                  whiteSpace: 'nowrap',
+                  fontSize: 11,
+                  fontWeight: 600,
+                  color: 'rgba(255,255,255,0.7)',
+                  pointerEvents: 'none',
+                  animation: 'slideInFromLeft 0.15s ease',
+                }}>
+                  <SkipBack size={12} />
+                  Précédent
+                </div>
+              )}
+              {/* Indicateur suivant (swipe gauche) */}
+              {swipeOffset < -15 && hasNext && (
+                <div style={{
+                  position: 'absolute',
+                  left: '100%',
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  padding: '4px 6px 4px 10px',
+                  borderRadius: 'var(--radius-full) 0 0 var(--radius-full)',
+                  background: 'rgba(0,0,0,0.6)',
+                  backdropFilter: 'blur(8px)',
+                  whiteSpace: 'nowrap',
+                  fontSize: 11,
+                  fontWeight: 600,
+                  color: 'rgba(255,255,255,0.7)',
+                  pointerEvents: 'none',
+                  animation: 'slideInFromRight 0.15s ease',
+                }}>
+                  Suivant
+                  <SkipForward size={12} />
+                </div>
+              )}
+            </>
+          )}
           {/* Cover art */}
           <div
             className={`bottom-player-cover${isLoading ? ' cover-loading-ring' : ''}`}
@@ -412,14 +523,16 @@ export function BottomPlayer() {
           </div>
         )}
 
-        {/* Mobile: Play/Pause button on the right */}          {isMobile && (
+        {/* Mobile: Play/Pause button on the right */}
+        {isMobile && (
           <div style={{ flexShrink: 0, marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 2 }}>
+            {/* Paroles */}
             {showLyricsControls && (
               <button
                 onClick={handleOpenLyrics}
                 style={{
-                  width: 36,
-                  height: 36,
+                  width: 34,
+                  height: 34,
                   borderRadius: 'var(--radius-full)',
                   border: 'none',
                   background: 'transparent',
@@ -432,14 +545,121 @@ export function BottomPlayer() {
                 }}
                 title="Paroles"
               >
-                <TextQuote size={16} />
+                <TextQuote size={14} />
               </button>
             )}
+
+            {/* Volume */}
+            <div style={{ position: 'relative' }}>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (volumeSliderVisible) {
+                    setVolumeSliderVisible(false);
+                  } else {
+                    showVolumeOverlay();
+                  }
+                }}
+                onDoubleClick={(e) => {
+                  e.stopPropagation();
+                  toggleMute();
+                }}
+                style={{
+                  width: 34,
+                  height: 34,
+                  borderRadius: 'var(--radius-full)',
+                  border: 'none',
+                  background: volumeSliderVisible ? 'var(--color-surface-hover)' : 'transparent',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: isMuted ? 'var(--color-text-muted)' : 'var(--color-text-secondary)',
+                  transition: 'all var(--transition-fast) ease',
+                }}
+                title={isMuted ? 'Activer le son' : 'Couper le son (double-tap)'}
+              >
+                <VolIcon size={14} />
+              </button>
+
+              {/* Overlay volume slider */}
+              {volumeSliderVisible && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    bottom: 'calc(100% + 8px)',
+                    left: '50%',
+                    transform: 'translateX(-50%)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    padding: '8px 14px',
+                    borderRadius: 'var(--radius-full)',
+                    background: 'rgba(24, 20, 19, 0.96)',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
+                    backdropFilter: 'blur(16px)',
+                    WebkitBackdropFilter: 'blur(16px)',
+                    zIndex: 200,
+                    whiteSpace: 'nowrap',
+                    animation: 'slideUp 0.2s ease',
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <button
+                    onClick={(e) => { e.stopPropagation(); toggleMute(); }}
+                    style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      background: 'none', border: 'none', cursor: 'pointer', padding: 2,
+                      color: isMuted ? 'var(--color-text-muted)' : 'var(--color-text-primary)',
+                    }}
+                  >
+                    <VolIcon size={16} />
+                  </button>
+                  <div
+                    style={{
+                      width: 100,
+                      height: 5,
+                      borderRadius: 3,
+                      background: 'var(--color-border-subtle)',
+                      cursor: 'pointer',
+                      position: 'relative',
+                      flexShrink: 0,
+                    }}
+                    onClick={(e) => handleVolumeSliderInteraction(e, e.currentTarget)}
+                    onTouchMove={(e) => handleVolumeSliderInteraction(e, e.currentTarget)}
+                  >
+                    <div style={{
+                      height: '100%',
+                      width: `${(isMuted ? 0 : volume) * 100}%`,
+                      background: 'var(--color-accent)',
+                      borderRadius: 3,
+                      transition: 'width 0.1s ease',
+                    }} />
+                  </div>
+                  <span style={{
+                    color: 'var(--color-text-secondary)',
+                    fontSize: 11,
+                    fontWeight: 600,
+                    fontVariantNumeric: 'tabular-nums',
+                    minWidth: 32,
+                    textAlign: 'right',
+                  }}>
+                    {Math.round((isMuted ? 0 : volume) * 100)}%
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* File d'attente */}
             <button
-              onClick={(e) => { e.stopPropagation(); setShareModalVisible(true); }}
+              onClick={(e) => {
+                e.stopPropagation();
+                setQueueModalVisible(true);
+              }}
               style={{
-                width: 36,
-                height: 36,
+                width: 34,
+                height: 34,
                 borderRadius: 'var(--radius-full)',
                 border: 'none',
                 background: 'transparent',
@@ -450,9 +670,12 @@ export function BottomPlayer() {
                 color: 'var(--color-text-muted)',
                 transition: 'all var(--transition-fast) ease',
               }}
+              title="File d'attente"
             >
-              <Share2 size={16} />
+              <List size={16} />
             </button>
+
+            {/* Play/Pause */}
             <button
               className="bottom-player-playbtn"
               onClick={(e) => { 
@@ -538,28 +761,6 @@ export function BottomPlayer() {
                 <TextQuote size={15} />
               </button>
             )}
-            {/* Share button */}
-            <button
-              onClick={(e) => { e.stopPropagation(); setShareModalVisible(true); }}
-              style={{
-                width: 32,
-                height: 32,
-                borderRadius: 'var(--radius-full)',
-                border: 'none',
-                background: 'transparent',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                color: 'var(--color-text-muted)',
-                transition: 'all var(--transition-fast) ease',
-              }}
-              onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--color-text-primary)'; e.currentTarget.style.background = 'var(--color-surface-hover)'; }}
-              onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--color-text-muted)'; e.currentTarget.style.background = 'transparent'; }}
-              title="Partager"
-            >
-              <Share2 size={16} />
-            </button>
 
             {/* Volume slider */}
             <div
@@ -597,16 +798,354 @@ export function BottomPlayer() {
           </div>
         )}
       </div>
-      {/* Share Modal */}
-      <ShareCard
-        visible={shareModalVisible}
-        onClose={() => setShareModalVisible(false)}
-        trackTitle={trackTitle}
-        artistName={artistName}
-        albumTitle={isDeviceMode ? undefined : album?.title}
-        coverUri={coverUri}
-        albumId={isDeviceMode ? undefined : album?.id}
-      />
+
+      {/* ── Queue Modal (mobile) ── */}
+      {isMobile && queueModalVisible && createPortal(
+        <div
+          onClick={() => setQueueModalVisible(false)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 10001,
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'flex-end',
+            animation: 'fadeIn 0.15s ease',
+          }}
+        >
+          {/* Backdrop */}
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              background: 'rgba(0,0,0,0.6)',
+              backdropFilter: 'blur(4px)',
+              WebkitBackdropFilter: 'blur(4px)',
+            }}
+          />
+
+          {/* Sheet */}
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              position: 'relative',
+              zIndex: 1,
+              maxHeight: '50vh',
+              background: 'var(--color-surface)',
+              borderTopLeftRadius: 20,
+              borderTopRightRadius: 20,
+              border: '1px solid var(--color-border-subtle)',
+              borderBottom: 'none',
+              boxShadow: '0 -8px 32px rgba(0,0,0,0.5)',
+              overflow: 'hidden',
+              animation: 'slideUp 0.25s cubic-bezier(0.16, 1, 0.3, 1)',
+            }}
+          >
+            {/* Handle */}
+            <div style={{
+              display: 'flex',
+              justifyContent: 'center',
+              padding: '10px 0 4px',
+            }}>
+              <div style={{
+                width: 32,
+                height: 4,
+                borderRadius: 2,
+                background: 'var(--color-border-subtle)',
+              }} />
+            </div>
+
+            {/* Header */}
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '4px 16px 12px',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <List size={16} color="var(--color-accent)" />
+                <span style={{
+                  color: 'var(--color-text-primary)',
+                  fontSize: 15,
+                  fontWeight: 700,
+                }}>
+                  File d'attente
+                </span>
+                {upcomingTracks.length > 0 && (
+                  <span style={{
+                    color: 'var(--color-text-muted)',
+                    fontSize: 12,
+                    fontWeight: 500,
+                    marginLeft: 2,
+                  }}>
+                    {upcomingTracks.length + 1} titre{upcomingTracks.length + 1 > 1 ? 's' : ''}
+                  </span>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: 4 }}>
+                {/* Shuffle toggle */}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleQueueMode();
+                  }}
+                  style={{
+                    width: 32, height: 32,
+                    borderRadius: 'var(--radius-full)',
+                    border: '1px solid var(--color-border-subtle)',
+                    background: queueMode === 'shuffle' ? 'var(--color-accent-soft)' : 'var(--color-surface-elevated)',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: queueMode === 'shuffle' ? 'var(--color-accent)' : 'var(--color-text-muted)',
+                    fontSize: 11,
+                    fontWeight: 700,
+                    transition: 'all var(--transition-fast) ease',
+                  }}
+                  title={queueMode === 'shuffle' ? 'Lecture aléatoire ON' : 'Lecture aléatoire OFF'}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="16 3 21 3 21 8" />
+                    <line x1="4" y1="20" x2="21" y2="3" />
+                    <polyline points="21 16 21 21 16 21" />
+                    <line x1="15" y1="15" x2="21" y2="21" />
+                    <line x1="4" y1="4" x2="9" y2="9" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            {/* Queue list */}
+            <div
+              style={{
+                maxHeight: 'calc(50vh - 80px)',
+                overflowY: 'auto',
+                padding: '0 12px 16px',
+              }}
+            >
+              {/* Current track */}
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                padding: '8px 10px',
+                borderRadius: 'var(--radius-sm)',
+                background: 'rgba(220,20,60,0.08)',
+                border: '1px solid rgba(220,20,60,0.15)',
+                marginBottom: 4,
+              }}>
+                <div style={{
+                  width: 36, height: 36,
+                  borderRadius: 'var(--radius-sm)',
+                  overflow: 'hidden',
+                  flexShrink: 0,
+                  backgroundColor: 'var(--color-surface-elevated)',
+                }}>
+                  <img src={(cachedCover || coverUri) ?? ''} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{
+                    color: 'var(--color-accent)',
+                    fontSize: 12,
+                    fontWeight: 700,
+                    display: 'block',
+                    lineHeight: '15px',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}>
+                    {formatTitle(trackTitle)}
+                  </span>
+                  <span style={{
+                    color: 'var(--color-text-muted)',
+                    fontSize: 10,
+                    display: 'block',
+                    marginTop: 1,
+                  }}>
+                    En cours
+                  </span>
+                </div>
+                {/* Equalizer animation */}
+                {isPlaying && (
+                  <div style={{ display: 'flex', alignItems: 'flex-end', gap: 2, height: 12, flexShrink: 0 }}>
+                    {[1, 2, 3, 4].map((i) => (
+                      <div
+                        key={i}
+                        className="equalizer-bar"
+                        style={{
+                          width: 3,
+                          background: 'var(--color-accent)',
+                          borderRadius: '1px 1px 0 0',
+                          animationDelay: `${i * 0.15}s`,
+                        }}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Upcoming tracks */}
+              {upcomingTracks.length === 0 ? (
+                <div style={{
+                  textAlign: 'center',
+                  padding: '24px 16px',
+                  color: 'var(--color-text-muted)',
+                  fontSize: 13,
+                }}>
+                  {isAutoplaying ? (
+                    <>
+                      <span style={{ display: 'block', marginBottom: 4 }}>🎵 Mode Radio actif</span>
+                      <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
+                        Les recommandations seront chargées automatiquement
+                      </span>
+                    </>
+                  ) : (
+                    'Plus aucun titre dans la file'
+                  )}
+                </div>
+              ) : (
+                upcomingTracks.map((item, index) => {
+                  const rowTrack = isDeviceMode
+                    ? (item as { id: string; title: string; artist?: string }).title
+                    : (item as { id: string; title: string; artist_name?: string; artists?: { name: string }[] }).title;
+                  const rowArtist = isDeviceMode
+                    ? (item as { artist?: string }).artist ?? 'Artiste inconnu'
+                    : (item as { artist_name?: string; artists?: { name: string }[] }).artist_name
+                      ?? (item as { artists?: { name: string }[] }).artists?.[0]?.name
+                      ?? 'Artiste inconnu';
+                  const originalIndex = currentIdx + 1 + index;
+
+                  return (
+                    <button
+                      key={originalIndex}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setQueueModalVisible(false);
+                        if (isDeviceMode) {
+                          void playDeviceTrackAtIndex(deviceQueue, originalIndex);
+                        } else {
+                          void playTrackAtIndex(originalIndex);
+                        }
+                      }}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        padding: '7px 10px',
+                        borderRadius: 'var(--radius-sm)',
+                        border: 'none',
+                        background: 'transparent',
+                        cursor: 'pointer',
+                        width: '100%',
+                        textAlign: 'left',
+                        transition: 'background 0.15s ease',
+                      }}
+                      onTouchEnd={() => {}}
+                    >
+                      <span style={{
+                        width: 18,
+                        color: 'var(--color-text-muted)',
+                        fontSize: 10,
+                        fontWeight: 600,
+                        textAlign: 'center',
+                        flexShrink: 0,
+                        fontVariantNumeric: 'tabular-nums',
+                      }}>
+                        {originalIndex + 1}
+                      </span>
+                      <span style={{
+                        flex: 1,
+                        minWidth: 0,
+                        color: 'var(--color-text-secondary)',
+                        fontSize: 12,
+                        fontWeight: 500,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                        lineHeight: '16px',
+                      }}>
+                        {formatTitle(rowTrack)}
+                      </span>
+                      <span style={{
+                        color: 'var(--color-text-muted)',
+                        fontSize: 10,
+                        fontWeight: 400,
+                        flexShrink: 0,
+                        maxWidth: 80,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}>
+                        {rowArtist}
+                      </span>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Footer: mode d'affichage */}
+            <div style={{
+              borderTop: '1px solid var(--color-border-subtle)',
+              padding: '10px 16px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{
+                  color: 'var(--color-text-muted)',
+                  fontSize: 10,
+                  fontWeight: 600,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.5px',
+                }}>
+                  Mode : {queueMode === 'shuffle' ? 'Aléatoire' : 'Séquentiel'}
+                </span>
+                {isAutoplaying && (
+                  <span style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 3,
+                    padding: '2px 8px',
+                    borderRadius: 'var(--radius-full)',
+                    background: 'var(--color-accent-soft)',
+                    border: '1px solid var(--color-accent)',
+                    fontSize: 9,
+                    fontWeight: 700,
+                    textTransform: 'uppercase',
+                    color: 'var(--color-accent)',
+                  }}>
+                    Radio
+                  </span>
+                )}
+              </div>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setQueueModalVisible(false);
+                }}
+                style={{
+                  width: 28, height: 28,
+                  borderRadius: 'var(--radius-full)',
+                  border: 'none',
+                  background: 'var(--color-surface-elevated)',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: 'var(--color-text-muted)',
+                  transition: 'all var(--transition-fast) ease',
+                }}
+              >
+                <X size={14} />
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
     </div>
   );
 }

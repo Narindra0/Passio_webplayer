@@ -7,6 +7,11 @@ import { useAlbumColors } from '@/hooks/useAlbumColors';
 import { useCachedImage } from '@/hooks/useCachedImage';
 import { getPurchaseAlbumUrl } from '@/config/urls';
 import type { PublicAlbumSummary } from '@/types/backend';
+import {
+  getPrimaryTextColor,
+  getSecondaryTextColor,
+  getMutedTextColor,
+} from '@/services/colorExtractor';
 
 interface PremiumAlbumCardProps {
   album: PublicAlbumSummary;
@@ -47,6 +52,12 @@ export function PremiumAlbumCard({ album, isOwned = false, onPress }: PremiumAlb
     }
   };
 
+  // Adaptive text colors based on extracted cover colors
+  const primaryText = getPrimaryTextColor(coverColors.colors, '#ffffff');
+  const secondaryText = getSecondaryTextColor(coverColors.colors, 'rgba(255,255,255,0.65)');
+  const mutedText = getMutedTextColor(coverColors.colors, 'rgba(255,255,255,0.35)');
+  const isCoverDark = coverColors.colors?.isDark ?? true;
+
   return (
     <div
       onClick={handleCardClick}
@@ -74,7 +85,7 @@ export function PremiumAlbumCard({ album, isOwned = false, onPress }: PremiumAlb
         padding: 0,
       }}
     >
-      {/* Subtle gradient overlay — replaces old blurred image (saves bandwidth) */}
+      {/* Subtle gradient overlay */}
       <div
         style={{
           position: 'absolute',
@@ -84,7 +95,7 @@ export function PremiumAlbumCard({ album, isOwned = false, onPress }: PremiumAlb
         }}
       />
 
-      {/* Gradient overlay */}
+      {/* Dark gradient overlay at bottom for text readability */}
       <div
         style={{
           position: 'absolute',
@@ -193,9 +204,9 @@ export function PremiumAlbumCard({ album, isOwned = false, onPress }: PremiumAlb
           )}
         </div>
 
-        {/* Album title */}
+        {/* Album title — adapté à la couleur du cover */}
         <h3 style={{
-          color: '#fff',
+          color: primaryText,
           fontSize: 14,
           fontWeight: 700,
           lineHeight: '18px',
@@ -207,9 +218,10 @@ export function PremiumAlbumCard({ album, isOwned = false, onPress }: PremiumAlb
           {formatTitle(album.title)}
         </h3>
 
+        {/* Artist + type — adapté à la couleur du cover */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 8 }}>
           <span style={{
-            color: 'rgba(255,255,255,0.35)',
+            color: mutedText,
             fontSize: 9,
             fontWeight: 700,
             textTransform: 'uppercase',
@@ -217,9 +229,9 @@ export function PremiumAlbumCard({ album, isOwned = false, onPress }: PremiumAlb
           }}>
             {albumType}
           </span>
-          <span style={{ color: 'rgba(255,255,255,0.12)', fontSize: 9 }}>·</span>
+          <span style={{ color: isCoverDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.12)', fontSize: 9 }}>·</span>
           <span style={{
-            color: 'rgba(255,255,255,0.5)',
+            color: secondaryText,
             fontSize: 11,
             fontWeight: 500,
             overflow: 'hidden',
@@ -289,7 +301,7 @@ export function PremiumAlbumCard({ album, isOwned = false, onPress }: PremiumAlb
                   : isHovered ? 'var(--color-accent)' : 'rgba(255,255,255,0.08)',
                 border: `1px solid ${isHovered || preordered ? 'var(--color-accent)' : 'rgba(255,255,255,0.1)'}`,
                 cursor: 'pointer',
-                color: '#fff',
+                color: primaryText,
                 fontSize: 11,
                 fontWeight: 700,
                 transition: 'all var(--transition-fast) ease',
