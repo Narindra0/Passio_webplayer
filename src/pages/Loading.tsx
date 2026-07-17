@@ -24,7 +24,7 @@ export function LoadingScreen() {
     return () => { mounted = false; };
   }, [isLibraryLoaded, loadLibrary]);
 
-  if (canContinue) return <Navigate to="/tabs" replace />;
+  if (canContinue) return <Navigate to="/discover" replace />;
 
   return (
     <div style={{

@@ -55,6 +55,14 @@ export default defineConfig(({ mode }) => ({
         skipWaiting: true,
         clientsClaim: true,
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
+        // ⚡ Exclure les icônes du manifest de la pré-cache automatique pour éviter
+        // le conflit de révision (brute vs ?__WB_REVISION__=…) qui cause des warnings
+        // et des erreurs de cache dans le Service Worker.
+        globIgnores: [
+          '**/passio-icon-round.png',
+          '**/icon.png',
+          '**/favicon*',
+        ],
         // ⚡ Offline shell : l'app s'ouvre même sans connexion
         navigateFallback: '/index.html',
         navigateFallbackAllowlist: [
@@ -163,6 +171,12 @@ export default defineConfig(({ mode }) => ({
         // Services avec dynamic imports critiques
         /src[\/\\]services[\/\\](keyManager|vault|api|offlineCache|storage)\.ts$/,
         /src[\/\\]contexts[\/\\]LibraryModeContext\.tsx$/,
+        // 🔴 CRITIQUE : App.tsx contient TOUS les React.lazy / dynamic imports.
+        // L'obfuscateur encode les chaînes (dont les chemins d'import) en base64,
+        // ce qui brise la résolution des chunks au runtime.
+        /src[\/\\]App\.tsx$/,
+        // Toutes les pages chargées dynamiquement via lazy() — même protection
+        /src[\/\\]pages[\/\\]/,
       ],
       options: {
         compact: true,

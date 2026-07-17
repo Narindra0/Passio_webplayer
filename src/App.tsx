@@ -1,4 +1,4 @@
-import React, { Suspense, lazy, useEffect, useRef } from 'react';
+import React, { Suspense, useEffect, useRef } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useAudioPlayback } from './contexts/AudioContext';
 import { useLibraryMode } from './contexts/LibraryModeContext';
@@ -14,20 +14,23 @@ import { ConsentSettings } from './components/ConsentSettings';
 import { recordPageView, recordDeviceInfo } from '@/services/streamTracker';
 import { useConsent } from '@/hooks/useConsent';
 
+import { lazyWithRetry } from '@/utils/lazyWithRetry';
+
 // ⚡ Lazy loading des pages — chargées uniquement quand l'utilisateur navigue dessus
-const LoadingScreen = lazy(() => import('./pages/Loading').then(m => ({ default: m.LoadingScreen })));
-const CatalogScreen = lazy(() => import('./pages/Catalog').then(m => ({ default: m.CatalogScreen })));
-const ActivateScreen = lazy(() => import('./pages/Activate').then(m => ({ default: m.ActivateScreen })));
-const LocalScreen = lazy(() => import('./pages/Local').then(m => ({ default: m.LocalScreen })));
-const AlbumDetailScreen = lazy(() => import('./pages/AlbumDetail').then(m => ({ default: m.AlbumDetailScreen })));
-const ArtistDetailScreen = lazy(() => import('./pages/ArtistDetail').then(m => ({ default: m.ArtistDetailScreen })));
-const ArtistDiscographyScreen = lazy(() => import('./pages/ArtistDiscography').then(m => ({ default: m.ArtistDiscographyScreen })));
-const SearchScreen = lazy(() => import('./pages/Search').then(m => ({ default: m.SearchScreen })));
-const TracksScreen = lazy(() => import('./pages/Tracks').then(m => ({ default: m.TracksScreen })));
-const ArtistsScreen = lazy(() => import('./pages/Artists').then(m => ({ default: m.ArtistsScreen })));
-const DiscoverScreen = lazy(() => import('./pages/Discover').then(m => ({ default: m.DiscoverScreen })));
-const TopScreen = lazy(() => import('./pages/Top').then(m => ({ default: m.TopScreen })));
-const FullPlayer = lazy(() => import('./components/FullPlayer').then(m => ({ default: m.FullPlayer })));
+// lazyWithRetry recharge la page automatiquement si un chunk est introuvable (stale hash).
+const LoadingScreen = lazyWithRetry(() => import('./pages/Loading').then(m => ({ default: m.LoadingScreen })));
+const CatalogScreen = lazyWithRetry(() => import('./pages/Catalog').then(m => ({ default: m.CatalogScreen })));
+const ActivateScreen = lazyWithRetry(() => import('./pages/Activate').then(m => ({ default: m.ActivateScreen })));
+const LocalScreen = lazyWithRetry(() => import('./pages/Local').then(m => ({ default: m.LocalScreen })));
+const AlbumDetailScreen = lazyWithRetry(() => import('./pages/AlbumDetail').then(m => ({ default: m.AlbumDetailScreen })));
+const ArtistDetailScreen = lazyWithRetry(() => import('./pages/ArtistDetail').then(m => ({ default: m.ArtistDetailScreen })));
+const ArtistDiscographyScreen = lazyWithRetry(() => import('./pages/ArtistDiscography').then(m => ({ default: m.ArtistDiscographyScreen })));
+const SearchScreen = lazyWithRetry(() => import('./pages/Search').then(m => ({ default: m.SearchScreen })));
+const TracksScreen = lazyWithRetry(() => import('./pages/Tracks').then(m => ({ default: m.TracksScreen })));
+const ArtistsScreen = lazyWithRetry(() => import('./pages/Artists').then(m => ({ default: m.ArtistsScreen })));
+const DiscoverScreen = lazyWithRetry(() => import('./pages/Discover').then(m => ({ default: m.DiscoverScreen })));
+const TopScreen = lazyWithRetry(() => import('./pages/Top').then(m => ({ default: m.TopScreen })));
+const FullPlayer = lazyWithRetry(() => import('./components/FullPlayer').then(m => ({ default: m.FullPlayer })));
 
 // ⚡ Fallback de chargement pour les pages lazy (spinner minimal)
 function PageFallback() {
