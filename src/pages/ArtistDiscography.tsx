@@ -10,6 +10,7 @@ import { getAlbum, listAlbums, unwrapAlbumDetails } from '@/services/api';
 import { resolveOfflinePlayback } from '@/services/offlineAccess';
 import { loadArtistFromFreeCatalogCache } from '@/services/freeCatalogSearch';
 import { useCachedImage } from '@/hooks/useCachedImage';
+import { getOptimizedImageUrl, isValidProfilePicture } from '@/utils/imageUtils';
 import { isAlbumOwnedByDevice } from '@/services/albumOwnership';
 import { hasFeatArtists, parseFeatArtists, normalizeArtistName } from '@/utils/featArtists';
 import { getCachedArtistData } from '@/services/artistDataCache';
@@ -83,7 +84,12 @@ export function ArtistDiscographyScreen() {
           const first = artistAlbums[0];
           const name = first.artist?.name || first.artist_name || 'Artiste inconnu';
           setArtistName(name);
-          setProfilePicture(first.artist?.profile_picture_url || first.artist_pdp || first.cover_url || null);
+          setProfilePicture(
+            (isValidProfilePicture(first.artist?.profile_picture_url) ? first.artist?.profile_picture_url : null) ||
+            (isValidProfilePicture(first.artist_pdp) ? first.artist_pdp : null) ||
+            first.cover_url ||
+            null
+          );
 
           const normalizedName = normalizeArtistName(name);
 
@@ -277,6 +283,7 @@ export function ArtistDiscographyScreen() {
         variant="tile"
         premiumLabel={premiumLabel}
         releaseTypeLabel={getReleaseTypeLabel(album)}
+        disableDataSaver={true}
         onPress={() => navigate(`/album/${album.id}`)}
       />
     );
@@ -350,7 +357,7 @@ export function ArtistDiscographyScreen() {
             }}
           >
             <img
-              src={cachedProfile || profilePicture}
+              src={getOptimizedImageUrl(cachedProfile || profilePicture)}
               alt={artistName}
               style={{ width: '100%', height: '100%', objectFit: 'cover' }}
             />

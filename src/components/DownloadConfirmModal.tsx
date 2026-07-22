@@ -3,6 +3,7 @@ import { Download, X, HardDrive, AlertTriangle, Trash2, Loader2 } from 'lucide-r
 import { getAlbumDownloadSize, evictLRUIfNeeded, formatBytes, type AlbumSizeEstimate } from '@/services/downloadManager';
 import { getStorageStats, type StorageStats } from '@/services/storageQuota';
 import type { PublicAlbumDetails } from '@/types/backend';
+import { getOptimizedImageUrl } from '@/utils/imageUtils';
 import { formatTitle } from '@/utils/formatTitle';
 
 interface DownloadConfirmModalProps {
@@ -182,7 +183,7 @@ export function DownloadConfirmModal({
           >
             {album.cover_url ? (
               <img
-                src={album.cover_url}
+                src={getOptimizedImageUrl(album.cover_url)}
                 alt=""
                 style={{
                   width: 48,

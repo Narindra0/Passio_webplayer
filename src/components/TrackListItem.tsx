@@ -1,6 +1,9 @@
+import React from 'react';
 import { Play, Pause, CloudCheck } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useCachedImage } from '@/hooks/useCachedImage';
+import { getOptimizedImageUrl } from '@/utils/imageUtils';
+import { useNetworkQuality } from '@/hooks/useNetworkQuality';
 import { getApiBaseUrl } from '@/services/api';
 import { prefetchTrackBlob } from '@/services/audio';
 import { isTrackInDB } from '../services/indexedDB';
@@ -31,7 +34,8 @@ type TrackListItemProps = {
   isPlaying?: boolean;
 };
 
-export function TrackListItem({ track, onPress, isPlaying = false }: TrackListItemProps) {
+export const TrackListItem = React.memo(function TrackListItem({ track, onPress, isPlaying = false }: TrackListItemProps) {
+  const networkQuality = useNetworkQuality();
   const [isOfflineAvailable, setIsOfflineAvailable] = useState(false);
   const cachedCover = useCachedImage(track.cover_url);
 
@@ -84,9 +88,11 @@ export function TrackListItem({ track, onPress, isPlaying = false }: TrackListIt
         color: 'inherit',
       }}
       onMouseEnter={(e) => {
-        // Solution C: Préchargement de la piste au survol pour une lecture instantanée
-        const proxyUrl = `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(track.id)}/audio`;
-        prefetchTrackBlob(proxyUrl, track.id);
+        // ⚡ Data saver : pas de prefetch audio sur connexion lente
+        if (networkQuality !== 'slow') {
+          const proxyUrl = `${getApiBaseUrl()}/api/stream/tracks/${encodeURIComponent(track.id)}/audio`;
+          prefetchTrackBlob(proxyUrl, track.id);
+        }
         if (!isPlaying) e.currentTarget.style.background = 'var(--color-surface-hover)';
         else e.currentTarget.style.background = 'var(--color-accent-soft)';
       }}
@@ -98,7 +104,7 @@ export function TrackListItem({ track, onPress, isPlaying = false }: TrackListIt
       {/* Cover */}
       {track.cover_url ? (
         <img
-          src={cachedCover || track.cover_url}
+          src={getOptimizedImageUrl(cachedCover || track.cover_url)}
           alt=""
           loading="lazy"
           decoding="async"
@@ -181,4 +187,4 @@ export function TrackListItem({ track, onPress, isPlaying = false }: TrackListIt
       </div>
     </button>
   );
-}
+});

@@ -29,6 +29,9 @@
   "triggers": {
     "crons": ["0 3 * * *"]
   },
+  "vars": {
+    "IMAGEKIT_ID": "__IMAGEKIT_ID__"
+  },
   "routes": [
     "player.passiio.shop/*"
   ]

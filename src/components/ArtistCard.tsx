@@ -1,4 +1,7 @@
+import React, { useState } from 'react';
 import { useCachedImage } from '@/hooks/useCachedImage';
+import { useNetworkQuality } from '@/hooks/useNetworkQuality';
+import { getOptimizedImageUrl, isValidProfilePicture } from '@/utils/imageUtils';
 
 export interface Artist {
   id: string;
@@ -11,11 +14,37 @@ export interface Artist {
 type ArtistCardProps = {
   artist: Artist;
   onPress: () => void;
+  /**
+   * Si true, désactive le mode data-saver pour cette carte.
+   */
+  disableDataSaver?: boolean;
 };
 
-export function ArtistCard({ artist, onPress }: ArtistCardProps) {
-  const imageUrl = artist.profile_picture_url || artist.fallback_image_url;
-  const cachedImage = useCachedImage(imageUrl);
+export const ArtistCard = React.memo(function ArtistCard({ artist, onPress, disableDataSaver = false }: ArtistCardProps) {
+  const networkQuality = useNetworkQuality();
+  const isDataSaver = disableDataSaver ? false : networkQuality === 'slow';
+
+  // ⚡ Gestion des erreurs d'image : si la photo de profil ne charge pas
+  //    (URL cassée / image inexistante), on bascule sur la cover de fallback.
+  const [isFallback, setIsFallback] = useState(false);
+  const [imgError, setImgError] = useState(false);
+  const primaryUrl = isDataSaver ? null : (isValidProfilePicture(artist.profile_picture_url) ? artist.profile_picture_url : artist.fallback_image_url);
+  // Si l'image primaire a échoué, tenter le fallback direct (cover_url)
+  const effectiveUrl = isFallback ? artist.fallback_image_url : primaryUrl;
+  const cachedImage = useCachedImage(effectiveUrl);
+
+  // Montrer l'image seulement si on a une URL ET qu'elle n'a pas définitivement échoué
+  const showImage = !!effectiveUrl && !imgError;
+
+  const handleImageError = () => {
+    if (!isFallback && artist.fallback_image_url && artist.fallback_image_url !== artist.profile_picture_url) {
+      // 1er échec : essayer la cover de fallback
+      setIsFallback(true);
+    } else {
+      // 2e échec (ou pas de fallback) : afficher l'initiale
+      setImgError(true);
+    }
+  };
 
   return (
     <button
@@ -52,12 +81,13 @@ export function ArtistCard({ artist, onPress }: ArtistCardProps) {
           position: 'relative',
         }}
       >
-        {imageUrl ? (
+        {showImage ? (
           <img
-            src={cachedImage || imageUrl}
+            src={getOptimizedImageUrl(cachedImage || effectiveUrl)}
             alt={artist.name}
             loading="lazy"
             decoding="async"
+            onError={handleImageError}
             style={{
               width: '100%',
               height: '100%',
@@ -101,4 +131,4 @@ export function ArtistCard({ artist, onPress }: ArtistCardProps) {
       </div>
     </button>
   );
-}
+});

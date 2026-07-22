@@ -1,6 +1,7 @@
 import { Screen } from '@/components/Screen';
 import { getPurchaseAlbumUrl } from '@/config/urls';
 import { useCachedImage } from '@/hooks/useCachedImage';
+import { getOptimizedImageUrl } from '@/utils/imageUtils';
 import { useAudioPlayback, useAudioProgress } from '@/contexts/AudioContext';
 import { useLibraryMode } from '@/contexts/LibraryModeContext';
 import { useLayout } from '@/contexts/LayoutContext';
@@ -22,6 +23,7 @@ import { createPortal } from 'react-dom';
 import { useNavigate, useParams } from 'react-router-dom';
 import { getApiBaseUrl } from '@/services/api';
 import { prefetchTrackBlob } from '@/services/audio';
+import { useNetworkQuality } from '@/hooks/useNetworkQuality';
 import { logger } from '@/utils/logger';
 import { hasFeatArtists, parseFeatArtists, normalizeArtistName } from '@/utils/featArtists';
 import { formatTitle } from '@/utils/formatTitle';
@@ -59,10 +61,15 @@ export function AlbumDetailScreen() {
   const [shareModalVisible, setShareModalVisible] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
   const isMobile = useMediaQuery('(max-width: 768px)');
+  const networkQuality = useNetworkQuality();
+
+  // ⚡ Toujours afficher les covers (même en mode Éco)
+  const isDataSaver = false;
 
   // Call all hooks BEFORE any early returns
-  const cachedCover = useCachedImage(album?.cover_url);
-  const coverColors = useAlbumColors(album?.cover_url);
+  // ⚡ Data saver : pas de cache IndexedDB, pas d'extraction de couleurs
+  const cachedCover = useCachedImage(isDataSaver ? null : album?.cover_url);
+  const coverColors = useAlbumColors(isDataSaver ? null : album?.cover_url);
 
   const loadAlbumData = useCallback(async () => {
     if (!id) return;
@@ -292,12 +299,13 @@ export function AlbumDetailScreen() {
     <div className="album-hero"
       style={{
         position: 'relative',
-        padding: isMobile ? '48px 16px 28px' : '60px clamp(20px, 3.5vw, 48px) 40px',
-        background: coverColors.gradientStyle,
+        padding: isMobile ? '64px 16px 28px' : '60px clamp(20px, 3.5vw, 48px) 40px',
+        background: isMobile ? coverColors.playerGradient : coverColors.gradientStyle,
         transition: 'background 0.6s ease',
         display: 'flex',
-        gap: isMobile ? 12 : 'clamp(16px, 3vw, 40px)',
-        alignItems: 'flex-end',
+        flexDirection: isMobile ? 'column' : 'row',
+        gap: isMobile ? 16 : 'clamp(16px, 3vw, 40px)',
+        alignItems: isMobile ? 'center' : 'flex-end',
       }}
     >
       {/* Back button */}
@@ -327,20 +335,50 @@ export function AlbumDetailScreen() {
         <ChevronLeft size={22} />
       </button>
 
+      {/* Effet de halo lumineux derrière la cover (mobile) */}
+      {isMobile && coverColors.colors?.vibrant && (
+        <div style={{
+          position: 'absolute',
+          top: '50%',
+          left: '50%',
+          transform: 'translate(-50%, -50%)',
+          width: 'clamp(220px, 75vw, 340px)',
+          height: 'clamp(220px, 75vw, 340px)',
+          borderRadius: '50%',
+          background: `radial-gradient(circle, ${coverColors.colors.vibrant}25 0%, transparent 70%)`,
+          pointerEvents: 'none',
+          zIndex: 0,
+        }} />
+      )}
+
       {/* Album Cover */}
       <div className="album-cover"
         style={{
-          width: 'clamp(160px, 18vw, 260px)',
-          height: 'clamp(160px, 18vw, 260px)',
-          minWidth: 'clamp(160px, 18vw, 260px)',
-          borderRadius: 'var(--radius-sm)',
+          width: isMobile ? 'clamp(220px, 78vw, 320px)' : (isDataSaver ? 'clamp(80px, 10vw, 120px)' : 'clamp(160px, 18vw, 260px)'),
+          height: isMobile ? 'clamp(220px, 78vw, 320px)' : (isDataSaver ? 'clamp(80px, 10vw, 120px)' : 'clamp(160px, 18vw, 260px)'),
+          minWidth: isMobile ? 'clamp(220px, 78vw, 320px)' : (isDataSaver ? 'clamp(80px, 10vw, 120px)' : 'clamp(160px, 18vw, 260px)'),
+          borderRadius: isMobile ? 'var(--radius-lg)' : 'var(--radius-sm)',
           overflow: 'hidden',
-          boxShadow: '0 8px 40px rgba(0,0,0,0.5)',
-          marginTop: 20,
+          boxShadow: isMobile && coverColors.colors?.vibrant
+            ? `0 16px 56px ${coverColors.colors.vibrant}40, 0 0 0 1px rgba(255,255,255,0.06)`
+            : isMobile
+              ? '0 16px 56px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.06)'
+              : '0 8px 40px rgba(0,0,0,0.5)',
+          marginTop: 24,
+          transition: 'box-shadow 0.4s ease',
         }}
       >
-        {album.cover_url ? (
-          <img src={cachedCover || album.cover_url} alt={album.title} loading="lazy" decoding="async" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+        {isDataSaver ? (
+          // ⚡ Data saver : icône placeholdere au lieu de l'image cover
+          <div style={{
+            width: '100%', height: '100%',
+            background: 'var(--color-surface-elevated)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
+            <span style={{ fontSize: 36, color: 'var(--color-text-muted)' }}>♪</span>
+          </div>
+        ) : album.cover_url ? (
+          <img src={getOptimizedImageUrl(cachedCover || album.cover_url)} alt={album.title} loading="lazy" decoding="async" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
         ) : (
           <div style={{
             width: '100%', height: '100%',
@@ -352,59 +390,58 @@ export function AlbumDetailScreen() {
         )}
       </div>
 
-      {/* Album Info + CTA */}
-      <div className="album-info" style={{ flex: 1, paddingBottom: 8 }}>
-        {/* Type badge + premium/free */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+      {/* Album Info + CTA — redesign propre et hiérarchisé, style SoundCloud */}
+      <div className="album-info" style={{ width: '100%' }}>
+        
+        {/* ── LIGNE 1 : Type badge ── */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
           <span style={{
             color: getPrimaryTextColor(coverColors.colors, 'var(--color-text-secondary)'),
-            fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px',
-            opacity: 0.7,
+            fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px',
+            opacity: 0.6,
           }}>
             {album.type === 'single' ? 'Single' : 'Album'}
           </span>
           {!isFreeRelease && (
-            <div style={{
-              display: 'inline-flex', alignItems: 'center', gap: 4,
-              padding: '2px 10px',
+            <span style={{
+              display: 'inline-flex', alignItems: 'center', gap: 3,
+              padding: '1px 8px',
               borderRadius: 'var(--radius-full)',
               background: getBadgeBackground(coverColors.colors, coverColors.colors?.isDark ?? true, true),
               border: `1px solid ${getBadgeBorder(coverColors.colors, coverColors.colors?.isDark ?? true, true)}`,
+              fontSize: 9, fontWeight: 700, color: '#FFD700', letterSpacing: '0.3px',
             }}>
-              <Crown size={10} color="#FFD700" />
-              <span style={{ color: '#FFD700', fontSize: 10, fontWeight: 700, letterSpacing: '0.3px', textTransform: 'uppercase' }}>Premium</span>
-            </div>
+              <Crown size={8} color="#FFD700" /> Premium
+            </span>
           )}
           {isFreeRelease && (
-            <div style={{
-              display: 'inline-flex', alignItems: 'center', gap: 4,
-              padding: '2px 10px',
+            <span style={{
+              display: 'inline-flex', alignItems: 'center', gap: 3,
+              padding: '1px 8px',
               borderRadius: 'var(--radius-full)',
-              background: coverColors.colors?.isDark === false
-                ? 'rgba(29,185,84,0.08)'
-                : 'rgba(29,185,84,0.1)',
+              background: coverColors.colors?.isDark === false ? 'rgba(29,185,84,0.08)' : 'rgba(29,185,84,0.1)',
               border: `1px solid ${coverColors.colors?.isDark === false ? 'rgba(29,185,84,0.15)' : 'rgba(29,185,84,0.2)'}`,
+              fontSize: 9, fontWeight: 700, color: '#1DB954', letterSpacing: '0.3px',
             }}>
-              <Sparkles size={10} color="#1DB954" />
-              <span style={{ color: '#1DB954', fontSize: 10, fontWeight: 700, letterSpacing: '0.3px', textTransform: 'uppercase' }}>Gratuit</span>
-            </div>
+              <Sparkles size={8} color="#1DB954" /> Gratuit
+            </span>
           )}
         </div>
 
+        {/* ── LIGNE 2 : Titre ── */}
         <h1 style={{
           color: getPrimaryTextColor(coverColors.colors, 'var(--color-text-primary)'),
-          fontSize: 'clamp(28px, 4vw, 56px)',
+          fontSize: 'clamp(22px, 5.5vw, 28px)',
           fontWeight: 800,
-          letterSpacing: isMobile ? '-0.8px' : '-1.5px',
-          lineHeight: 1.08,
-          margin: '0 0 12px',
-          textAlign: isMobile ? 'center' : 'left',
+          letterSpacing: '-0.3px',
+          lineHeight: 1.12,
+          margin: '0 0 6px',
         }}>
           {formatTitle(album.title)}
         </h1>
 
-        {/* Artist + metadata */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 16, justifyContent: isMobile ? 'center' : 'flex-start' }}>
+        {/* ── LIGNE 3 : Artiste + metadata (compact) ── */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
           {(() => {
             const artistId = artistIdMap[normalizeArtistName(artistName)];
             const link = artistId ? `/artist/${artistId}` : null;
@@ -414,11 +451,7 @@ export function AlbumDetailScreen() {
               <span
                 onClick={link ? (e) => { e.stopPropagation(); navigate(link); } : undefined}
                 style={{
-                  color: secColor,
-                  fontSize: 16,
-                  fontWeight: 600,
-                  whiteSpace: 'nowrap',
-                  letterSpacing: '-0.3px',
+                  color: secColor, fontSize: 14, fontWeight: 600, whiteSpace: 'nowrap',
                   cursor: link ? 'pointer' : 'default',
                   transition: 'color 0.15s ease',
                 }}
@@ -429,313 +462,156 @@ export function AlbumDetailScreen() {
               </span>
             );
           })()}
-          <span style={{ color: getMutedTextColor(coverColors.colors, 'var(--color-text-muted)'), fontSize: 14 }}>·</span>
-          <span style={{ color: getSecondaryTextColor(coverColors.colors, 'var(--color-text-secondary)'), fontSize: 15, fontWeight: 500 }}>
+          <span style={{ color: getMutedTextColor(coverColors.colors, 'var(--color-text-muted)'), fontSize: 10 }}>·</span>
+          <span style={{ color: getSecondaryTextColor(coverColors.colors, 'var(--color-text-secondary)'), fontSize: 13, fontWeight: 500 }}>
             {album.tracks?.length ?? 0} titre{(album.tracks?.length ?? 0) > 1 ? 's' : ''}
           </span>
           {totalDuration > 0 && (
             <>
-              <span style={{ color: getMutedTextColor(coverColors.colors, 'var(--color-text-muted)'), fontSize: 14 }}>·</span>
-              <span style={{ color: getSecondaryTextColor(coverColors.colors, 'var(--color-text-secondary)'), fontSize: 14, fontWeight: 500, fontVariantNumeric: 'tabular-nums' }}>
+              <span style={{ color: getMutedTextColor(coverColors.colors, 'var(--color-text-muted)'), fontSize: 10 }}>·</span>
+              <span style={{ color: getSecondaryTextColor(coverColors.colors, 'var(--color-text-secondary)'), fontSize: 13, fontWeight: 500, fontVariantNumeric: 'tabular-nums' }}>
                 {totalDurationLabel}
               </span>
             </>
           )}
         </div>
 
-        {/* Status badges */}
-        <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap', justifyContent: isMobile ? 'center' : 'flex-start' }}>
-          {isOwned && !isFreeRelease && (
-            <div style={{
-              display: 'flex', alignItems: 'center', gap: 6,
-              padding: '4px 12px',
-              borderRadius: 'var(--radius-full)',
-              background: coverColors.colors?.isDark === false
-                ? 'rgba(29,185,84,0.08)'
-                : 'rgba(29,185,84,0.1)',
-              border: `1px solid ${coverColors.colors?.isDark === false ? 'rgba(29,185,84,0.15)' : 'rgba(29,185,84,0.2)'}`,
-            }}>
-              <ShieldCheck size={14} color="var(--color-success)" />
-              <span style={{ color: 'var(--color-success)', fontSize: 12, fontWeight: 600 }}>
+        {/* ── LIGNE 4 : Status badges (optionnels) ── */}
+        {((isOwned && !isFreeRelease) || isOfflineReady) && (
+          <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
+            {isOwned && !isFreeRelease && (
+              <span style={{
+                display: 'inline-flex', alignItems: 'center', gap: 4,
+                padding: '2px 10px', borderRadius: 'var(--radius-full)',
+                background: 'rgba(29,185,84,0.1)', border: '1px solid rgba(29,185,84,0.2)',
+                fontSize: 10, fontWeight: 600, color: 'var(--color-success)',
+              }}>
+                <ShieldCheck size={12} color="var(--color-success)" />
                 {isOfflineReady ? 'Disponible hors-ligne' : 'Activé'}
               </span>
-            </div>
-          )}
-          {isOfflineReady && (
-            <div style={{
-              display: 'flex', alignItems: 'center', gap: 6,
-              padding: '4px 12px',
-              borderRadius: 'var(--radius-full)',
-              background: coverColors.colors?.isDark === false
-                ? 'rgba(29,185,84,0.08)'
-                : 'rgba(29,185,84,0.1)',
-              border: `1px solid ${coverColors.colors?.isDark === false ? 'rgba(29,185,84,0.15)' : 'rgba(29,185,84,0.2)'}`,
-            }}>
-              <Download size={12} color="var(--color-success)" />
-              <span style={{ color: 'var(--color-success)', fontSize: 12, fontWeight: 600 }}>
-                Hors-ligne
+            )}
+            {isOfflineReady && (
+              <span style={{
+                display: 'inline-flex', alignItems: 'center', gap: 4,
+                padding: '2px 10px', borderRadius: 'var(--radius-full)',
+                background: 'rgba(29,185,84,0.1)', border: '1px solid rgba(29,185,84,0.2)',
+                fontSize: 10, fontWeight: 600, color: 'var(--color-success)',
+              }}>
+                <Download size={10} color="var(--color-success)" /> Hors-ligne
               </span>
-            </div>
-          )}
-        </div>
+            )}
+          </div>
+        )}
 
-        {/* CTA Buttons */}
-        <div className="album-cta-row" style={{ display: 'flex', alignItems: 'center', gap: isCompactCTA ? 8 : 12, flexWrap: 'wrap', transition: 'gap 0.35s cubic-bezier(0.4, 0, 0.2, 1)' }}>
-          {preordered ? (
-            <div
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 8,
-                padding: isCompactCTA ? '8px 14px' : '12px 24px',
-                borderRadius: 'var(--radius-full)',
-                background: coverColors.colors?.isDark === false
-                  ? 'rgba(0,0,0,0.04)'
-                  : 'rgba(255,255,255,0.04)',
-                border: `1px solid ${
-                  coverColors.colors?.isDark === false
-                    ? 'rgba(0,0,0,0.08)'
-                    : 'var(--color-border-subtle)'
-                }`,
-                color: getMutedTextColor(coverColors.colors, 'var(--color-text-muted)'),
-                fontSize: isCompactCTA ? 11 : 13,
-                fontWeight: 600,
-                cursor: 'default',
-                opacity: 0.6,
-              }}
-            >
-              <Clock size={isCompactCTA ? 14 : 16} />
-              Disponible le {formattedReleaseDate}
-            </div>
-          ) : canPlay && sortedTracks.length > 0 && (
-            <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-              <button
-                onClick={() => void handlePressTrack(sortedTracks[0], 0)}
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  padding: '12px 24px',
-                  borderRadius: 'var(--radius-full)',
-                  background: 'var(--color-accent)',
-                  border: 'none',
-                  cursor: 'pointer',
-                  color: '#fff',
-                  fontSize: 14,
-                  fontWeight: 700,
-                  transition: 'all 0.35s cubic-bezier(0.4, 0, 0.2, 1)',
-                  opacity: isCompactCTA ? 0 : 1,
-                  transform: isCompactCTA ? 'scale(0.85)' : 'scale(1)',
-                  pointerEvents: isCompactCTA ? 'none' : 'auto',
-                  position: isCompactCTA ? 'absolute' : 'relative',
-                }}
-                onMouseEnter={(e) => { e.currentTarget.style.transform = isCompactCTA ? 'scale(0.85)' : 'scale(1.04)'; e.currentTarget.style.background = 'var(--color-accent-light)'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.transform = isCompactCTA ? 'scale(0.85)' : 'scale(1)'; e.currentTarget.style.background = 'var(--color-accent)'; }}
-              >
-                <Play size={18} fill="#fff" />
-                Tout écouter
-              </button>
-              <button
-                onClick={() => void handlePressTrack(sortedTracks[0], 0)}
-                title="Tout écouter"
-                style={{
-                  width: 40,
-                  height: 40,
-                  borderRadius: 'var(--radius-full)',
-                  background: 'var(--color-accent)',
-                  border: 'none',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  color: '#fff',
-                  transition: 'all 0.35s cubic-bezier(0.4, 0, 0.2, 1)',
-                  opacity: isCompactCTA ? 1 : 0,
-                  transform: isCompactCTA ? 'scale(1)' : 'scale(0.85)',
-                  pointerEvents: isCompactCTA ? 'auto' : 'none',
-                  position: !isCompactCTA ? 'absolute' : 'relative',
-                  boxShadow: '0 2px 8px rgba(220,20,60,0.3)',
-                }}
-                onMouseEnter={(e) => { e.currentTarget.style.transform = isCompactCTA ? 'scale(1.08)' : 'scale(0.85)'; e.currentTarget.style.background = 'var(--color-accent-light)'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.transform = isCompactCTA ? 'scale(1)' : 'scale(0.85)'; e.currentTarget.style.background = 'var(--color-accent)'; }}
-              >
-                <Play size={18} fill="#fff" />
-              </button>
-            </div>
-          )}
-
-          {isPaidNotOwned && priceDisplay && (
-            <a
-              href={getPurchaseAlbumUrl(album.id)}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 8,
-                padding: '12px 24px',
-                borderRadius: 'var(--radius-full)',
-                background: preordered
-                  ? 'linear-gradient(135deg, #8B0000, #DC143C)'
-                  : 'linear-gradient(135deg, #FFD700, #FFA500)',
-                border: 'none',
-                cursor: 'pointer',
-                color: preordered ? '#fff' : '#000',
-                fontSize: 14,
-                fontWeight: 800,
-                textDecoration: 'none',
-                transition: 'all var(--transition-fast) ease',
-                boxShadow: preordered
-                  ? '0 4px 16px rgba(220,20,60,0.25)'
-                  : '0 4px 16px rgba(255,215,0,0.25)',
-              }}
-              onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.04)'; e.currentTarget.style.boxShadow = preordered ? '0 6px 24px rgba(220,20,60,0.35)' : '0 6px 24px rgba(255,215,0,0.35)'; }}
-              onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.boxShadow = preordered ? '0 4px 16px rgba(220,20,60,0.25)' : '0 4px 16px rgba(255,215,0,0.25)'; }}
-            >
-              <ShoppingBag size={18} />
-              {preordered ? `Précommander — ${priceDisplay}` : `Acheter — ${priceDisplay}`}
-            </a>
-          )}
-
-          {isPaidNotOwned && (
+        {/* ── LIGNE 5 : Actions ── */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          
+          {/* Bloc gauche : Play (CTA principal) */}
+          {!preordered && canPlay && sortedTracks.length > 0 && (
             <button
-              onClick={() => navigate('/activate')}
+              onClick={() => void handlePressTrack(sortedTracks[0], 0)}
               style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 6,
-                padding: '10px 20px',
-                borderRadius: 'var(--radius-full)',
-                background: coverColors.colors?.isDark === false
-                  ? 'rgba(0,0,0,0.04)'
-                  : 'rgba(255,255,255,0.06)',
-                border: `1px solid ${
-                  coverColors.colors?.isDark === false
-                    ? 'rgba(0,0,0,0.08)'
-                    : 'rgba(255,255,255,0.1)'
-                }`,
-                cursor: 'pointer',
-                color: getSecondaryTextColor(coverColors.colors, 'var(--color-text-secondary)'),
-                fontSize: 13,
-                fontWeight: 600,
-                transition: 'all var(--transition-fast) ease',
+                display: 'inline-flex', alignItems: 'center', gap: 8,
+                padding: '10px 20px', borderRadius: 'var(--radius-full)',
+                background: 'var(--color-accent)', border: 'none', cursor: 'pointer',
+                color: '#fff', fontSize: 13, fontWeight: 700,
+                transition: 'all 0.2s ease',
+                boxShadow: '0 2px 12px rgba(220,20,60,0.3)',
+                flexShrink: 0,
               }}
-              onMouseEnter={(e) => {
-                if (coverColors.colors?.isDark === false) {
-                  e.currentTarget.style.background = 'rgba(0,0,0,0.08)';
-                  e.currentTarget.style.color = '#111';
-                } else {
-                  e.currentTarget.style.background = 'rgba(255,255,255,0.1)';
-                  e.currentTarget.style.color = 'var(--color-text-primary)';
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (coverColors.colors?.isDark === false) {
-                  e.currentTarget.style.background = 'rgba(0,0,0,0.04)';
-                  e.currentTarget.style.color = 'rgba(0,0,0,0.6)';
-                } else {
-                  e.currentTarget.style.background = 'rgba(255,255,255,0.06)';
-                  e.currentTarget.style.color = 'var(--color-text-secondary)';
-                }
-              }}
+              onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.03)'; e.currentTarget.style.background = 'var(--color-accent-light)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.background = 'var(--color-accent)'; }}
             >
-              <Lock size={14} />
-              J'ai un PassCode
+              <Play size={16} fill="#fff" />
+              Tout écouter
             </button>
           )}
-
-          {(isOwned || isFreeRelease) && album && (
-            <div style={{
-              transition: 'all 0.35s cubic-bezier(0.4, 0, 0.2, 1)',
-              opacity: isCompactCTA ? 0.75 : 1,
-              transform: isCompactCTA ? 'scale(0.9)' : 'scale(1)',
+          {preordered && (
+            <span style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              padding: '8px 16px', borderRadius: 'var(--radius-full)',
+              background: 'rgba(255,255,255,0.04)', border: '1px solid var(--color-border-subtle)',
+              color: getMutedTextColor(coverColors.colors, 'var(--color-text-muted)'),
+              fontSize: 12, fontWeight: 600, cursor: 'default', opacity: 0.6,
+              flexShrink: 0,
             }}>
+              <Clock size={14} />
+              {formattedReleaseDate}
+            </span>
+          )}
+
+          {/* Icônes secondaires (Download + Share) */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 'auto' }}>
+            {(isOwned || isFreeRelease) && album && (
               <DownloadButton
                 album={album}
                 decryptionKey={decryptionKey}
-                variant={isCompactCTA ? 'icon' : 'full'}
+                variant="icon"
                 onComplete={() => setIsOfflineReady(true)}
                 onDelete={() => setIsOfflineReady(false)}
               />
-            </div>
-          )}
-
-          <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-            <button
-              onClick={() => setShareModalVisible(true)}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 8,
-                padding: '12px 24px',
-                borderRadius: 'var(--radius-full)',
-                background: coverColors.colors?.isDark === false
-                  ? 'rgba(0,0,0,0.04)'
-                  : 'var(--color-surface-elevated)',
-                border: `1px solid ${
-                  coverColors.colors?.isDark === false
-                    ? 'rgba(0,0,0,0.1)'
-                    : 'var(--color-border-subtle)'
-                }`,
-                cursor: 'pointer',
-                color: getSecondaryTextColor(coverColors.colors, 'var(--color-text-secondary)'),
-                fontSize: 14,
-                fontWeight: 600,
-                transition: 'all 0.35s cubic-bezier(0.4, 0, 0.2, 1)',
-                opacity: isCompactCTA ? 0 : 1,
-                transform: isCompactCTA ? 'scale(0.85)' : 'scale(1)',
-                pointerEvents: isCompactCTA ? 'none' : 'auto',
-                position: isCompactCTA ? 'absolute' : 'relative',
-              }}
-              onMouseEnter={(e) => {
-                if (coverColors.colors?.isDark === false) {
-                  e.currentTarget.style.background = 'rgba(0,0,0,0.08)';
-                  e.currentTarget.style.color = '#111';
-                } else {
-                  e.currentTarget.style.background = 'var(--color-surface-hover)';
-                  e.currentTarget.style.color = 'var(--color-text-primary)';
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (coverColors.colors?.isDark === false) {
-                  e.currentTarget.style.background = 'rgba(0,0,0,0.04)';
-                  e.currentTarget.style.color = 'rgba(0,0,0,0.6)';
-                } else {
-                  e.currentTarget.style.background = 'var(--color-surface-elevated)';
-                  e.currentTarget.style.color = 'var(--color-text-secondary)';
-                }
-              }}
-            >
-              <Share2 size={18} />
-              Partager
-            </button>
+            )}
             <button
               onClick={() => setShareModalVisible(true)}
               title="Partager"
               style={{
-                width: 40,
-                height: 40,
+                width: 36, height: 36,
                 borderRadius: 'var(--radius-full)',
                 border: '1px solid var(--color-border-subtle)',
                 background: 'var(--color-surface-elevated)',
                 cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
                 color: 'var(--color-text-secondary)',
-                transition: 'all 0.35s cubic-bezier(0.4, 0, 0.2, 1)',
-                opacity: isCompactCTA ? 1 : 0,
-                transform: isCompactCTA ? 'scale(1)' : 'scale(0.85)',
-                pointerEvents: isCompactCTA ? 'auto' : 'none',
-                position: !isCompactCTA ? 'absolute' : 'relative',
+                transition: 'all 0.2s ease',
               }}
               onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-surface-hover)'; e.currentTarget.style.color = 'var(--color-text-primary)'; }}
               onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--color-surface-elevated)'; e.currentTarget.style.color = 'var(--color-text-secondary)'; }}
             >
-              <Share2 size={16} />
+              <Share2 size={15} />
             </button>
           </div>
         </div>
+
+        {/* ── LIGNE 6 : Achat / PassCode (si payant non possédé) ── */}
+        {isPaidNotOwned && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
+            {priceDisplay && (
+              <a
+                href={getPurchaseAlbumUrl(album.id)}
+                target="_blank" rel="noopener noreferrer"
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                  padding: '9px 18px', borderRadius: 'var(--radius-full)',
+                  background: 'linear-gradient(135deg, #FFD700, #FFA500)',
+                  border: 'none', cursor: 'pointer', color: '#000',
+                  fontSize: 13, fontWeight: 800, textDecoration: 'none',
+                  transition: 'all 0.2s ease',
+                  boxShadow: '0 2px 12px rgba(255,215,0,0.25)',
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.03)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
+              >
+                <ShoppingBag size={16} />
+                {preordered ? `Précommander — ${priceDisplay}` : `${priceDisplay}`}
+              </a>
+            )}
+            <button
+              onClick={() => navigate('/activate')}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                padding: '9px 16px', borderRadius: 'var(--radius-full)',
+                background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)',
+                cursor: 'pointer', color: getSecondaryTextColor(coverColors.colors, 'var(--color-text-secondary)'),
+                fontSize: 12, fontWeight: 600, transition: 'all 0.2s ease',
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; }}
+            >
+              <Lock size={13} />
+              J'ai un PassCode
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -750,23 +626,37 @@ export function AlbumDetailScreen() {
 
       {album.description && (
         <div style={{
-          padding: '32px clamp(16px, 3.5vw, 48px) 24px',
+          padding: isMobile ? '24px 16px 20px' : '32px clamp(16px, 3.5vw, 48px) 24px',
           borderBottom: '1px solid var(--color-border-subtle)',
         }}>
-          <h3 style={{
-            color: 'var(--color-text-muted)',
-            fontSize: 12,
-            fontWeight: 700,
-            textTransform: 'uppercase',
-            letterSpacing: '1px',
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
             marginBottom: 10,
           }}>
-            À propos
-          </h3>
+            <div style={{
+              width: 5,
+              height: 5,
+              borderRadius: '50%',
+              backgroundColor: 'var(--color-accent)',
+              flexShrink: 0,
+            }} />
+            <h3 style={{
+              color: 'var(--color-text-muted)',
+              fontSize: 11,
+              fontWeight: 700,
+              textTransform: 'uppercase',
+              letterSpacing: '1.2px',
+              margin: 0,
+            }}>
+              À propos
+            </h3>
+          </div>
           <p style={{
             color: 'var(--color-text-secondary)',
-            fontSize: 15,
-            lineHeight: '24px',
+            fontSize: isMobile ? 14 : 15,
+            lineHeight: isMobile ? '22px' : '24px',
             margin: 0,
             maxWidth: 700,
           }}>
@@ -775,15 +665,15 @@ export function AlbumDetailScreen() {
         </div>
       )}
 
-      <div className="album-tracklist" style={{ padding: isMobile ? '20px 12px 32px' : '28px clamp(14px, 3.5vw, 48px) 40px' }}>
+      <div className="album-tracklist" style={{ padding: isMobile ? '12px 0 32px' : '28px clamp(14px, 3.5vw, 48px) 40px' }}>
         {sortedTracks.length > 0 && (
           <div style={{
             display: 'flex',
             alignItems: 'center',
             gap: isMobile ? 10 : 16,
-            padding: isMobile ? '0 8px 10px' : '0 16px 12px',
+            padding: isMobile ? '0 16px 10px' : '0 16px 12px',
             borderBottom: '1px solid var(--color-border-subtle)',
-            marginBottom: 6,
+            marginBottom: 2,
           }}>
             {!isMobile && (
               <span style={{ width: 28, color: 'var(--color-text-muted)', fontSize: 12, fontWeight: 600, textAlign: 'center' }}>#</span>
@@ -809,6 +699,8 @@ export function AlbumDetailScreen() {
           const isThisPlaying = isCurrent && audio.isPlaying;
           const featResult = hasFeatArtists(track.title) ? parseFeatArtists(track.title) : null;
           const prefetchOnHover = () => {
+            // ⚡ Data saver : pas de prefetch audio sur connexion lente
+            if (networkQuality === 'slow') return;
             if (album.is_free) {
               const directUrl = track.encrypted_audio_url || track.preview_url;
               if (directUrl) {
@@ -830,16 +722,17 @@ export function AlbumDetailScreen() {
               style={{
                 display: 'flex',
                 alignItems: 'center',
-                gap: isMobile ? 8 : 16,
-                padding: isMobile ? '8px 8px' : '10px 16px',
+                gap: isMobile ? 10 : 16,
+                padding: isMobile ? '10px 16px' : '10px 16px',
                 width: '100%',
                 background: isCurrent ? 'var(--color-accent-soft)' : 'transparent',
                 border: 'none',
-                borderRadius: 'var(--radius-sm)',
+                borderRadius: isMobile ? 'var(--radius-sm)' : 'var(--radius-sm)',
                 cursor: canPlay || isPaidNotOwned ? 'pointer' : 'default',
                 textAlign: 'left',
                 opacity: !canPlay && !isPaidNotOwned ? 0.5 : 1,
                 transition: 'background-color var(--transition-fast) ease',
+                borderBottom: isMobile && index < sortedTracks.length - 1 ? '1px solid var(--color-border-subtle)' : 'none',
               }}
               onMouseEnter={(e) => {
                 prefetchOnHover();

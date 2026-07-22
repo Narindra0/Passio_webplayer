@@ -4,6 +4,8 @@ import { Search } from 'lucide-react';
 import { AlbumCard } from '@/components/AlbumCard';
 import { Screen } from '@/components/Screen';
 import { StorageQuotaBar } from '@/components/StorageQuotaBar';
+import { useDebounce } from '@/hooks/useDebounce';
+import { fuzzyMatch } from '@/utils/fuzzySearch';
 import { useLibraryMode } from '@/contexts/LibraryModeContext';
 import { listAlbums } from '@/services/api';
 import { listVaultAlbums } from '@/services/downloadManager';
@@ -19,7 +21,7 @@ export function CatalogScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
-  const [debouncedQuery, setDebouncedQuery] = useState('');
+  const debouncedQuery = useDebounce(query, 250);
   const [displayCount, setDisplayCount] = useState(15);
   const BATCH_SIZE = 15;
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -48,12 +50,6 @@ export function CatalogScreen() {
       }));
     } catch { /* QuotaExceededError — ignore */ }
   }
-
-  // ✨ Debounce la recherche (250ms) pour éviter les re-renders à chaque frappe
-  useEffect(() => {
-    const timer = setTimeout(() => setDebouncedQuery(query), 250);
-    return () => clearTimeout(timer);
-  }, [query]);
 
   // Reset infinite scroll when search changes
   useEffect(() => { setDisplayCount(15); }, [debouncedQuery]);
@@ -113,12 +109,13 @@ export function CatalogScreen() {
   useEffect(() => { void loadAlbums(); }, [loadAlbums]);
 
   const filteredAlbums = useMemo(() => {
-    const search = debouncedQuery.trim().toLowerCase();
-    return albums.filter((album) => {
-      const title = String(album.title || '').toLowerCase();
-      const artist = String(album.artist_name || album.artist?.name || '').toLowerCase();
-      return !search || title.includes(search) || artist.includes(search);
-    });
+    const search = debouncedQuery.trim();
+    if (!search) return albums;
+    return albums.filter((album) =>
+      fuzzyMatch(search, album.title || '') ||
+      fuzzyMatch(search, album.artist_name || '') ||
+      fuzzyMatch(search, album.artist?.name || ''),
+    );
   }, [albums, debouncedQuery]);
 
   // Infinite scroll IntersectionObserver (placed after filteredAlbums declaration)
@@ -199,6 +196,7 @@ export function CatalogScreen() {
                 variant="tile"
                 isOffline={album.isOffline}
                 onPress={() => navigate(`/album/${album.id}`)}
+                disableDataSaver
               />
             </div>
           ))}

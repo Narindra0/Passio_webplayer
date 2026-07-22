@@ -2,6 +2,22 @@ import { getColor, getPalette, getSwatches } from 'colorthief';
 
 const colorCache = new Map<string, ExtractedColors>();
 
+/**
+ * Charge une image en mémoire pour l'extraction des couleurs.
+ * ⚡ Cloudinary n'est plus utilisé — les URLs sont déjà converties
+ *    en ImageKit avant d'arriver ici (via getOptimizedImageUrl).
+ *    Plus de fallback vers Cloudinary pour éviter les erreurs 401.
+ */
+function loadImage(imageUrl: string): Promise<HTMLImageElement> {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.crossOrigin = 'anonymous';
+    image.src = imageUrl;
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error(`Failed to load image: ${imageUrl}`));
+  });
+}
+
 export interface ExtractedColors {
   dominant: string;       // hex — main color
   vibrant: string;        // hex — vibrant variant
@@ -108,14 +124,8 @@ export async function extractColorsFromImageUrl(imageUrl: string): Promise<Extra
   if (cached) return cached;
 
   try {
-    // Load image into an HTMLImageElement
-    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-      const image = new Image();
-      image.crossOrigin = 'anonymous';
-      image.src = imageUrl;
-      image.onload = () => resolve(image);
-      image.onerror = () => reject(new Error(`Failed to load image: ${imageUrl}`));
-    });
+    // Charger l'image (URL déjà convertie en ImageKit par getOptimizedImageUrl)
+    const img = await loadImage(imageUrl);
 
     // Get dominant color
     const dominantColor = await getColor(img);

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAudioPlayback, useAudioProgress } from '@/contexts/AudioContext';
 import { useLibraryMode } from '@/contexts/LibraryModeContext';
+import { useCachedImage } from '@/hooks/useCachedImage';
+import { getOptimizedImageUrl } from '@/utils/imageUtils';
 import { listVaultAlbums } from '@/services/downloadManager';
 import { resolveOfflinePlayback } from '@/services/offlineAccess';
 import type { PublicAlbumDetails, PublicAlbumSummary, PublicTrack } from '@/types/backend';
@@ -22,6 +24,43 @@ function formatDuration(seconds: number | null | undefined): string {
 const slideUpStyle: React.CSSProperties = {
   animation: 'slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
 };
+
+// ── Sous-composant image avec cache + optimisation ──
+
+function OfflineCoverImage({ coverUrl, alt }: { coverUrl?: string | null; alt: string }) {
+  const cachedCover = useCachedImage(coverUrl);
+  return (
+    <div
+      style={{
+        width: '100%',
+        height: '100%',
+        borderRadius: 'var(--radius-sm)',
+        overflow: 'hidden',
+        backgroundColor: 'var(--color-bg-dark)',
+      }}
+    >
+      {coverUrl ? (
+        <img
+          src={getOptimizedImageUrl(cachedCover || coverUrl)}
+          alt={alt}
+          loading="lazy"
+          decoding="async"
+          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+        />
+      ) : (
+        <div
+          style={{
+            width: '100%', height: '100%',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            color: 'var(--color-text-muted)', fontSize: 32,
+          }}
+        >
+          ♪
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function OfflinePlayer() {
   const { toggleMode } = useLibraryMode();
@@ -308,25 +347,7 @@ export function OfflinePlayer() {
                       boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
                     }}
                   >
-                    {selectedAlbum.details.cover_url ? (
-                      <img
-                        src={selectedAlbum.details.cover_url}
-                        alt=""
-                        loading="lazy"
-                        decoding="async"
-                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                      />
-                    ) : (
-                      <div
-                        style={{
-                          width: '100%', height: '100%',
-                          display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          color: 'var(--color-text-muted)', fontSize: 32,
-                        }}
-                      >
-                        ♪
-                      </div>
-                    )}
+                    <OfflineCoverImage coverUrl={selectedAlbum.details.cover_url} alt="" />
                   </div>
 
                   {/* Infos */}
@@ -701,25 +722,7 @@ export function OfflinePlayer() {
                           boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
                         }}
                       >
-                        {album.cover_url ? (
-                          <img
-                            src={album.cover_url}
-                            alt=""
-                            loading="lazy"
-                            decoding="async"
-                            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                          />
-                        ) : (
-                          <div
-                            style={{
-                              width: '100%', height: '100%',
-                              display: 'flex', alignItems: 'center', justifyContent: 'center',
-                              color: 'var(--color-text-muted)', fontSize: 22,
-                            }}
-                          >
-                            ♪
-                          </div>
-                        )}
+                        <OfflineCoverImage coverUrl={album.cover_url} alt="" />
 
                         {/* Indicateur "en cours" */}
                         {isAlbumPlaying && (
@@ -871,11 +874,7 @@ export function OfflinePlayer() {
             }}
           >
             {audio.album?.cover_url ? (
-              <img
-                src={audio.album.cover_url}
-                alt=""
-                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-              />
+              <OfflineCoverImage coverUrl={audio.album.cover_url} alt="" />
             ) : (
               <div
                 style={{

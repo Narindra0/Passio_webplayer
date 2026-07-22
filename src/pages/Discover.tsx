@@ -17,6 +17,7 @@ import { freeCatalogDetailsMap, readFreeCatalogCache, writeFreeCatalogCache, sta
 import { buildArtistsFromAlbums, mapTracksFromAlbum } from '@/services/freeCatalogSearch';
 import { resolveOfflinePlayback } from '@/services/offlineAccess';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
+import { getOptimizedImageUrl, isValidProfilePicture } from '@/utils/imageUtils';
 
 import { getTopArtists, readListeningHistory } from '@/services/listeningHistory';
 import { hasFeatArtists, parseFeatArtists, normalizeArtistName } from '@/utils/featArtists';
@@ -105,7 +106,7 @@ export function DiscoverScreen() {
   const ALBUM_DISPLAY_COUNT = isNarrowLayout ? 8 : 10;
   const ALBUM_GRID_COLUMNS = isNarrowLayout ? 4 : 5;
   const PREMIUM_DISPLAY_COUNT = isNarrowLayout ? 3 : 4;
-  const TRACK_DISPLAY_COUNT = isNarrowLayout ? 16 : 20;
+  const TRACK_DISPLAY_COUNT = isNarrowLayout ? 60 : 120;
   const TRACK_GRID_COLUMNS = isNarrowLayout ? 1 : 2;
 
   // Auto-advance banners
@@ -515,7 +516,7 @@ export function DiscoverScreen() {
   const artistPhotoMap = useMemo(() => {
     const map = new Map<string, string>();
     for (const a of artists) {
-      const url = a.profile_picture_url || a.fallback_image_url;
+      const url = (isValidProfilePicture(a.profile_picture_url) ? a.profile_picture_url : a.fallback_image_url);
       if (url) map.set(a.id, url);
     }
     return map;
@@ -859,7 +860,7 @@ export function DiscoverScreen() {
                       {/* Background Image */}
                       <div style={{ position: 'absolute', inset: 0 }}>
                         <img
-                          src={album.cover_url || ''}
+                          src={getOptimizedImageUrl(album.cover_url || '')}
                           alt={album.title}
                           loading="lazy"
                           decoding="async"
@@ -1133,6 +1134,7 @@ export function DiscoverScreen() {
                     album={album}
                     isOwned={ownedMap.get(album.id) ?? false}
                     onPress={() => navigate(`/album/${album.id}`)}
+                    disableDataSaver
                   />
                 ))}
               </div>
@@ -1261,6 +1263,7 @@ export function DiscoverScreen() {
                     album={album}
                     variant="tile"
                     onPress={() => navigate(`/album/${album.id}`)}
+                    disableDataSaver
                   />
                 ))}
               </div>
@@ -1816,6 +1819,7 @@ export function DiscoverScreen() {
                               title="Nouveautés"
                               icon={<Music size={14} color="var(--color-accent)" />}
                               albums={recommendedAlbums}
+                              disableDataSaver
                               cardWidth={150}
                               maxItems={8}
                               footerLink={{ label: 'Tout voir', to: '/catalog' }}
@@ -1879,6 +1883,7 @@ export function DiscoverScreen() {
                               title="Premium"
                               icon={<Crown size={14} color="#FFD700" />}
                               albums={sortedPaidAlbums.slice(0, 6)}
+                              disableDataSaver
                               cardWidth={150}
                               maxItems={4}
                               accentColor="#FFD700"
@@ -1906,6 +1911,7 @@ export function DiscoverScreen() {
                                 status: 'published' as const,
                               }))}
                               cardWidth={150}
+                              disableDataSaver
                               maxItems={4}
                               iconBg="var(--color-accent-gradient)"
                               onAlbumPress={(id) => navigate(`/album/${id}`)}
@@ -1975,6 +1981,7 @@ export function DiscoverScreen() {
                               title="Collaborations"
                               icon={<Sparkles size={14} color="rgba(139,92,246,0.9)" />}
                               albums={recommendedFeatAlbums}
+                              disableDataSaver
                               accentColor="rgba(139,92,246,0.6)"
                               iconBg="linear-gradient(135deg, rgba(139,92,246,0.3), rgba(139,92,246,0.1))"
                               cardWidth={150}
@@ -2022,6 +2029,7 @@ export function DiscoverScreen() {
                           title="Vos albums fétiches"
                           icon={<Disc size={14} color="var(--color-accent)" />}
                           albums={persoAlbumsByPlays}
+                          disableDataSaver
                           cardWidth={150}
                           maxItems={6}
                           onAlbumPress={(id) => navigate(`/album/${id}`)}
@@ -2038,6 +2046,7 @@ export function DiscoverScreen() {
                           title="Tendances"
                           icon={<Sparkles size={14} color="#fff" />}
                           albums={trendingAlbums}
+                          disableDataSaver
                           accentColor="#7C3AED"
                           iconBg="linear-gradient(135deg, #7C3AED, #A855F7)"
                           badgeColor="#A855F7"
@@ -2319,7 +2328,7 @@ export function DiscoverScreen() {
                               }}>
                                 {photoUrl ? (
                                   <img
-                                    src={photoUrl}
+                                    src={getOptimizedImageUrl(photoUrl)}
                                     alt={artist.artistName}
                                     loading="lazy"
                                     decoding="async"
@@ -2410,6 +2419,7 @@ export function DiscoverScreen() {
                           title="Suggestions"
                           icon={<Sparkles size={14} color="var(--color-accent)" />}
                           albums={randomSuggestions}
+                          disableDataSaver
                           cardWidth={150}
                           maxItems={6}
                           onAlbumPress={(id) => navigate(`/album/${id}`)}

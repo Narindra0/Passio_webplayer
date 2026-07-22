@@ -10,18 +10,24 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { getCachedImageUrl } from '@/services/imageCache';
+import { getOptimizedImageUrl } from '@/utils/imageUtils';
 
 /**
  * Hook qui retourne une URL d'image optimisée via le cache IndexedDB.
  *
  * @param imageUrl - L'URL distante de l'image (ou null/undefined)
  * @returns L'URL à utiliser comme src (blob URL locale ou URL distante en fallback)
+ *
+ * ⚡ L'URL est automatiquement optimisée (proxy wsrv.nl pour Cloudinary)
+ *    pour éviter les erreurs 401 sur les accès directs à Cloudinary.
  */
 export function useCachedImage(
   imageUrl: string | null | undefined,
 ): string | null | undefined {
+  // Appliquer l'optimisation (wsrv.nl, etc.) dès le départ
+  const optimizedUrl = imageUrl ? getOptimizedImageUrl(imageUrl) : undefined;
   const [cachedUrl, setCachedUrl] = useState<string | null | undefined>(
-    imageUrl || undefined,
+    optimizedUrl,
   );
   const abortRef = useRef<AbortController | null>(null);
   const objectUrlsRef = useRef<string[]>([]);
@@ -40,8 +46,8 @@ export function useCachedImage(
     const abortController = new AbortController();
     abortRef.current = abortController;
 
-    // Afficher l'URL distante immédiatement pendant le chargement
-    setCachedUrl(imageUrl);
+    // Afficher l'URL optimisée (wsrv.nl) immédiatement pendant le chargement
+    setCachedUrl(getOptimizedImageUrl(imageUrl));
 
     let cancelled = false;
 
@@ -64,7 +70,7 @@ export function useCachedImage(
         }
       } catch {
         if (!cancelled) {
-          setCachedUrl(imageUrl); // fallback
+          setCachedUrl(getOptimizedImageUrl(imageUrl)); // fallback optimisé
         }
       }
     }

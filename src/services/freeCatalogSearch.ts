@@ -2,6 +2,8 @@ import type { PublicAlbumDetails, PublicAlbumSummary } from '@/types/backend';
 import type { TrackWithAlbum } from '@/components/TrackListItem';
 import { freeCatalogDetailsMap, readFreeCatalogCache, type FreeCatalogCache } from '@/services/freeCatalogCache';
 import { isAlbumReadyOffline } from '@/services/downloadManager';
+import { fuzzyMatch } from '@/utils/fuzzySearch';
+import { isValidProfilePicture } from '@/utils/imageUtils';
 
 export function mapTracksFromAlbum(album: PublicAlbumSummary, albumDetails: PublicAlbumDetails): TrackWithAlbum[] {
   return albumDetails.tracks.map((track) => ({
@@ -23,20 +25,38 @@ export function mapTracksFromAlbum(album: PublicAlbumSummary, albumDetails: Publ
 }
 
 export function buildArtistsFromAlbums(albums: PublicAlbumSummary[]) {
-  const artistsMap = new Map<string, { id: string; name: string; profile_picture_url?: string | null; fallback_image_url?: string | null }>();
-  albums.forEach((album) => {
+  const artistsMap = new Map<string, {
+    id: string;
+    name: string;
+    profile_picture_url?: string | null;
+    fallback_image_url?: string | null;
+  }>();
+
+  for (const album of albums) {
     if (album.artist && album.status === 'published') {
       const artistId = album.artist.id || album.artist_name || album.id;
-      if (!artistsMap.has(artistId)) {
+      
+      if (artistsMap.has(artistId)) {
+        // ⚡ Artiste déjà créé : mettre à jour le fallback si on trouve une meilleure cover
+        const existing = artistsMap.get(artistId)!;
+        if (!existing.fallback_image_url && album.cover_url) {
+          existing.fallback_image_url = album.cover_url;
+        }
+        const rawProfileUrl = album.artist.profile_picture_url || album.artist_pdp;
+        if (!existing.profile_picture_url && rawProfileUrl && isValidProfilePicture(rawProfileUrl)) {
+          existing.profile_picture_url = rawProfileUrl;
+        }
+      } else {
+        const rawUrl = album.artist.profile_picture_url || album.artist_pdp;
         artistsMap.set(artistId, {
           id: artistId,
           name: album.artist.name || album.artist_name || 'Artiste inconnu',
-          profile_picture_url: album.artist.profile_picture_url || album.artist_pdp,
+          profile_picture_url: isValidProfilePicture(rawUrl) ? rawUrl : null,
           fallback_image_url: album.cover_url,
         });
       }
     }
-  });
+  }
   return Array.from(artistsMap.values());
 }
 
@@ -60,23 +80,31 @@ export type FreeCatalogSearchResults = {
   detailsMap: Map<string, PublicAlbumDetails>;
 };
 
+/**
+ * Récupère les albums du cache qui sont prêts offline.
+ * BATCH : utilise Promise.all pour paralléliser les vérifications isAlbumReadyOffline.
+ */
+export async function filterOfflineAlbums(albums: PublicAlbumSummary[]): Promise<PublicAlbumSummary[]> {
+  const readyFlags = await Promise.all(
+    albums.map((album) => isAlbumReadyOffline(album.id)),
+  );
+  return albums.filter((_, i) => readyFlags[i]);
+}
+
 export async function searchFreeCatalogCache(query: string): Promise<FreeCatalogSearchResults | null> {
   const cache = await readFreeCatalogCache();
   if (!cache) return null;
 
-  const offlineAlbums: PublicAlbumSummary[] = [];
-  for (const album of cache.albums) {
-    const ready = await isAlbumReadyOffline(album.id);
-    if (ready) offlineAlbums.push(album);
-  }
+  // ⚡ BATCH : toutes les vérifications offline en parallèle
+  const offlineAlbums = await filterOfflineAlbums(cache.albums);
 
-  const queryLower = query.trim().toLowerCase();
-  if (!queryLower) return { tracks: [], albums: [], artists: [], detailsMap: freeCatalogDetailsMap(cache) };
+  const trimQuery = query.trim();
+  if (!trimQuery) return { tracks: [], albums: [], artists: [], detailsMap: freeCatalogDetailsMap(cache) };
 
   const detailsMap = freeCatalogDetailsMap(cache);
-  const filteredAlbums = offlineAlbums.filter((album) => album.title?.toLowerCase().includes(queryLower) || album.artist_name?.toLowerCase().includes(queryLower));
-  const tracks = buildTracksFromCache(filteredAlbums, detailsMap).filter((track) => track.title.toLowerCase().includes(queryLower));
-  const artists = buildArtistsFromAlbums(offlineAlbums).filter((artist) => artist.name.toLowerCase().includes(queryLower));
+  const filteredAlbums = offlineAlbums.filter((album) => fuzzyMatch(trimQuery, album.title || '') || fuzzyMatch(trimQuery, album.artist_name || ''));
+  const tracks = buildTracksFromCache(filteredAlbums, detailsMap).filter((track) => fuzzyMatch(trimQuery, track.title));
+  const artists = buildArtistsFromAlbums(offlineAlbums).filter((artist) => fuzzyMatch(trimQuery, artist.name));
 
   return { tracks, albums: filteredAlbums, artists, detailsMap };
 }
@@ -91,11 +119,8 @@ export async function loadArtistFromFreeCatalogCache(artistId: string): Promise<
   const cache = await readFreeCatalogCache();
   if (!cache) return null;
 
-  const offlineAlbums: PublicAlbumSummary[] = [];
-  for (const album of cache.albums) {
-    const ready = await isAlbumReadyOffline(album.id);
-    if (ready) offlineAlbums.push(album);
-  }
+  // ⚡ BATCH : toutes les vérifications offline en parallèle
+  const offlineAlbums = await filterOfflineAlbums(cache.albums);
 
   const artistAlbums = offlineAlbums.filter((album) => album.artist?.id === artistId || album.artist_name === artistId || album.id === artistId);
   if (artistAlbums.length === 0) return null;
@@ -109,6 +134,10 @@ export async function loadArtistFromFreeCatalogCache(artistId: string): Promise<
     topTracks: tracks.slice(0, 5),
     detailsMap,
     artistName: first.artist?.name || first.artist_name || 'Artiste inconnu',
-    profilePicture: first.artist?.profile_picture_url || first.artist_pdp || first.cover_url || null,
+    profilePicture:
+      (isValidProfilePicture(first.artist?.profile_picture_url) ? first.artist?.profile_picture_url : null) ||
+      (isValidProfilePicture(first.artist_pdp) ? first.artist_pdp : null) ||
+      first.cover_url ||
+      null,
   };
 }

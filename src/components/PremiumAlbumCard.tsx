@@ -1,3 +1,4 @@
+import React from 'react';
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ShoppingBag, CheckCircle, Clock, Sparkles, Music } from 'lucide-react';
@@ -5,6 +6,8 @@ import { formatTitle } from '@/utils/formatTitle';
 import { isPreorder } from '@/utils/preorder';
 import { useAlbumColors } from '@/hooks/useAlbumColors';
 import { useCachedImage } from '@/hooks/useCachedImage';
+import { getOptimizedImageUrl } from '@/utils/imageUtils';
+import { useNetworkQuality } from '@/hooks/useNetworkQuality';
 import { getPurchaseAlbumUrl } from '@/config/urls';
 import type { PublicAlbumSummary } from '@/types/backend';
 import {
@@ -17,12 +20,19 @@ interface PremiumAlbumCardProps {
   album: PublicAlbumSummary;
   isOwned?: boolean;
   onPress?: () => void;
+  /**
+   * Si true, désactive le mode data-saver pour cette carte.
+   */
+  disableDataSaver?: boolean;
 }
 
-export function PremiumAlbumCard({ album, isOwned = false, onPress }: PremiumAlbumCardProps) {
+export const PremiumAlbumCard = React.memo(function PremiumAlbumCard({ album, isOwned = false, onPress, disableDataSaver = false }: PremiumAlbumCardProps) {
   const navigate = useNavigate();
-  const coverColors = useAlbumColors(album.cover_url);
-  const cachedCover = useCachedImage(album.cover_url);
+  const networkQuality = useNetworkQuality();
+  const isDataSaver = disableDataSaver ? false : networkQuality === 'slow';
+  // ⚡ Data saver : pas d'extraction de couleurs ni de cache image
+  const coverColors = useAlbumColors(isDataSaver ? null : album.cover_url);
+  const cachedCover = useCachedImage(isDataSaver ? null : album.cover_url);
   const [isHovered, setIsHovered] = useState(false);
 
   const preordered = isPreorder(album.publication_date);
@@ -185,15 +195,8 @@ export function PremiumAlbumCard({ album, isOwned = false, onPress }: PremiumAlb
             transform: isHovered ? 'scale(1.04)' : 'scale(1)',
           }}
         >
-          {album.cover_url ? (
-            <img
-              src={cachedCover || album.cover_url}
-              alt={album.title}
-              loading="lazy"
-              decoding="async"
-              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-            />
-          ) : (
+          {isDataSaver || !album.cover_url ? (
+            // ⚡ Data saver ou pas de cover : icône placeholdere
             <div style={{
               width: '100%', height: '100%',
               background: 'var(--color-surface-elevated)',
@@ -201,6 +204,14 @@ export function PremiumAlbumCard({ album, isOwned = false, onPress }: PremiumAlb
             }}>
               <Music size={32} color="var(--color-text-muted)" />
             </div>
+          ) : (
+            <img
+              src={getOptimizedImageUrl(cachedCover || album.cover_url)}
+              alt={album.title}
+              loading="lazy"
+              decoding="async"
+              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+            />
           )}
         </div>
 
@@ -323,4 +334,4 @@ export function PremiumAlbumCard({ album, isOwned = false, onPress }: PremiumAlb
       </div>
     </div>
   );
-}
+});

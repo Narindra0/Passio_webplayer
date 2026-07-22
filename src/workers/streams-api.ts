@@ -27,6 +27,14 @@ interface Env {
   ANALYTICS_DB: D1Database;
   /** Binding automatique CF pour servir les assets statiques. */
   ASSETS: { fetch: (request: Request) => Promise<Response> };
+
+  // ── ImageKit (mirror d'images) ──
+  /** Clé privée ImageKit (secret, défini via `wrangler secret put IMAGEKIT_PRIVATE_KEY`). */
+  IMAGEKIT_PRIVATE_KEY?: string;
+  /** ID du compte ImageKit (dans l'URL : ik.imagekit.io/{ID}/...). */
+  IMAGEKIT_ID?: string;
+  /** Clé API partagée pour sécuriser l'endpoint /api/v1/images/mirror (secret). */
+  IMAGEKIT_API_KEY?: string;
 }
 
 // ─── Constantes ───────────────────────────────────────────────────────────
@@ -43,7 +51,7 @@ const K = {
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, x-passio-device-id, x-passio-consent',
+  'Access-Control-Allow-Headers': 'Content-Type, x-passio-device-id, x-passio-consent, x-passio-api-key',
   'Access-Control-Max-Age': '86400',
 };
 
@@ -485,6 +493,159 @@ async function getOrCreateSession(db: D1Database, deviceId: string): Promise<str
   return sessionId;
 }
 
+// ─── ImageKit : Mirror distant vers stockage permanent ────────────────────
+
+/**
+ * POST /api/v1/images/mirror
+ * Copie une image distante (Cloudinary, etc.) vers le stockage permanent ImageKit
+ * en utilisant l'Upload API d'ImageKit avec une URL distante comme source.
+ *
+ * Body: {
+ *   sourceUrl: string;    // URL de l'image source (ex: res.cloudinary.com/...)
+ *   fileName?: string;    // Nom de fichier (optionnel, auto-détecté)
+ *   folder?: string;      // Dossier de destination (défaut: /covers)
+ *   useWsrv?: boolean;    // Forcer le proxy wsrv.nl (défaut: true)
+ * }
+ *
+ * 🔐 Requiert les secrets IMAGEKIT_PRIVATE_KEY et IMAGEKIT_ID configurés
+ *    dans le Worker via `wrangler secret put`.
+ *
+ * @returns { fileId, imagekitUrl, imagekitPath, width, height }
+ */
+async function handleImageMirror(req: Request, env: Env): Promise<Response> {
+  // ── 1. Vérifier les credentials ImageKit ──
+  if (!env.IMAGEKIT_PRIVATE_KEY || !env.IMAGEKIT_ID) {
+    return err('ImageKit credentials not configured. Set IMAGEKIT_PRIVATE_KEY and IMAGEKIT_ID via wrangler secret put.', 500);
+  }
+
+  // ── 2. Authentification par API key partagée ──
+  const apiKey = req.headers.get('x-passio-api-key');
+  if (!apiKey || (env.IMAGEKIT_API_KEY && apiKey !== env.IMAGEKIT_API_KEY)) {
+    return err('Unauthorized: missing or invalid x-passio-api-key', 401);
+  }
+
+  // ── 3. Parse le body ──
+  let body: { sourceUrl?: string; fileName?: string; folder?: string };
+  try {
+    body = await req.json();
+  } catch {
+    return err('Invalid JSON body');
+  }
+
+  const { sourceUrl, fileName, folder } = body;
+  if (!sourceUrl || typeof sourceUrl !== 'string') {
+    return err('Missing or invalid sourceUrl');
+  }
+
+  // Valider le format de l'URL source
+  try {
+    new URL(sourceUrl);
+  } catch {
+    return err('Invalid sourceUrl format');
+  }
+
+  // ── 4. Déduplication via KV ──
+  // Hash SHA-256 de l'URL source pour clé de déduplication
+  const hashBuffer = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(sourceUrl),
+  );
+  const sourceHash = Array.from(new Uint8Array(hashBuffer))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('')
+    .slice(0, 32); // 32 premiers caractères suffisent
+  const mirrorKey = `img:mirror:${sourceHash}`;
+
+  const existing = await env.STREAMS_KV.get(mirrorKey);
+  if (existing) {
+    return json({
+      success: true,
+      imagekitUrl: existing,
+      imagekitPath: existing.replace(`https://ik.imagekit.io/${env.IMAGEKIT_ID}`, ''),
+      cached: true,
+    });
+  }
+
+  // ── 5. Proxifier via wsrv.nl si Cloudinary ──
+  // On sait que wsrv.nl peut accéder à Cloudinary sans 401.
+  let uploadUrl = sourceUrl;
+  if (sourceUrl.includes('res.cloudinary.com')) {
+    const cleanUrl = sourceUrl.replace(/^https?:\/\//, '');
+    uploadUrl = `https://wsrv.nl/?url=${encodeURIComponent(cleanUrl)}&output=webp`;
+  }
+
+  // ── 6. Déterminer le nom de fichier ──
+  const autoFileName = fileName
+    || sourceUrl.split('/').pop()?.split('?')[0]
+    || `image-${Date.now()}.jpg`;
+  const targetFolder = folder || '/covers';
+
+  // ── 7. Upload vers ImageKit (avec timeout 30s) ──
+  const auth = btoa(`${env.IMAGEKIT_PRIVATE_KEY}:`);
+
+  const uploadPayload = new FormData();
+  uploadPayload.append('file', uploadUrl);
+  uploadPayload.append('fileName', autoFileName);
+  uploadPayload.append('useUniqueFileName', 'true');
+  uploadPayload.append('folder', targetFolder);
+  uploadPayload.append('tags', 'passio,mirrored');
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+
+  let response: Response;
+  try {
+    response = await fetch('https://upload.imagekit.io/api/v1/files/upload', {
+      method: 'POST',
+      headers: { 'Authorization': `Basic ${auth}` },
+      body: uploadPayload,
+      signal: controller.signal,
+    });
+  } catch (err) {
+    clearTimeout(timeout);
+    return json({
+      success: false,
+      error: `ImageKit upload failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
+    }, 502);
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    return json({
+      success: false,
+      error: `ImageKit upload failed: ${response.status}`,
+      details: errorBody,
+    }, response.status);
+  }
+
+  const result = await response.json() as {
+    fileId: string;
+    name: string;
+    url: string;
+    thumbnail: string;
+    height: number;
+    width: number;
+    size: number;
+    filePath: string;
+  };
+
+  // ── 8. Stocker le mapping dans KV (365 jours) ──
+  await env.STREAMS_KV.put(mirrorKey, result.url, { expirationTtl: 86_400 * 365 });
+
+  return json({
+    success: true,
+    imagekitUrl: result.url,
+    imagekitPath: result.filePath,
+    fileId: result.fileId,
+    width: result.width,
+    height: result.height,
+    size: result.size,
+    cached: false,
+  }, 201);
+}
+
 // ─── Cron : purge journalière ─────────────────────────────────────────────
 
 async function handleScheduledPurge(env: Env): Promise<void> {
@@ -548,6 +709,11 @@ export default {
     }
     if (method === 'GET' && path.startsWith('/api/v1/streams/count/')) {
       return handleGetCount(request, env);
+    }
+
+    // ── ImageKit Mirror ──
+    if (method === 'POST' && path === '/api/v1/images/mirror') {
+      return handleImageMirror(request, env);
     }
 
     // ── Fallback : assets statiques (SPA) ──

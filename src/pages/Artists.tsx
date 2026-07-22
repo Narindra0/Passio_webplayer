@@ -172,6 +172,7 @@ export function ArtistsScreen() {
                 <ArtistCard
                   artist={artist}
                   onPress={() => navigate(`/artist/${artist.id}`)}
+                  disableDataSaver
                 />
                 {playCount > 0 && (
                   <div style={{

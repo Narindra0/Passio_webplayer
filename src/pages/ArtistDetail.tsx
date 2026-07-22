@@ -12,6 +12,7 @@ import { getAlbum, listAlbums, unwrapAlbumDetails } from '@/services/api';
 import { resolveOfflinePlayback } from '@/services/offlineAccess';
 import { loadArtistFromFreeCatalogCache } from '@/services/freeCatalogSearch';
 import { useCachedImage } from '@/hooks/useCachedImage';
+import { getOptimizedImageUrl, isValidProfilePicture } from '@/utils/imageUtils';
 import { isAlbumOwnedByDevice } from '@/services/albumOwnership';
 import { hasFeatArtists, parseFeatArtists, normalizeArtistName } from '@/utils/featArtists';
 import { formatTitle } from '@/utils/formatTitle';
@@ -81,7 +82,12 @@ export function ArtistDetailScreen() {
           const first = artistAlbums[0];
           const name = first.artist?.name || first.artist_name || 'Artiste inconnu';
           setArtistName(name);
-          setProfilePicture(first.artist?.profile_picture_url || first.artist_pdp || first.cover_url || null);
+          setProfilePicture(
+            (isValidProfilePicture(first.artist?.profile_picture_url) ? first.artist?.profile_picture_url : null) ||
+            (isValidProfilePicture(first.artist_pdp) ? first.artist_pdp : null) ||
+            first.cover_url ||
+            null
+          );
 
           const normalizedName = normalizeArtistName(name);
 
@@ -202,7 +208,11 @@ export function ArtistDetailScreen() {
           // ⚡ Mettre en cache pour les revisites instantanées
           setCachedArtistData(artistId!, {
             artistName: name,
-            profilePicture: first.artist?.profile_picture_url || first.artist_pdp || first.cover_url || null,
+            profilePicture:
+              (isValidProfilePicture(first.artist?.profile_picture_url) ? first.artist?.profile_picture_url : null) ||
+              (isValidProfilePicture(first.artist_pdp) ? first.artist_pdp : null) ||
+              first.cover_url ||
+              null,
             albums: artistAlbums,
             ownedMap: ownership,
             collabAlbums: foundAlbums,
@@ -263,6 +273,7 @@ export function ArtistDetailScreen() {
         variant="tile"
         premiumLabel={premiumLabel}
         releaseTypeLabel={getReleaseTypeLabel(album)}
+        disableDataSaver={true}
         onPress={() => navigate(`/album/${album.id}`)}
       />
     );
@@ -317,6 +328,17 @@ export function ArtistDetailScreen() {
     if (premiumCount > 0) parts.push(`${premiumCount} premium`);
     return parts.join(' · ');
   }, [discographyItems]);
+
+  // ⚡ Compte total des pistes (pas seulement les 5 premières)
+  const totalTrackCount = useMemo(() => {
+    const cache = albumCacheRef.current;
+    let total = 0;
+    for (const album of albums) {
+      const details = cache.get(album.id);
+      if (details?.tracks) total += details.tracks.length;
+    }
+    return total;
+  }, [albums]);
 
   const canPlayAny = tracksWithPaidFlag.some((t) => t._canPlay);
   const priceAlbums = albums.filter((a) => !a.is_free && a.price_ariary > 0);
@@ -390,7 +412,7 @@ export function ArtistDetailScreen() {
             zIndex: 0,
           }}>
             <img
-              src={cachedProfile || profilePicture}
+              src={getOptimizedImageUrl(cachedProfile || profilePicture)}
               alt=""
               loading="lazy"
               decoding="async"
@@ -429,7 +451,7 @@ export function ArtistDetailScreen() {
               }}
           >
             {profilePicture ? (
-              <img src={cachedProfile || profilePicture} alt={artistName} loading="lazy" decoding="async" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              <img src={getOptimizedImageUrl(cachedProfile || profilePicture)} alt={artistName} loading="lazy" decoding="async" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
             ) : (
               <div style={{
                 width: '100%', height: '100%',
@@ -496,7 +518,7 @@ export function ArtistDetailScreen() {
                       fontWeight: 500,
                       opacity: 0.7,
                     }}>
-                      {tracksWithPaidFlag.length} titre{tracksWithPaidFlag.length > 1 ? 's' : ''}
+                      {totalTrackCount || tracksWithPaidFlag.length} titre{(totalTrackCount || tracksWithPaidFlag.length) > 1 ? 's' : ''}
                     </span>
                   )}
 
@@ -558,7 +580,7 @@ export function ArtistDetailScreen() {
                     <>
                       <span style={{ color: getMutedTextColor(profileColors.colors, 'var(--color-text-muted)'), fontSize: 12 }}>·</span>
                       <span style={{ color: getSecondaryTextColor(profileColors.colors, 'var(--color-text-secondary)'), fontSize: 14, fontWeight: 500 }}>
-                        {topTracks.length} titre{topTracks.length > 1 ? 's' : ''}
+                        {totalTrackCount || topTracks.length} titre{(totalTrackCount || topTracks.length) > 1 ? 's' : ''}
                       </span>
                     </>
                   )}
@@ -709,7 +731,7 @@ export function ArtistDetailScreen() {
               <div>
                 <div className="section-header">
                   <h2 className="section-title">Titres populaires</h2>
-                  <span className="section-link">{topTracks.length} titre{topTracks.length > 1 ? 's' : ''}</span>
+                  <span className="section-link">{totalTrackCount || topTracks.length} titre{(totalTrackCount || topTracks.length) > 1 ? 's' : ''}</span>
                 </div>
 
                 {/* Track list header */}

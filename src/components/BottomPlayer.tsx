@@ -1,6 +1,7 @@
 import { useAudioPlayback, useAudioProgress } from '@/contexts/AudioContext';
 import { useAlbumColors } from '@/hooks/useAlbumColors';
 import { useCachedImage } from '@/hooks/useCachedImage';
+import { useNetworkQuality } from '@/hooks/useNetworkQuality';
 import { buildVibrantWithAlpha } from '@/services/colorExtractor';
 import { AlertCircle, List, Pause, Play, SkipBack, SkipForward, TextQuote, Volume2, Volume1, Volume, VolumeX, X } from 'lucide-react';
 import { hasFeatArtists, parseFeatArtists, normalizeArtistName } from '@/utils/featArtists';
@@ -8,6 +9,7 @@ import { FeatArtistLinks } from './FeatArtistLinks';
 import { formatTitle } from '@/utils/formatTitle';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useBottomInset } from '@/hooks/useBottomInset';
+import { getOptimizedImageUrl } from '@/utils/imageUtils';
 import { useSwipeHorizontal } from '@/hooks/useSwipeHorizontal';
 import { useMemo, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -21,7 +23,7 @@ export function BottomPlayer() {
     volume, setVolume, toggleMute, isMuted,
     queue, currentIndex, queueMode, toggleQueueMode,
     repeatMode, toggleRepeat, isAutoplaying,
-    deviceQueue, deviceCurrentIndex,
+    deviceQueue, deviceCurrentIndex, queueAlbums,
     playTrackAtIndex, playDeviceTrackAtIndex,
   } = useAudioPlayback();
 
@@ -49,9 +51,7 @@ export function BottomPlayer() {
   }, [album]);
   const { progress, duration } = useAudioProgress();
   const [showError, setShowError] = useState(false);
-  const [volumeSliderVisible, setVolumeSliderVisible] = useState(false);
   const [queueModalVisible, setQueueModalVisible] = useState(false);
-  const volumeSliderTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const isDeviceMode = playMode === 'device' && deviceCurrentTrack;
   const hasActiveTrack = playMode === 'device' ? !!deviceCurrentTrack : (!!currentTrack && !!album);
@@ -88,8 +88,12 @@ export function BottomPlayer() {
     }
   }, [playbackError]);
 
-  const coverColors = useAlbumColors(coverUri);
-  const cachedCover = useCachedImage(coverUri);
+  const networkQuality = useNetworkQuality();
+  const isDataSaver = networkQuality === 'slow';
+  // ⚡ En data saver : on saute l'extraction de couleurs (économise download + CPU)
+  const coverColors = useAlbumColors(isDataSaver ? null : coverUri);
+  // ⚡ Data saver : pas de cache IndexedDB (l'image s'affiche via URL directe)
+  const cachedCover = useCachedImage(isDataSaver ? null : coverUri);
 
   // Sur desktop, quand le FullPlayer est ouvert, on cache le BottomPlayer
   const isDesktop = useMediaQuery('(min-width: 769px)');
@@ -132,27 +136,7 @@ export function BottomPlayer() {
     setFullPlayerVisible(!isFullPlayerVisible);
   };
 
-  // Gestion du volume sur mobile : overlay temporaire
-  const showVolumeOverlay = () => {
-    setVolumeSliderVisible(true);
-    if (volumeSliderTimeoutRef.current) clearTimeout(volumeSliderTimeoutRef.current);
-    volumeSliderTimeoutRef.current = setTimeout(() => setVolumeSliderVisible(false), 3000);
-  };
 
-  // Nettoyer le timer au démontage du composant
-  useEffect(() => {
-    return () => {
-      if (volumeSliderTimeoutRef.current) clearTimeout(volumeSliderTimeoutRef.current);
-    };
-  }, []);
-
-  const handleVolumeSliderInteraction = (e: React.MouseEvent | React.TouchEvent, element: HTMLElement) => {
-    const rect = element.getBoundingClientRect();
-    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
-    const vol = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-    setVolume(vol);
-    showVolumeOverlay();
-  };
 
   const showLyricsControls = !isDeviceMode && Boolean(currentTrack?.lyrics_url || currentTrack?.has_lyrics);
 
@@ -165,7 +149,8 @@ export function BottomPlayer() {
   const VolIcon = isMuted || volume === 0 ? VolumeX : volume < 0.33 ? Volume : volume < 0.66 ? Volume1 : Volume2;
 
   // Base heights (sans inset)
-  const basePlayerHeight = isMobile ? 64 : 80;
+  // ⚡ Mode Éco : player légèrement plus haut pour la barre épaisse SoundCloud-like
+  const basePlayerHeight = isMobile ? (isDataSaver ? 72 : 64) : 80;
   const baseErrorHeight = isMobile ? 36 : 40; // error banner
   // Total container height: base + safe-area inset so content floats above system bar
   const totalHeight = (showError ? basePlayerHeight + baseErrorHeight : basePlayerHeight)
@@ -223,18 +208,63 @@ export function BottomPlayer() {
         alignItems: 'center',
         padding: isMobile ? '0 10px' : '0 16px',
         flexShrink: 0,
+        position: 'relative',
       }}>
-        {/* Top Progress Bar */}
+        {/* ⚡ Badge Éco subtil — petit indicateur lumineux */}
+        {isDataSaver && (
+          <div
+            title="Mode économie de données activé"
+            style={{
+              position: 'absolute',
+              top: isMobile ? 4 : 4,
+              left: isMobile ? 4 : 8,
+              zIndex: 10,
+              pointerEvents: 'auto',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 3,
+              padding: '2px 6px 2px 5px',
+              borderRadius: 'var(--radius-full)',
+              background: 'rgba(255,255,255,0.04)',
+              backdropFilter: 'blur(4px)',
+              WebkitBackdropFilter: 'blur(4px)',
+              border: '1px solid rgba(255,255,255,0.06)',
+              fontSize: isMobile ? 7 : 8,
+              fontWeight: 700,
+              color: 'rgba(255,255,255,0.4)',
+              letterSpacing: '0.3px',
+              lineHeight: isMobile ? '13px' : '15px',
+              transition: 'all 0.2s ease',
+              cursor: 'default',
+            }}
+          >
+            {/* Petit point vert lumineux */}
+            <span style={{
+              width: 5,
+              height: 5,
+              borderRadius: '50%',
+              backgroundColor: '#22C55E',
+              boxShadow: '0 0 4px rgba(34,197,94,0.4)',
+              flexShrink: 0,
+            }} />
+            Éco
+          </div>
+        )}
+        {/* ⚡ Progress bar — en mode Éco, barre épaisse SoundCloud-like en bas */}
         <div
           className="bottom-player-progress"
           style={{
             position: 'absolute',
-            top: 0,
-            left: 0,
-            right: 0,
-            height: 3,
+            top: isDataSaver && isMobile ? undefined : 0,
+            bottom: isDataSaver && isMobile ? 0 : undefined,
+            left: isDataSaver && isMobile ? 8 : 0,
+            right: isDataSaver && isMobile ? 8 : 0,
+            height: isDataSaver && isMobile ? 8 : 3,
+            borderRadius: isDataSaver && isMobile ? 4 : 0,
             cursor: 'pointer',
             zIndex: 2,
+            backgroundColor: isDataSaver && isMobile ? 'rgba(255,255,255,0.06)' : undefined,
+            overflow: 'hidden',
           }}
           onClick={(e) => {
             const rect = e.currentTarget.getBoundingClientRect();
@@ -246,7 +276,7 @@ export function BottomPlayer() {
             style={{
               position: 'absolute',
               top: 0, left: 0, right: 0, height: '100%',                  background: 'var(--color-border-subtle)',
-                  borderRadius: 2,
+                  borderRadius: isDataSaver && isMobile ? 4 : 2,
                   overflow: 'hidden',
                 }}
               />
@@ -258,7 +288,7 @@ export function BottomPlayer() {
                     ? `linear-gradient(90deg, ${coverColors.colors?.vibrant || 'var(--color-accent)'}, ${coverColors.colors?.muted || 'var(--color-accent-light)'}, ${coverColors.colors?.vibrant || 'var(--color-accent)'})`
                     : `linear-gradient(90deg, ${coverColors.colors?.vibrant || 'var(--color-accent)'}, ${coverColors.colors?.muted || 'var(--color-accent-light)'})`,
                   width: `${Math.round(progress * 100)}%`,
-                  borderRadius: 2,
+                  borderRadius: isDataSaver && isMobile ? 4 : 2,
                   transition: 'width 0.1s linear, background-image 0.6s ease',
                   boxShadow: `0 0 6px ${coverColors.colors?.vibrant || 'var(--color-accent-glow)'}`,
                   backgroundSize: isLoading ? '200% 100%' : undefined,
@@ -341,35 +371,77 @@ export function BottomPlayer() {
               )}
             </>
           )}
-          {/* Cover art */}
-          <div
-            className={`bottom-player-cover${isLoading ? ' cover-loading-ring' : ''}`}
-            style={{
-              width: isMobile ? 42 : 52,
-              height: isMobile ? 42 : 52,
-              borderRadius: 'var(--radius-sm)',
-              overflow: 'hidden',
-              backgroundColor: 'var(--color-surface-elevated)',
-              flexShrink: 0,
-              position: isLoading ? 'relative' : undefined,
-            }}
-          >
-            {isLoading ? (
-              <>
-                <img src={(cachedCover || coverUri) ?? ''} alt="" loading="lazy" decoding="async" style={{ width: '100%', height: '100%', objectFit: 'cover', filter: 'saturate(0.6) brightness(0.8)', transition: 'filter 0.4s ease' }} />
+          {/* Cover art — masquée en mode Éco */}
+          {!isDataSaver && (
+            <div
+              className={`bottom-player-cover${isLoading ? ' cover-loading-ring' : ''}`}
+              style={{
+                width: isMobile ? 42 : 52,
+                height: isMobile ? 42 : 52,
+                borderRadius: 'var(--radius-sm)',
+                overflow: 'hidden',
+                backgroundColor: 'var(--color-surface-elevated)',
+                flexShrink: 0,
+                position: isLoading ? 'relative' : undefined,
+              }}
+            >
+              {isLoading ? (
+                <>
+                  <img src={getOptimizedImageUrl((cachedCover || coverUri) ?? '')} alt="" loading="lazy" decoding="async" style={{ width: '100%', height: '100%', objectFit: 'cover', filter: 'saturate(0.6) brightness(0.8)', transition: 'filter 0.4s ease' }} />
+                  <div style={{
+                    position: 'absolute', inset: 0,
+                    background: 'linear-gradient(135deg, transparent 40%, rgba(220,20,60,0.06) 70%, transparent 100%)',
+                    animation: 'shimmer 2s ease-in-out infinite',
+                    backgroundSize: '200% 100%',
+                    borderRadius: 'var(--radius-sm)',
+                    pointerEvents: 'none',
+                  }} />
+                </>
+              ) : (
+                <img src={getOptimizedImageUrl((cachedCover ?? coverUri) ?? '')} alt="" loading="lazy" decoding="async" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              )}
+            </div>
+          )}
+          {/* ⚡ Mode Éco : cercle coloré (CSS, pas d'image) inspiré SoundCloud */}
+          {isDataSaver && (
+            <div
+              style={{
+                width: isMobile ? 38 : 46,
+                height: isMobile ? 38 : 46,
+                borderRadius: 'var(--radius-full)',
+                flexShrink: 0,
+                background: coverColors.colors?.vibrant
+                  ? `linear-gradient(135deg, ${coverColors.colors.vibrant}, ${coverColors.colors.darkMuted || coverColors.colors.dominant})`
+                  : 'linear-gradient(135deg, var(--color-accent), #8B0000)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                position: 'relative',
+                boxShadow: isPlaying
+                  ? `0 0 12px ${coverColors.colors?.vibrant ? `${coverColors.colors.vibrant}40` : 'rgba(220,20,60,0.3)'}`
+                  : 'none',
+                transition: 'box-shadow 0.4s ease',
+              }}
+            >
+              {/* Dot central animé façon SoundCloud */}
+              <div style={{
+                width: 8,
+                height: 8,
+                borderRadius: '50%',
+                backgroundColor: 'rgba(255,255,255,0.35)',
+                animation: isPlaying ? 'pulse 1.5s ease-in-out infinite' : 'none',
+              }} />
+              {isPlaying && (
                 <div style={{
-                  position: 'absolute', inset: 0,
-                  background: 'linear-gradient(135deg, transparent 40%, rgba(220,20,60,0.06) 70%, transparent 100%)',
-                  animation: 'shimmer 2s ease-in-out infinite',
-                  backgroundSize: '200% 100%',
-                  borderRadius: 'var(--radius-sm)',
-                  pointerEvents: 'none',
+                  position: 'absolute',
+                  inset: -2,
+                  borderRadius: 'inherit',
+                  border: '2px solid rgba(255,255,255,0.08)',
+                  animation: 'spin 4s linear infinite',
                 }} />
-              </>
-            ) : (
-              <img src={(cachedCover ?? coverUri) ?? ''} alt="" loading="lazy" decoding="async" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-            )}
-          </div>
+              )}
+            </div>
+          )}
 
           {/* Title & Artist + Timer mobile */}
           <div style={{ minWidth: 0, flex: 1 }}>
@@ -549,107 +621,7 @@ export function BottomPlayer() {
               </button>
             )}
 
-            {/* Volume */}
-            <div style={{ position: 'relative' }}>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (volumeSliderVisible) {
-                    setVolumeSliderVisible(false);
-                  } else {
-                    showVolumeOverlay();
-                  }
-                }}
-                onDoubleClick={(e) => {
-                  e.stopPropagation();
-                  toggleMute();
-                }}
-                style={{
-                  width: 34,
-                  height: 34,
-                  borderRadius: 'var(--radius-full)',
-                  border: 'none',
-                  background: volumeSliderVisible ? 'var(--color-surface-hover)' : 'transparent',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  color: isMuted ? 'var(--color-text-muted)' : 'var(--color-text-secondary)',
-                  transition: 'all var(--transition-fast) ease',
-                }}
-                title={isMuted ? 'Activer le son' : 'Couper le son (double-tap)'}
-              >
-                <VolIcon size={14} />
-              </button>
-
-              {/* Overlay volume slider */}
-              {volumeSliderVisible && (
-                <div
-                  style={{
-                    position: 'absolute',
-                    bottom: 'calc(100% + 8px)',
-                    left: '50%',
-                    transform: 'translateX(-50%)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    padding: '8px 14px',
-                    borderRadius: 'var(--radius-full)',
-                    background: 'rgba(24, 20, 19, 0.96)',
-                    border: '1px solid rgba(255,255,255,0.08)',
-                    boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
-                    backdropFilter: 'blur(16px)',
-                    WebkitBackdropFilter: 'blur(16px)',
-                    zIndex: 200,
-                    whiteSpace: 'nowrap',
-                    animation: 'slideUp 0.2s ease',
-                  }}
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <button
-                    onClick={(e) => { e.stopPropagation(); toggleMute(); }}
-                    style={{
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      background: 'none', border: 'none', cursor: 'pointer', padding: 2,
-                      color: isMuted ? 'var(--color-text-muted)' : 'var(--color-text-primary)',
-                    }}
-                  >
-                    <VolIcon size={16} />
-                  </button>
-                  <div
-                    style={{
-                      width: 100,
-                      height: 5,
-                      borderRadius: 3,
-                      background: 'var(--color-border-subtle)',
-                      cursor: 'pointer',
-                      position: 'relative',
-                      flexShrink: 0,
-                    }}
-                    onClick={(e) => handleVolumeSliderInteraction(e, e.currentTarget)}
-                    onTouchMove={(e) => handleVolumeSliderInteraction(e, e.currentTarget)}
-                  >
-                    <div style={{
-                      height: '100%',
-                      width: `${(isMuted ? 0 : volume) * 100}%`,
-                      background: 'var(--color-accent)',
-                      borderRadius: 3,
-                      transition: 'width 0.1s ease',
-                    }} />
-                  </div>
-                  <span style={{
-                    color: 'var(--color-text-secondary)',
-                    fontSize: 11,
-                    fontWeight: 600,
-                    fontVariantNumeric: 'tabular-nums',
-                    minWidth: 32,
-                    textAlign: 'right',
-                  }}>
-                    {Math.round((isMuted ? 0 : volume) * 100)}%
-                  </span>
-                </div>
-              )}
-            </div>
+            {/* Volume supprimé sur mobile — le mobile a déjà le volume hardware */}
 
             {/* File d'attente */}
             <button
@@ -942,7 +914,7 @@ export function BottomPlayer() {
                   flexShrink: 0,
                   backgroundColor: 'var(--color-surface-elevated)',
                 }}>
-                  <img src={(cachedCover || coverUri) ?? ''} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  <img src={getOptimizedImageUrl((cachedCover || coverUri) ?? '')} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <span style={{
@@ -1006,15 +978,18 @@ export function BottomPlayer() {
                 </div>
               ) : (
                 upcomingTracks.map((item, index) => {
+                  const originalIndex = currentIdx + 1 + index;
                   const rowTrack = isDeviceMode
                     ? (item as { id: string; title: string; artist?: string }).title
                     : (item as { id: string; title: string; artist_name?: string; artists?: { name: string }[] }).title;
+                  // L'artiste n'est pas stocké dans PublicTrack → le récupérer depuis les albums
                   const rowArtist = isDeviceMode
                     ? (item as { artist?: string }).artist ?? 'Artiste inconnu'
-                    : (item as { artist_name?: string; artists?: { name: string }[] }).artist_name
-                      ?? (item as { artists?: { name: string }[] }).artists?.[0]?.name
+                    : queueAlbums[originalIndex]?.artist_name
+                      ?? queueAlbums[originalIndex]?.artist?.name
+                      ?? album?.artist_name
+                      ?? album?.artist?.name
                       ?? 'Artiste inconnu';
-                  const originalIndex = currentIdx + 1 + index;
 
                   return (
                     <button

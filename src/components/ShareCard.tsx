@@ -1,5 +1,6 @@
 import html2canvas from 'html2canvas';
 import { Copy, Download, Share2, X, Check } from 'lucide-react';
+import { getOptimizedImageUrl } from '@/utils/imageUtils';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { formatTitle } from '@/utils/formatTitle';
@@ -80,7 +81,7 @@ interface StoryCanvasProps {
 }
 
 function StoryCanvas({ trackTitle, artistName, albumTitle, coverUri, palette }: StoryCanvasProps) {
-  const cover = coverUri || '';
+  const cover = coverUri ? getOptimizedImageUrl(coverUri) : '';
   const { accent, gradTop, gradMid, gradBot } = palette;
 
   return (
@@ -302,7 +303,7 @@ export function ShareCard({
       await new Promise<void>((res, rej) => {
         img.onload = () => res();
         img.onerror = () => rej();
-        img.src = coverUri;
+        img.src = getOptimizedImageUrl(coverUri);
       });
       const dc = sampleDominantColor(img);
       if (dc) {

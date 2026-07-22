@@ -13,6 +13,7 @@ import { fetchPopularTracks } from '@/services/streamTracker';
 import { getAlbum, listAlbums, unwrapAlbumDetails } from '@/services/api';
 import { sortTracksByPosition } from '@/utils/tracks';
 import { useCachedImage } from '@/hooks/useCachedImage';
+import { getOptimizedImageUrl } from '@/utils/imageUtils';
 import { formatTitle } from '@/utils/formatTitle';
 import type { PublicAlbumDetails, PublicTrack } from '@/types/backend';
 
@@ -254,7 +255,7 @@ function TopTrackRow({
       {/* Cover */}
       {entry.album?.cover_url ? (
         <img
-          src={cachedCover || entry.album.cover_url}
+          src={getOptimizedImageUrl(cachedCover || entry.album.cover_url)}
           alt=""
           loading="lazy"
           style={{

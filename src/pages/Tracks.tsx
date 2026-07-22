@@ -7,11 +7,12 @@ import { getAlbum, listAlbums, unwrapAlbumDetails } from '@/services/api';
 import { freeCatalogDetailsMap, readFreeCatalogCache, writeFreeCatalogCache, staleWhileRevalidate } from '@/services/freeCatalogCache';
 import { mapTracksFromAlbum } from '@/services/freeCatalogSearch';
 import { resolveOfflinePlayback } from '@/services/offlineAccess';
+import { useDebounce } from '@/hooks/useDebounce';
 import { useAudioPlayback } from '@/contexts/AudioContext';
 import type { PublicAlbumDetails, PublicAlbumSummary } from '@/types/backend';
 
-const BATCH_SIZE = 30;
-const INITIAL_DISPLAY = 30;
+const BATCH_SIZE = 100;
+const INITIAL_DISPLAY = 500;
 const SORT_OPTIONS = ['Plus récent', 'Plus ancien', 'A-Z', 'Z-A'] as const;
 
 export function TracksScreen() {
@@ -22,7 +23,7 @@ export function TracksScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
-  const [debouncedQuery, setDebouncedQuery] = useState('');
+  const debouncedQuery = useDebounce(query, 250);
   const [sortBy, setSortBy] = useState<string>('Plus récent');
   const [displayCount, setDisplayCount] = useState(INITIAL_DISPLAY);
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -108,12 +109,6 @@ export function TracksScreen() {
     }
   }, []);
 
-  // ✨ Debounce la recherche (250ms)
-  useEffect(() => {
-    const timer = setTimeout(() => setDebouncedQuery(query), 250);
-    return () => clearTimeout(timer);
-  }, [query]);
-
   // Reset infinite scroll quand la recherche change
   useEffect(() => { setDisplayCount(INITIAL_DISPLAY); }, [debouncedQuery]);
 
@@ -142,7 +137,7 @@ export function TracksScreen() {
     }
 
     return result;
-  }, [tracks, query, sortBy]);
+  }, [tracks, debouncedQuery, sortBy]);
 
   // Infinite scroll IntersectionObserver
   useEffect(() => {

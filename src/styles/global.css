@@ -366,6 +366,30 @@ img { max-width: 100%; height: auto; }
 .reveal-up.delay-5 { animation-delay: 0.25s; }
 .reveal-up.delay-6 { animation-delay: 0.30s; }
 
+/* ============================================================
+   Performance Optimizations
+   ============================================================ */
+
+/* contain: limite le recalcul de style aux composants individuels */
+.track-item { contain: layout style; }
+.album-track { contain: layout style; }
+.section-header { contain: layout style; }
+
+/* content-visibility: différé pour les listes longues (hors écran) */
+.album-tracklist { content-visibility: auto; contain-intrinsic-size: 400px; }
+.artist-content { content-visibility: auto; contain-intrinsic-size: 400px; }
+
+/* will-change: GPU composite layer pour les éléments floutés / animés */
+.glass-panel {
+  will-change: transform, backdrop-filter;
+  transform: translateZ(0);
+}
+
+.bottom-player-cover {
+  will-change: transform;
+  transform: translateZ(0);
+}
+
 /* Hide scrollbar for horizontal scroll containers — keeps scroll functionality */
 .hide-scrollbar {
   -ms-overflow-style: none;

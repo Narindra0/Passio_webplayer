@@ -1,5 +1,7 @@
+import React from 'react';
 import type { Album } from '@/types/album';
 import { useCachedImage } from '@/hooks/useCachedImage';
+import { useNetworkQuality } from '@/hooks/useNetworkQuality';
 import { Download, Play } from 'lucide-react';
 import { formatTitle } from '@/utils/formatTitle';
 import { getOptimizedImageUrl, handleImageError } from '@/utils/imageUtils';
@@ -11,11 +13,18 @@ type AlbumCardProps = {
   isOffline?: boolean;
   premiumLabel?: string;
   releaseTypeLabel?: string;
+  /**
+   * Si true, désactive le mode data-saver pour cette carte.
+   * Utile dans les sections discographie où on veut toujours afficher les covers.
+   */
+  disableDataSaver?: boolean;
 };
 
-export function AlbumCard({ album, variant = 'row', onPress, isOffline = false, premiumLabel, releaseTypeLabel }: AlbumCardProps) {
+export const AlbumCard = React.memo(function AlbumCard({ album, variant = 'row', onPress, isOffline = false, premiumLabel, releaseTypeLabel, disableDataSaver = false }: AlbumCardProps) {
+  const networkQuality = useNetworkQuality();
+  const isDataSaver = disableDataSaver ? false : networkQuality === 'slow';
   const artistName = album.artist_name || album.artist?.name || 'Artiste inconnu';
-  const cachedCover = useCachedImage(album.cover_url);
+  const cachedCover = useCachedImage(isDataSaver ? null : album.cover_url);
 
   if (variant === 'tile') {
     return (
@@ -57,7 +66,21 @@ export function AlbumCard({ album, variant = 'row', onPress, isOffline = false, 
             e.currentTarget.style.boxShadow = 'var(--shadow-md)';
           }}
         >
-          {album.cover_url ? (
+          {isDataSaver || !album.cover_url ? (
+            // ⚡ Data saver ou pas de cover : icône placeholdere
+            <div
+              style={{
+                width: '100%',
+                height: '100%',
+                background: 'var(--color-surface-elevated)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <span style={{ fontSize: 40, color: 'var(--color-text-muted)' }}>♪</span>
+            </div>
+          ) : (
             <img
               src={getOptimizedImageUrl(cachedCover || album.cover_url)}
               onError={handleImageError}
@@ -73,19 +96,6 @@ export function AlbumCard({ album, variant = 'row', onPress, isOffline = false, 
               onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.06)'; }}
               onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
             />
-          ) : (
-            <div
-              style={{
-                width: '100%',
-                height: '100%',
-                background: 'var(--color-surface-elevated)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <span style={{ fontSize: 40, color: 'var(--color-text-muted)' }}>♪</span>
-            </div>
           )}
 
           {/* Play Button Overlay */}
@@ -231,22 +241,8 @@ export function AlbumCard({ album, variant = 'row', onPress, isOffline = false, 
       onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-surface-hover)'; }}
       onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
     >
-      {album.cover_url ? (
-        <img
-          src={getOptimizedImageUrl(cachedCover || album.cover_url)}
-          onError={handleImageError}
-          alt={album.title}
-          loading="lazy"
-          decoding="async"
-          style={{
-            width: 48,
-            height: 48,
-            borderRadius: 'var(--radius-sm)',
-            objectFit: 'cover',
-            flexShrink: 0,
-          }}
-        />
-      ) : (
+      {isDataSaver || !album.cover_url ? (
+        // ⚡ Data saver ou pas de cover : icône placeholdere
         <div
           style={{
             width: 48,
@@ -261,6 +257,21 @@ export function AlbumCard({ album, variant = 'row', onPress, isOffline = false, 
         >
           <span style={{ fontSize: 20, color: 'var(--color-text-muted)' }}>♪</span>
         </div>
+      ) : (
+        <img
+          src={getOptimizedImageUrl(cachedCover || album.cover_url)}
+          onError={handleImageError}
+          alt={album.title}
+          loading="lazy"
+          decoding="async"
+          style={{
+            width: 48,
+            height: 48,
+            borderRadius: 'var(--radius-sm)',
+            objectFit: 'cover',
+            flexShrink: 0,
+          }}
+        />
       )}
 
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -293,4 +304,4 @@ export function AlbumCard({ album, variant = 'row', onPress, isOffline = false, 
       </div>
     </button>
   );
-}
+});

@@ -83,6 +83,30 @@ export default defineConfig(({ mode }) => ({
             },
           },
           {
+            // ⚡ ImageKit (fallback quand Cloudinary est down)
+            urlPattern: /^https?:\/\/ik\.imagekit\.io\/.*/i,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'passio-imagekit-cache',
+              expiration: {
+                maxEntries: 200,
+                maxAgeSeconds: 60 * 60 * 24 * 30, // 30 jours
+              },
+            },
+          },
+          {
+            // ⚡ wsrv.nl (proxy d'optimisation d'images)
+            urlPattern: /^https?:\/\/wsrv\.nl\/.*/i,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'passio-wsrv-cache',
+              expiration: {
+                maxEntries: 300,
+                maxAgeSeconds: 60 * 60 * 24 * 14, // 14 jours
+              },
+            },
+          },
+          {
             urlPattern: /^https?:\/\/fonts\.googleapis\.com\/.*/i,
             handler: 'StaleWhileRevalidate',
             options: {

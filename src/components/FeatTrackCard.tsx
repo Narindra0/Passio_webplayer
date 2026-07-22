@@ -1,5 +1,6 @@
 import { Play, Pause } from 'lucide-react';
 import { useCachedImage } from '@/hooks/useCachedImage';
+import { getOptimizedImageUrl } from '@/utils/imageUtils';
 import { formatTitle } from '@/utils/formatTitle';
 import type { TrackWithAlbum } from '@/components/TrackListItem';
 
@@ -70,7 +71,7 @@ export function FeatTrackCard({
       >
         {track.cover_url ? (
           <img
-            src={cachedCover || track.cover_url}
+            src={getOptimizedImageUrl(cachedCover || track.cover_url)}
             alt={track.title}
             loading="lazy"
             decoding="async"

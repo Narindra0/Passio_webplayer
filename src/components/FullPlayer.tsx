@@ -26,6 +26,8 @@ import { hasFeatArtists, parseFeatArtists, normalizeArtistName } from '@/utils/f
 import { FeatArtistLinks } from './FeatArtistLinks';
 import { formatTitle } from '@/utils/formatTitle';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
+import { useNetworkQuality } from '@/hooks/useNetworkQuality';
+import { getOptimizedImageUrl, isValidProfilePicture } from '@/utils/imageUtils';
 import { logger } from '@/utils/logger';
 
 function formatAlbumArtist(albumData: PublicAlbumDetails | null | undefined): string {
@@ -65,6 +67,8 @@ export function FullPlayer() {
   const isDeviceMode = playMode === 'device' && deviceCurrentTrack;
   const showLyricsControls = !isDeviceMode && Boolean(currentTrack?.lyrics_url || currentTrack?.has_lyrics);
   const isMobile = useMediaQuery('(max-width: 768px)');
+  const networkQuality = useNetworkQuality();
+  const isDataSaver = networkQuality === 'slow';
 
   // ── Clean exit animation ──
   const handleClose = useCallback(() => {
@@ -170,7 +174,8 @@ export function FullPlayer() {
     // If fully closed (not closing and not visible), return null
     if (!isClosing && !isFullPlayerVisible) return null;
     // If no track data at all, nothing to show
-    if (!isDeviceMode && !album && !currentTrack) return null;
+    // ⚡ On utilise || pour éviter les erreurs de rendu quand un seul des deux est défini
+    if (!isDeviceMode && (!album || !currentTrack)) return null;
     if (isDeviceMode && !deviceCurrentTrack) return null;
   }
 
@@ -242,9 +247,10 @@ export function FullPlayer() {
     }));
   }, [featNames, localArtistIdMap]);
 
-  const coverColors = useAlbumColors(coverUri);
-  const cachedCover = useCachedImage(coverUri);
-  const cachedArtistPic = useCachedImage(album?.artist?.profile_picture_url || album?.artist_pdp || null);
+  // ⚡ Data saver : pas d'extraction de couleurs (économie réseau + CPU)
+  const coverColors = useAlbumColors(isDataSaver ? null : coverUri);
+  const cachedCover = useCachedImage(isDataSaver ? null : coverUri);
+  const cachedArtistPic = useCachedImage(isDataSaver ? null : (isValidProfilePicture(album?.artist?.profile_picture_url) ? album?.artist?.profile_picture_url : (isValidProfilePicture(album?.artist_pdp) ? album?.artist_pdp : null)));
 
   const fullQueue = isDeviceMode ? deviceQueue : queue;
   const currentIdx = isDeviceMode ? deviceCurrentIndex : currentIndex;
@@ -437,6 +443,33 @@ export function FullPlayer() {
         {/* Spacer for mobile (title is centered) */}
         {isMobile && <div style={{ width: 36 }} />}
 
+        {/* ⚡ Badge Éco (data saver) — mobile: dans le header, desktop: juste après le titre */}
+        {isDataSaver && (
+          <div
+            title="Mode économie de données activé (connexion mobile détectée)"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 3,
+              padding: isMobile ? '2px 7px' : '3px 9px',
+              borderRadius: 'var(--radius-full)',
+              background: 'rgba(34,197,94,0.12)',
+              border: '1px solid rgba(34,197,94,0.25)',
+              fontSize: isMobile ? 8 : 9,
+              fontWeight: 800,
+              color: '#22C55E',
+              letterSpacing: '0.3px',
+              lineHeight: isMobile ? '14px' : '16px',
+              flexShrink: 0,
+            }}
+          >
+            <svg width={isMobile ? 8 : 10} height={isMobile ? 8 : 10} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+            </svg>
+            Éco
+          </div>
+        )}
+
         {/* Share + Queue buttons — desktop only */}
         {!isMobile && (
           <div style={{ display: 'flex', gap: 4 }}>
@@ -518,7 +551,7 @@ export function FullPlayer() {
         >
           {coverUri ? (
             <img
-              src={cachedCover || coverUri}
+              src={getOptimizedImageUrl(cachedCover || coverUri)}
               alt=""
               loading="lazy"
               decoding="async"
@@ -639,13 +672,42 @@ export function FullPlayer() {
 
         {/* ── Waveform / Progress ── */}
         <div style={{ marginBottom: isMobile ? 20 : 16 }}>
-          <PlayerWaveform
-            progress={progress}
-            trackKey={trackKey}
-            onSeek={seekTo}
-            playedColor="var(--color-accent)"
-            unplayedColor="rgba(255,255,255,0.15)"
-          />
+          {/* ⚡ Data saver : waveform remplacé par une barre de progression simple */}
+          {isDataSaver ? (
+            <div
+              style={{
+                width: '100%',
+                height: 8,
+                borderRadius: 4,
+                background: 'rgba(255,255,255,0.15)',
+                cursor: 'pointer',
+                position: 'relative',
+                overflow: 'hidden',
+              }}
+              onClick={(e) => {
+                const rect = e.currentTarget.getBoundingClientRect();
+                seekTo((e.clientX - rect.left) / rect.width);
+              }}
+            >
+              <div
+                style={{
+                  height: '100%',
+                  width: `${Math.round(progress * 100)}%`,
+                  background: 'var(--color-accent)',
+                  borderRadius: 4,
+                  transition: 'width 0.1s linear',
+                }}
+              />
+            </div>
+          ) : (
+            <PlayerWaveform
+              progress={progress}
+              trackKey={trackKey}
+              onSeek={seekTo}
+              playedColor="var(--color-accent)"
+              unplayedColor="rgba(255,255,255,0.15)"
+            />
+          )}
           <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6 }}>
             <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
               {currentTimeLabel}
@@ -855,7 +917,7 @@ export function FullPlayer() {
               onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
             >
               <img
-                src={cachedArtistPic || album.artist?.profile_picture_url || album.artist_pdp || album.cover_url || undefined}
+                src={getOptimizedImageUrl(cachedArtistPic || (isValidProfilePicture(album.artist?.profile_picture_url) ? album.artist?.profile_picture_url : null) || (isValidProfilePicture(album.artist_pdp) ? album.artist_pdp : null) || album.cover_url) || undefined}
                 alt=""
                 loading="lazy"
                 decoding="async"
